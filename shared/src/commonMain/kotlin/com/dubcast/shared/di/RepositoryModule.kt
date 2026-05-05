@@ -10,7 +10,6 @@ import com.dubcast.shared.data.repository.RemoteRenderExecutor
 import com.dubcast.shared.data.repository.SegmentRepositoryImpl
 import com.dubcast.shared.data.repository.SubtitleClipRepositoryImpl
 import com.dubcast.shared.data.repository.TextOverlayRepositoryImpl
-import com.dubcast.shared.data.repository.TtsRepositoryImpl
 import com.dubcast.shared.domain.repository.AudioSeparationRepository
 import com.dubcast.shared.domain.repository.BgmClipRepository
 import com.dubcast.shared.domain.repository.DubClipRepository
@@ -20,7 +19,6 @@ import com.dubcast.shared.domain.repository.LanguageRepository
 import com.dubcast.shared.domain.repository.SegmentRepository
 import com.dubcast.shared.domain.repository.SubtitleClipRepository
 import com.dubcast.shared.domain.repository.TextOverlayRepository
-import com.dubcast.shared.domain.repository.TtsRepository
 import com.dubcast.shared.domain.usecase.export.FfmpegExecutor
 import org.koin.dsl.module
 
@@ -44,9 +42,6 @@ val repositoryModule = module {
     single<ImageClipRepository> { ImageClipRepositoryImpl(get()) }
     single<TextOverlayRepository> { TextOverlayRepositoryImpl(get()) }
     single<BgmClipRepository> { BgmClipRepositoryImpl(get()) }
-    single<TtsRepository> {
-        TtsRepositoryImpl(api = get(), httpClient = get(), bffBaseUrl = getProperty("bffBaseUrl"))
-    }
     single<AudioSeparationRepository> { AudioSeparationRepositoryImpl(get()) }
     single<FfmpegExecutor> { RemoteRenderExecutor(api = get()) }
     single<LanguageRepository> { LanguageRepositoryImpl(api = get()) }

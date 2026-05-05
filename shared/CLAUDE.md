@@ -28,12 +28,12 @@ shared/
 └── src/
     ├── commonMain/kotlin/com/dubcast/shared/
     │   ├── domain/
-    │   │   ├── model/                       # DubClip, Segment, Voice, Stem, EditProject,
+    │   │   ├── model/                       # DubClip, Segment, Stem, EditProject,
     │   │   │                                # SubtitleClip, BgmClip, ImageClip, TextOverlay,
     │   │   │                                # VideoInfo, ImageInfo, ValidationResult, ... (15 files)
-    │   │   ├── repository/                  # 인터페이스 (TtsRepository, AudioSeparationRepository,
+    │   │   ├── repository/                  # 인터페이스 (AudioSeparationRepository,
     │   │   │                                #         AutoDubRepository, AutoSubtitleRepository, ...)
-    │   │   ├── usecase/                     # 11 카테고리 (input/tts/subtitle/separation/timeline/...)
+    │   │   ├── usecase/                     # 카테고리 (input/subtitle/separation/timeline/text/bgm/image/save/draft/export)
     │   │   └── util/                        # LanePacking, ColorValidation
     │   ├── data/
     │   │   ├── remote/api/BffApi.kt         # Ktor Client multiplatform — 12 v2 엔드포인트 + lipsync

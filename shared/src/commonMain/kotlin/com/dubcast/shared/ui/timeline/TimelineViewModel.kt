@@ -18,7 +18,6 @@ import com.dubcast.shared.domain.model.BgmClip
 import com.dubcast.shared.domain.model.SubtitlePosition
 import com.dubcast.shared.domain.model.TargetLanguage
 import com.dubcast.shared.domain.model.TextOverlay
-import com.dubcast.shared.domain.model.Voice
 import com.dubcast.shared.domain.repository.BgmClipRepository
 import com.dubcast.shared.domain.repository.DubClipRepository
 import com.dubcast.shared.domain.repository.EditProjectRepository
@@ -29,7 +28,6 @@ import com.dubcast.shared.domain.repository.SeparationStatus
 import com.dubcast.shared.domain.repository.StemSelection
 import com.dubcast.shared.domain.repository.SubtitleClipRepository
 import com.dubcast.shared.domain.repository.TextOverlayRepository
-import com.dubcast.shared.domain.repository.TtsRepository
 import com.dubcast.shared.domain.model.SeparationMediaType
 import com.dubcast.shared.domain.usecase.image.AddImageClipUseCase
 import com.dubcast.shared.domain.usecase.image.DeleteImageClipUseCase
@@ -65,8 +63,6 @@ import com.dubcast.shared.domain.usecase.timeline.UpdateImageSegmentPositionUseC
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentSpeedUseCase
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentVolumeUseCase
-import com.dubcast.shared.domain.usecase.tts.GetVoiceListUseCase
-import com.dubcast.shared.domain.usecase.tts.SynthesizeDubClipUseCase
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -76,14 +72,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-data class PreviewDubClip(
-    val text: String,
-    val voiceId: String,
-    val voiceName: String,
-    val audioFilePath: String,
-    val durationMs: Long
-)
 
 /**
  * Timeline "저장" 흐름 상태. headerbar 의 저장 버튼 라벨/snackbar 에 사용.
@@ -128,17 +116,11 @@ data class TimelineUiState(
     val selectedDubClipId: String? = null,
     val selectedSubtitleClipId: String? = null,
     val selectedImageClipId: String? = null,
-    val voices: List<Voice> = emptyList(),
-    val isVoicesLoading: Boolean = false,
-    val showDubbingSheet: Boolean = false,
     val showSubtitleSheet: Boolean = false,
     /** my_plan: 편집 화면에 자막을 띄울지. */
     val showSubtitlesOnPreview: Boolean = true,
     /** my_plan: 편집 화면에 더빙을 띄울지. */
     val showDubbingOnPreview: Boolean = true,
-    val isSynthesizing: Boolean = false,
-    val synthError: String? = null,
-    val previewClip: PreviewDubClip? = null,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val isVideoSelected: Boolean = false,
@@ -276,9 +258,6 @@ class TimelineViewModel constructor(
     private val editProjectRepository: EditProjectRepository,
     private val textOverlayRepository: TextOverlayRepository,
     private val bgmClipRepository: BgmClipRepository,
-    private val ttsRepository: TtsRepository,
-    private val synthesizeDubClip: SynthesizeDubClipUseCase,
-    private val getVoiceList: GetVoiceListUseCase,
     private val moveDubClip: MoveDubClipUseCase,
     private val deleteDubClip: DeleteDubClipUseCase,
     private val addSubtitleClip: AddSubtitleClipUseCase,
@@ -357,9 +336,6 @@ class TimelineViewModel constructor(
 
     init {
         loadSegments()
-        // ElevenLabs voices fetch 는 현재 미사용 — 호출 시 500 발생. 로직(loadVoices/getVoiceList)
-        // 은 추후 재사용 가능하게 남겨두고 init 단의 호출만 제거.
-        // loadVoices()
         observeClips()
         observeProject()
         observeTextOverlays()
@@ -646,18 +622,6 @@ class TimelineViewModel constructor(
         return acc
     }
 
-    private fun loadVoices() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isVoicesLoading = true)
-            val result = getVoiceList()
-            val voices = result.getOrDefault(emptyList()).ifEmpty { DEFAULT_VOICES }
-            _uiState.value = _uiState.value.copy(
-                voices = voices,
-                isVoicesLoading = false
-            )
-        }
-    }
-
     private fun observeClips() {
         viewModelScope.launch {
             combine(
@@ -743,78 +707,12 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(showDubbingOnPreview = !_uiState.value.showDubbingOnPreview)
     }
 
-    fun onShowDubbingSheet() {
-        _uiState.value = _uiState.value.copy(showDubbingSheet = true, synthError = null)
-    }
-
-    fun onDismissDubbingSheet() {
-        _uiState.value = _uiState.value.copy(
-            showDubbingSheet = false,
-            synthError = null,
-            previewClip = null
-        )
-    }
-
     fun onShowSubtitleSheet() {
         _uiState.value = _uiState.value.copy(showSubtitleSheet = true)
     }
 
     fun onDismissSubtitleSheet() {
         _uiState.value = _uiState.value.copy(showSubtitleSheet = false)
-    }
-
-    fun onSynthesize(text: String, voiceId: String, voiceName: String) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSynthesizing = true, synthError = null, previewClip = null)
-
-            val result = ttsRepository.synthesize(text, voiceId)
-
-            result.fold(
-                onSuccess = { ttsResult ->
-                    _uiState.value = _uiState.value.copy(
-                        isSynthesizing = false,
-                        previewClip = PreviewDubClip(
-                            text = text,
-                            voiceId = voiceId,
-                            voiceName = voiceName,
-                            audioFilePath = ttsResult.localAudioPath,
-                            durationMs = ttsResult.durationMs
-                        )
-                    )
-                },
-                onFailure = { error ->
-                    _uiState.value = _uiState.value.copy(
-                        isSynthesizing = false,
-                        synthError = error.message
-                    )
-                }
-            )
-        }
-    }
-
-    fun onInsertPreviewClip() {
-        val preview = _uiState.value.previewClip ?: return
-        viewModelScope.launch {
-            val dubClipId = Uuid.random().toString()
-            val startMs = _uiState.value.playbackPositionMs
-            val clip = DubClip(
-                id = dubClipId,
-                projectId = projectId,
-                text = preview.text,
-                voiceId = preview.voiceId,
-                voiceName = preview.voiceName,
-                audioFilePath = preview.audioFilePath,
-                startMs = startMs,
-                durationMs = preview.durationMs
-            )
-            dubClipRepository.addClip(clip)
-
-            _uiState.value = _uiState.value.copy(
-                showDubbingSheet = false,
-                previewClip = null
-            )
-            pushUndoState()
-        }
     }
 
     fun onShowRegenerateSubtitleSheet() {
@@ -1656,7 +1554,6 @@ class TimelineViewModel constructor(
             previewLangCode = null,
             showAudioSeparationSheet = false,
             showSubtitleSheet = false,
-            showDubbingSheet = false,
             showSubtitleEditSheet = false,
             showRegenerateSubtitleSheet = false,
             showScriptReviewSheet = false,
@@ -3402,15 +3299,6 @@ class TimelineViewModel constructor(
         const val MIN_FRAME_DIMENSION = 16
         const val MAX_FRAME_DIMENSION = 7680
         const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
-
-        private val DEFAULT_VOICES = listOf(
-            Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),
-            Voice("TX3LPaxmHKxFdv7VOQHJ", "Liam", null, "en"),
-            Voice("pFZP5JQG7iQjIQuC4Bku", "Lily", null, "en"),
-            Voice("bIHbv24MWmeRgasZH58o", "Will", null, "en"),
-            Voice("default-ko-1", "Jimin", null, "ko"),
-            Voice("default-ko-2", "Seoyeon", null, "ko"),
-        )
     }
 
     fun onOpenExportOptionsSheet() {

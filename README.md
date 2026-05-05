@@ -9,8 +9,8 @@
 ## 의존 백엔드
 
 이 앱은 **[vibi-bff](https://github.com/perso-devrel/vibi-bff)** (Kotlin/Ktor) 를 통해
-TTS · 자막 · 자동 더빙 · 음성 분리 · 렌더 파이프라인을 호출한다.
-모든 외부 API (ElevenLabs · Perso AI · Gemini) 는 BFF 에서만 다루며, 클라이언트는 `/api/v2` 만 사용.
+자막 · 자동 더빙 · 음성 분리 · 렌더 파이프라인을 호출한다.
+모든 외부 API (Perso AI · Gemini) 는 BFF 에서만 다루며, 클라이언트는 `/api/v2` 만 사용.
 
 빌드 전에 BFF 가 동작 중이어야 한다 (기본 `:8080`).
 
@@ -109,7 +109,7 @@ vibi-mobile/
 ```
 
 핵심 화면: Input → Timeline (편집·sheet 군) → Export → Share.
-시트: InsertDubbing · InsertSubtitle · AudioSeparation · RegenerateSubtitles · DetailEdit · ChatPanel.
+시트: InsertSubtitle · AudioSeparation · RegenerateSubtitles · DetailEdit · ChatPanel.
 타임라인 구간 선택은 별도 sheet 가 아니라 `UnifiedTimelineBar` 인라인 (28~56dp 바, segment/directive content strip + range fill + bracket 핸들 + 재생 marker).
 
 ## 핵심 기능 ↔ BFF 매핑
@@ -117,7 +117,6 @@ vibi-mobile/
 | 기능 | 클라이언트 | BFF 엔드포인트 |
 |---|---|---|
 | 영상 업로드 | InputScreen + MediaPicker · `VideoThumbnailExtractor` | (로컬 segment) |
-| TTS | InsertDubbingSheet | `POST /api/v2/tts` |
 | 자막 (수동 + 자동) | InsertSubtitleSheet · `GenerateAutoSubtitlesUseCase` | `POST /api/v2/subtitles` (+ poll) |
 | 자동 더빙 (영상 + BGM) | `GenerateAutoDubUseCase` (mediaType=VIDEO\|AUDIO) | `POST /api/v2/autodub` (+ poll) |
 | 음원 분리 (영상 segment + BGM clip) | AudioSeparationSheet · `onStartBgmSeparation` | `POST /api/v2/separate` (+ stem mix) |
@@ -127,7 +126,6 @@ vibi-mobile/
 
 ## 외부 의존 (BFF 경유, 클라이언트가 직접 호출하지 않음)
 
-- **ElevenLabs** — TTS, 보이스
 - **Perso AI** — 음원 분리, STT, 번역, 자동 더빙
 - **Gemini** — 자막 번역 + 채팅 function calling
 

@@ -4,7 +4,6 @@ import com.dubcast.shared.data.remote.dto.MixRequest
 import com.dubcast.shared.data.remote.dto.MixStemRequest
 import com.dubcast.shared.data.remote.dto.RenderConfig
 import com.dubcast.shared.data.remote.dto.SeparationSpec
-import com.dubcast.shared.data.remote.dto.TtsRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -63,57 +62,6 @@ class BffApiTest {
     }
 
     private fun jsonHeaders() = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-
-    // ───────────────────── voices ─────────────────────
-
-    @Test
-    fun `getVoices parses voice list`() = runTest {
-        val (api, captured) = buildApi { _ ->
-            respond(
-                content = """{"voices":[{"voiceId":"v1","name":"Alice","previewUrl":"https://x/p","language":"ko"}]}""",
-                status = HttpStatusCode.OK,
-                headers = jsonHeaders()
-            )
-        }
-
-        val result = api.getVoices()
-
-        assertEquals(1, captured.size)
-        assertEquals(HttpMethod.Get, captured[0].method)
-        assertEquals("api/v2/voices", captured[0].url.encodedPath.trimStart('/'))
-        assertEquals(1, result.voices.size)
-        assertEquals("v1", result.voices[0].voiceId)
-        assertEquals("ko", result.voices[0].language)
-    }
-
-    @Test
-    fun `getVoices propagates upstream 5xx`() = runTest {
-        val (api, _) = buildApi { _ -> respondError(HttpStatusCode.BadGateway) }
-        assertFailsWith<Exception> { api.getVoices() }
-    }
-
-    // ───────────────────── tts ─────────────────────
-
-    @Test
-    fun `synthesize sends request body and parses response`() = runTest {
-        val (api, captured) = buildApi { request ->
-            respond(
-                content = """{"audioUrl":"/files/tts/abc.mp3","durationMs":4200}""",
-                status = HttpStatusCode.OK,
-                headers = jsonHeaders()
-            )
-        }
-
-        val result = api.synthesize(TtsRequest(text = "안녕하세요", voiceId = "v1"))
-
-        assertEquals(HttpMethod.Post, captured[0].method)
-        assertEquals("api/v2/tts", captured[0].url.encodedPath.trimStart('/'))
-        val sentBody = (captured[0].body as TextContent).text
-        assertContains(sentBody, "안녕하세요")
-        assertContains(sentBody, "v1")
-        assertEquals("/files/tts/abc.mp3", result.audioUrl)
-        assertEquals(4200L, result.durationMs)
-    }
 
     // ───────────────────── render ─────────────────────
 

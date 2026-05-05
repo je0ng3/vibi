@@ -931,7 +931,6 @@ fun TimelineScreen(
         !state.localizationOpen &&
         !state.showDetailEdit &&
         !state.showAudioSeparationSheet &&
-        !state.showDubbingSheet &&
         !state.showSubtitleSheet &&
         !state.showSubtitleEditSheet &&
         !state.showRegenerateSubtitleSheet &&
@@ -954,22 +953,6 @@ fun TimelineScreen(
         }
     }
     } // close Box wrapper
-
-    // 더빙 sheet — 영상편집 모드에선 노출 금지.
-    if (state.showDubbingSheet && !state.isSegmentEditMode) {
-        InsertDubbingSheet(
-            voices = state.voices,
-            isVoicesLoading = state.isVoicesLoading,
-            isSynthesizing = state.isSynthesizing,
-            previewAvailable = state.previewClip != null,
-            synthError = state.synthError,
-            onSynthesize = { text, voiceId, voiceName ->
-                viewModel.onSynthesize(text, voiceId, voiceName)
-            },
-            onInsert = { viewModel.onInsertPreviewClip() },
-            onDismiss = { viewModel.onDismissDubbingSheet() }
-        )
-    }
 
     // STT 스크립트 검토 sheet — review 모드에서 STT 완료 후 표시. 영상편집 모드 진행 중엔 숨김.
     if (state.showScriptReviewSheet && !state.isSegmentEditMode) {

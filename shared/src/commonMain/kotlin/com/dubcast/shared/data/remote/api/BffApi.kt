@@ -22,9 +22,6 @@ import com.dubcast.shared.data.remote.dto.SubtitleJobResponse
 import com.dubcast.shared.data.remote.dto.SubtitleSpec
 import com.dubcast.shared.data.remote.dto.SubtitleStatusResponse
 import com.dubcast.shared.data.remote.dto.TestdataSeparationFolderDto
-import com.dubcast.shared.data.remote.dto.TtsRequest
-import com.dubcast.shared.data.remote.dto.TtsResponse
-import com.dubcast.shared.data.remote.dto.VoiceListResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -56,9 +53,6 @@ class BffApi(
         encodeDefaults = true
     }
 ) {
-    suspend fun getVoices(): VoiceListResponse =
-        client.get("api/v2/voices").body()
-
     /** 지원 타깃 언어 목록 — Perso 가 지원하는 언어를 BFF 가 프록시. */
     suspend fun getLanguages(): LanguageListResponse =
         client.get("api/v2/languages").body()
@@ -66,11 +60,6 @@ class BffApi(
     /** 음성분리 mock 데이터 — testdata/<startSec>-<endSec>/ 폴더 목록 + 그 안의 stem 이름. */
     suspend fun listSeparationTestdata(): List<TestdataSeparationFolderDto> =
         client.get("api/v2/testdata/separation/list").body()
-
-    suspend fun synthesize(request: TtsRequest): TtsResponse =
-        client.post("api/v2/tts") {
-            setBody(request)
-        }.body()
 
     /** 자연어 편집 어시스턴트 — Gemini function calling 라우팅. */
     suspend fun chat(request: ChatRequestDto): ChatResponseDto =

@@ -39,8 +39,6 @@ import com.dubcast.shared.domain.usecase.timeline.UpdateImageSegmentPositionUseC
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentSpeedUseCase
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentVolumeUseCase
-import com.dubcast.shared.domain.usecase.tts.GetVoiceListUseCase
-import com.dubcast.shared.domain.usecase.tts.SynthesizeDubClipUseCase
 import org.koin.core.module.dsl.factoryOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
@@ -84,10 +82,6 @@ val useCaseModule = module {
             bffApi = get(),
         )
     }
-
-    // tts
-    factoryOf(::GetVoiceListUseCase)
-    factoryOf(::SynthesizeDubClipUseCase)
 
     // separation
     factoryOf(::StartAudioSeparationUseCase)

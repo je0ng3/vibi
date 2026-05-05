@@ -32,9 +32,4 @@ class RenderConfigSerializationTest {
         assertEquals(original, decoded)
     }
 
-    @Test
-    fun `TtsRequest encodes camelCase`() {
-        val encoded = json.encodeToString(TtsRequest.serializer(), TtsRequest(text = "안녕", voiceId = "v1"))
-        assertEquals("""{"text":"안녕","voiceId":"v1"}""", encoded)
-    }
 }
