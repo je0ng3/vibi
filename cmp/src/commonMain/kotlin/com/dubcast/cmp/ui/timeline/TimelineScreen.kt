@@ -3,8 +3,11 @@ package com.dubcast.cmp.ui.timeline
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -634,15 +637,20 @@ fun TimelineScreen(
                 onRangeTapToggle = { viewModel.onClearRangeSelection() },
             )
             // 재생바 밑 BGM 트랙 — 각 클립을 startMs 위치 시간 비율로 시각화.
-            // 막대 horizontal drag → startMs 갱신, tap → 액션 시트.
-            if (state.bgmClips.isNotEmpty()) {
+            // 막대 horizontal drag → startMs 갱신, vertical drag → lane 변경, tap → 액션 시트.
+            // 영상편집 모드에선 segment 편집과 헷갈리므로 BGM lane 을 숨김. 클립 데이터는
+            // 그대로 유지되므로 모드 나가면 즉시 다시 보임. 음원분리 range 선택 모드에서는
+            // 클립 탭 무시 (range 만 선택 가능) — 매개변수 `tapEnabled` 로 차단.
+            if (!state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
                 BgmTimelineLane(
                     clips = state.bgmClips,
                     totalMs = state.videoDurationMs,
                     accent = tokens.accent,
                     selectedClipId = state.selectedBgmClipId,
+                    tapEnabled = !state.isRangeSelecting,
                     onSelectClip = { viewModel.onSelectBgmClip(it) },
                     onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
+                    onUpdateLane = { id, lane -> viewModel.onUpdateBgmLane(id, lane) },
                 )
             }
             if (state.isRangeSelecting) {
@@ -661,7 +669,9 @@ fun TimelineScreen(
                             onClick = {
                                 val segId = state.segments.firstOrNull()?.id ?: return@Button
                                 viewModel.onCancelRangeMode()
+                                // 시트 안 띄우고 바로 분리 시작 — Perso 가 화자 자동 감지라 추가 입력 불필요.
                                 viewModel.onShowAudioSeparationSheet(segId)
+                                viewModel.onStartSeparation()
                             }
                         ) { Text("이 구간 음원분리") }
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
@@ -1785,8 +1795,15 @@ private fun UnifiedTimelineBar(
 }
 
 /**
- * 재생바 직하 BGM 트랙 — 트랙 배경 없음, 막대만. 막대 horizontal drag → startMs 갱신.
- * 막대 tap → onSelectClip (BottomSheet 띄움).
+ * 재생바 직하 BGM 트랙 — 트랙 배경 없음, 막대만. 시간상 겹치는 BGM 클립을 시각적으로 분리하기
+ * 위해 multi-lane (위·아래 행) 렌더 — 각 클립의 `lane` 필드 (0 = top) 가 행을 결정.
+ *
+ *  - 막대 horizontal drag (= lane 안에서 좌우) → startMs 갱신.
+ *  - 막대 vertical drag (= lane 변경) → 위·아래 막대 만큼 이동하면 onUpdateLane 호출.
+ *  - 막대 tap → onSelectClip (BottomSheet) — `tapEnabled=false` 면 무시 (음원분리 range mode).
+ *
+ * Drag 부드러움: 매 frame `onDrag` 의 dx/dy 를 accumulator 로 적분, drag 중엔 local
+ * override (offsetMs/laneOverride) 만 갱신해 손가락 따라 즉시 이동. release 시 한 번만 VM commit.
  */
 @Composable
 private fun BgmTimelineLane(
@@ -1794,17 +1811,26 @@ private fun BgmTimelineLane(
     totalMs: Long,
     accent: Color,
     selectedClipId: String?,
+    tapEnabled: Boolean,
     onSelectClip: (String) -> Unit,
     onUpdateStart: (String, Long) -> Unit,
+    onUpdateLane: (String, Int) -> Unit,
 ) {
     if (totalMs <= 0L) return
-    val laneHeight = 10.dp
+    val rowHeight = 10.dp
+    val rowGap = 2.dp
+    // 항상 최소 1행. 가장 큰 lane 인덱스 + 1 만큼 행 확보.
+    val maxLane = clips.maxOfOrNull { it.lane.coerceAtLeast(0) } ?: 0
+    val rowCount = (maxLane + 1).coerceAtLeast(1)
+    val totalHeight = rowHeight * rowCount + rowGap * (rowCount - 1).coerceAtLeast(0)
     val density = LocalDensity.current
+    val rowStrideDp = rowHeight + rowGap
+    val rowStridePx = with(density) { rowStrideDp.toPx() }
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 4.dp)
-            .height(laneHeight),
+            .height(totalHeight),
     ) {
         val laneWidthDp = maxWidth
         val laneWidthPx = with(density) { laneWidthDp.toPx() }
@@ -1817,42 +1843,71 @@ private fun BgmTimelineLane(
             var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
             var dragBaseStartMs by remember(clip.id) { mutableStateOf(0L) }
             var dragAccumPx by remember(clip.id) { mutableStateOf(0f) }
+            // lane (vertical) override 도 동일 패턴 — drag 중 시각만, release 시 commit.
+            var laneOverride by remember(clip.id) { mutableStateOf<Int?>(null) }
+            var laneBase by remember(clip.id) { mutableStateOf(0) }
+            var dragAccumPyAbs by remember(clip.id) { mutableStateOf(0f) }
             val effectiveStartMs = dragOverrideMs ?: clip.startMs
+            val effectiveLane = (laneOverride ?: clip.lane).coerceAtLeast(0)
             val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
             val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
-            val offsetDp = laneWidthDp * startFrac
+            val offsetXDp = laneWidthDp * startFrac
+            val offsetYDp = rowStrideDp * effectiveLane
             val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
             Box(
                 modifier = Modifier
-                    .offset(x = offsetDp)
+                    .offset(x = offsetXDp, y = offsetYDp)
                     .width(widthDp)
-                    .fillMaxHeight()
+                    .height(rowHeight)
                     .clip(RoundedCornerShape(3.dp))
                     .background(if (isSelected) accent else accent.copy(alpha = 0.55f))
-                    .pointerInput(clip.id, totalMs, laneWidthPx) {
-                        detectTapGestures(onTap = { onSelectClip(clip.id) })
+                    .pointerInput(clip.id, totalMs, laneWidthPx, tapEnabled) {
+                        detectTapGestures(onTap = {
+                            if (tapEnabled) onSelectClip(clip.id)
+                        })
                     }
-                    .pointerInput(clip.id, totalMs, laneWidthPx) {
-                        detectHorizontalDragGestures(
+                    .pointerInput(clip.id, totalMs, laneWidthPx, rowStridePx) {
+                        // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
+                        // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
+                        detectDragGestures(
                             onDragStart = {
                                 dragBaseStartMs = clip.startMs
                                 dragAccumPx = 0f
                                 dragOverrideMs = clip.startMs
+                                laneBase = clip.lane.coerceAtLeast(0)
+                                dragAccumPyAbs = 0f
+                                laneOverride = laneBase
                             },
-                            onHorizontalDrag = { _, dx ->
-                                dragAccumPx += dx
+                            onDrag = { change: PointerInputChange, drag: Offset ->
+                                change.consume()
+                                // X axis — startMs.
+                                dragAccumPx += drag.x
                                 if (laneWidthPx > 0f && totalMs > 0L) {
                                     val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
                                     val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
                                     dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
                                         .coerceIn(0L, maxStart)
                                 }
+                                // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
+                                // 아래로 끌면 증가. 0 미만은 0 으로 clamp.
+                                dragAccumPyAbs += drag.y
+                                if (rowStridePx > 0f) {
+                                    val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
+                                    laneOverride = (laneBase + laneDelta).coerceAtLeast(0)
+                                }
                             },
                             onDragEnd = {
                                 dragOverrideMs?.let { onUpdateStart(clip.id, it) }
+                                laneOverride?.let { newLane ->
+                                    if (newLane != clip.lane) onUpdateLane(clip.id, newLane)
+                                }
                                 dragOverrideMs = null
+                                laneOverride = null
                             },
-                            onDragCancel = { dragOverrideMs = null },
+                            onDragCancel = {
+                                dragOverrideMs = null
+                                laneOverride = null
+                            },
                         )
                     },
             )

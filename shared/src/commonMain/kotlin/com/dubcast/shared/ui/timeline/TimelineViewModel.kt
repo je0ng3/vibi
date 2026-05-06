@@ -515,12 +515,45 @@ class TimelineViewModel constructor(
         previewLangCode = null,
     )
 
+    /**
+     * BGM clip 의 visual lane (위/아래 행) override — DB 영속화 없는 in-memory map.
+     * 사용자가 vertical drag 으로 lane 을 바꾸면 갱신되고, repository flow 가 새 list 를
+     * emit 할 때마다 이 map 을 적용해 lane 을 복원한다. clip id 가 사라지면 자동 정리.
+     */
+    private val bgmClipLaneOverrides = mutableMapOf<String, Int>()
+
+    private fun applyBgmLaneOverrides(clips: List<BgmClip>): List<BgmClip> {
+        if (bgmClipLaneOverrides.isEmpty()) return clips
+        // GC: clip 이 사라졌으면 override 도 제거.
+        val liveIds = clips.mapTo(HashSet(clips.size)) { it.id }
+        bgmClipLaneOverrides.keys.retainAll(liveIds)
+        return clips.map { c ->
+            val lane = bgmClipLaneOverrides[c.id]
+            if (lane != null && lane != c.lane) c.copy(lane = lane) else c
+        }
+    }
+
     private fun observeBgmClips() {
         viewModelScope.launch {
             bgmClipRepository.observeClips(projectId).collect { clips ->
-                _uiState.value = _uiState.value.copy(bgmClips = clips)
+                _uiState.value = _uiState.value.copy(bgmClips = applyBgmLaneOverrides(clips))
             }
         }
+    }
+
+    /**
+     * 사용자가 BGM clip 을 vertical drag 으로 다른 lane (위·아래 행) 으로 옮길 때 호출.
+     * 음수 입력은 0 으로 clamp. 현재는 in-memory only — DB 영속화는 별도 마이그레이션
+     * 단계에서 추가. 화면 재진입 시 lane 은 0 으로 리셋된다.
+     */
+    fun onUpdateBgmLane(clipId: String, newLane: Int) {
+        val lane = newLane.coerceAtLeast(0)
+        bgmClipLaneOverrides[clipId] = lane
+        val current = _uiState.value
+        val updated = current.bgmClips.map { c ->
+            if (c.id == clipId && c.lane != lane) c.copy(lane = lane) else c
+        }
+        _uiState.value = current.copy(bgmClips = updated)
     }
 
     private fun observeSeparationDirectives() {
