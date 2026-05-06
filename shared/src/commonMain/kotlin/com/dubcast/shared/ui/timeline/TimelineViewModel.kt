@@ -241,7 +241,6 @@ data class TimelineUiState(
      * STT 결과 originalSrt 만 받고 번역은 skip. false 면 기존 흐름 (사용자가 lang chip 으로 번역 langs 선택).
      * dub 모드에선 사용 안 함 (현재 dropdown 그대로).
      */
-    val localizationOriginalOnly: Boolean = false,
     /** 자막 생성 전 STT 스크립트 검토·수정 단계 활성화 여부. dub 모드는 미지원 (BFF 추가 필요). */
     val reviewScriptBeforeGenerate: Boolean = false,
     /** STT only 결과 cue 들. 검토 sheet 의 데이터 source. null = STT 미실행 또는 검토 완료. */
@@ -3163,14 +3162,11 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(localizationOpen = false)
     }
     fun onSetLocalizationMode(mode: String) {
-        _uiState.value = _uiState.value.copy(localizationMode = mode)
-    }
-    /**
-     * 자막 모드 한정 — "원본 언어" / "번역 언어 선택" 라디오 토글.
-     * true = 원본만 (langs 무시 + BFF 가 STT 만), false = 기존 다국어 번역.
-     */
-    fun onSetLocalizationOriginalOnly(originalOnly: Boolean) {
-        _uiState.value = _uiState.value.copy(localizationOriginalOnly = originalOnly)
+        // 더빙 모드 전환 시 자막 모드의 "원본" sentinel ("") 을 정리. 잔존 시 startEnabled 는 true 인데
+        // 더빙 모드에선 "원본" chip 미노출 + onStartLocalization 가드가 silent return → 사용자 막힘.
+        val current = _uiState.value.localizationLangs
+        val cleaned = if (mode == "dub") current - "" else current
+        _uiState.value = _uiState.value.copy(localizationMode = mode, localizationLangs = cleaned)
     }
     fun onToggleLocalizationLang(code: String) {
         val current = _uiState.value.localizationLangs
@@ -3179,21 +3175,19 @@ class TimelineViewModel constructor(
     }
     fun onStartLocalization() {
         val s = _uiState.value
-        println("[Localization] onStartLocalization mode=${s.localizationMode} langs=${s.localizationLangs} originalOnly=${s.localizationOriginalOnly} segCount=${s.segments.size}")
         val source = s.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) {
-            println("[Localization] aborted: no source segment")
-            return
-        }
+        if (source.isNullOrBlank()) return
         val mode = s.localizationMode
-        // 자막 + 원본 모드: targetLanguageCodes 비워서 BFF 가 STT only 경로 (originalSrt 만 반환).
-        // 그 외 모드 / 사용자 lang 선택 흐름: 기존 동작.
-        val isSubtitleOriginalOnly = mode == "subtitle" && s.localizationOriginalOnly
-        val langs = if (isSubtitleOriginalOnly) emptyList() else s.localizationLangs.toList()
-        if (langs.isEmpty() && !isSubtitleOriginalOnly) {
-            println("[Localization] aborted: empty langs (and not original-only)")
-            return
-        }
+        // 자막 모드의 "원본" chip = "" sentinel — 다른 lang 과 함께 다중 선택 가능.
+        // 더빙 모드는 UI 에서 원본 chip 안 띄우므로 sentinel 도 안 들어옴.
+        val selected = s.localizationLangs.toList()
+        val translationLangs = selected.filter { it.isNotBlank() }
+        val includesOriginalSubtitle = mode == "subtitle" && "" in selected
+        // 자막 모드: 원본만 OR 번역 1개+ → 진행. 둘 다 없으면 abort.
+        // 더빙 모드: 번역 1개+ → 진행.
+        val isSubtitleOriginalOnly = mode == "subtitle" && includesOriginalSubtitle && translationLangs.isEmpty()
+        if (translationLangs.isEmpty() && !isSubtitleOriginalOnly) return
+        val langs = translationLangs
         viewModelScope.launch {
             println("[Localization] launching mode=$mode langs=$langs source=$source")
             // 사용자가 패널에서 고른 langs 를 project 에 persist — observeProject flow 가 다시 emit 하면서

@@ -875,63 +875,35 @@ fun TimelineScreen(
 
                 // 원본 언어는 Perso STT 가 자동 감지함 — 사용자 선택 불필요.
 
-                // 자막 모드: "원본 언어" / "번역 언어 선택" 라디오. 더빙 모드는 기존 다중 선택 그대로.
-                if (state.localizationMode == "subtitle") {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = state.localizationOriginalOnly,
-                                onClick = { viewModel.onSetLocalizationOriginalOnly(true) }
-                            )
-                            Text(
-                                "원본 언어 (스크립트만)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = tokens.onBackgroundPrimary,
-                                modifier = Modifier.clickable {
-                                    viewModel.onSetLocalizationOriginalOnly(true)
-                                }
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = !state.localizationOriginalOnly,
-                                onClick = { viewModel.onSetLocalizationOriginalOnly(false) }
-                            )
-                            Text(
-                                "번역 언어 선택",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = tokens.onBackgroundPrimary,
-                                modifier = Modifier.clickable {
-                                    viewModel.onSetLocalizationOriginalOnly(false)
-                                }
-                            )
-                        }
+                // 자막 모드일 때 chip row 의 첫 항목에 "원본" chip 추가 (lang code "" sentinel).
+                // 다른 lang chip 과 함께 다중 선택 가능 — 원본만 선택 시 STT only, 다른 lang 도 선택 시 번역 + 원본.
+                // 더빙 모드는 원본 더빙 미지원 (Perso 가 source==target 안 받음) 이라 원본 chip 안 보임.
+                Text("자막/더빙 언어 (다중)", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (state.localizationMode == "subtitle") {
+                        FilterChip(
+                            selected = "" in state.localizationLangs,
+                            onClick = { viewModel.onToggleLocalizationLang("") },
+                            label = { Text("원본") }
+                        )
                     }
-                }
-
-                // 번역 langs chip 영역 — 자막 + 원본만 모드면 숨김 (확정 차원에서 disable).
-                val showLangChips = !(state.localizationMode == "subtitle" && state.localizationOriginalOnly)
-                if (showLangChips) {
-                    Text("번역 대상 언어 (다중)", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf(
-                            "en" to "English",
-                            "ko" to "한국어",
-                            "ja" to "日本語",
-                            "zh" to "中文",
-                            "es" to "Español",
-                            "fr" to "Français",
-                            "de" to "Deutsch"
-                        ).forEach { (code, label) ->
-                            FilterChip(
-                                selected = code in state.localizationLangs,
-                                onClick = { viewModel.onToggleLocalizationLang(code) },
-                                label = { Text(label) }
-                            )
-                        }
+                    listOf(
+                        "en" to "English",
+                        "ko" to "한국어",
+                        "ja" to "日本語",
+                        "zh" to "中文",
+                        "es" to "Español",
+                        "fr" to "Français",
+                        "de" to "Deutsch"
+                    ).forEach { (code, label) ->
+                        FilterChip(
+                            selected = code in state.localizationLangs,
+                            onClick = { viewModel.onToggleLocalizationLang(code) },
+                            label = { Text(label) }
+                        )
                     }
                 }
                 // 자막 모드 한정: STT 결과 미리 검토 후 다국어 자막 생성. dub 는 BFF 추가 필요해 현재 미지원.
@@ -942,9 +914,8 @@ fun TimelineScreen(
                         label = { Text("📝 스크립트 먼저 검토") }
                     )
                 }
-                // "생성 시작" enable 조건: 자막+원본만 OR 번역 lang 1개 이상.
-                val startEnabled = (state.localizationMode == "subtitle" && state.localizationOriginalOnly) ||
-                    state.localizationLangs.isNotEmpty()
+                // "생성 시작" enable 조건: 자막/번역 lang 1개 이상 선택 (자막 모드면 "원본" chip 도 포함).
+                val startEnabled = state.localizationLangs.isNotEmpty()
                 // 3-state 라벨:
                 //  진행 중 → "자막/더빙 생성 중" (disabled)
                 //  자막 review pending (script ready) → "스크립트 생성 완료" → review sheet 재오픈
