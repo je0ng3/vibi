@@ -52,17 +52,20 @@ fun DetailEditPanel(
     onSeekToClip: (positionMs: Long) -> Unit,
 ) {
     val tokens = LocalDubCastColors.current
+    // 원본 자막 (lang="") 도 포함 — chip 라벨 "ORIGINAL". 빈 문자열을 항상 첫 항목으로 두고 나머지는
+    // 알파벳 순. compareBy 의 첫 키 (isNotBlank) 가 false<true 정렬을 이용해 빈 문자열 우선.
     val langs = remember(state.subtitleClips) {
         state.subtitleClips.map { it.languageCode }
-            .filter { it.isNotBlank() }
             .distinct()
-            .sorted()
+            .sortedWith(compareBy({ it.isNotBlank() }, { it }))
     }
     if (langs.isEmpty()) {
         Text("자막이 없어 상세 편집 불가.", style = MaterialTheme.typography.bodySmall)
         return
     }
-    val activeLang = state.detailEditLang ?: langs.first()
+    // detailEditLang 이 stale (자막이 삭제돼 langs 에 더 이상 없음) 이면 fallback — 잘못된 lang 으로
+    // cue list 가 빈 채 멈추는 사고 방지.
+    val activeLang = state.detailEditLang?.takeIf { it in langs } ?: langs.first()
     val cues = remember(state.subtitleClips, activeLang) {
         state.subtitleClips.filter { it.languageCode == activeLang }.sortedBy { it.startMs }
     }
@@ -88,7 +91,7 @@ fun DetailEditPanel(
                 FilterChip(
                     selected = lang == activeLang,
                     onClick = { onSelectLang(lang) },
-                    label = { Text(lang.uppercase()) }
+                    label = { Text(if (lang.isBlank()) "ORIGINAL" else lang.uppercase()) }
                 )
             }
         }

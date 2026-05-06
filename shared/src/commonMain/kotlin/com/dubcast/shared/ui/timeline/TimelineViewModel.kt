@@ -9,6 +9,7 @@ import kotlin.uuid.Uuid
 import com.dubcast.shared.domain.model.AutoJobStatus
 import com.dubcast.shared.domain.model.DubClip
 import com.dubcast.shared.domain.model.EditProject
+import com.dubcast.shared.domain.model.clearAutoSubtitleDub
 import com.dubcast.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.dubcast.shared.domain.model.ImageClip
 import com.dubcast.shared.domain.model.Segment
@@ -407,6 +408,25 @@ class TimelineViewModel constructor(
     private var separationGate = TriggerGate.ARMED
     private var reviewSheetGate = TriggerGate.ARMED
 
+    /**
+     * Hot-path 가드 — 이미 stale 마킹된 상태면 [markRenderStale] 의 코루틴 launch 도 skip.
+     * pushUndoState 가 드래그·슬라이더에서 빈번 호출되므로 idempotent no-op 도 zero round-trip 으로.
+     *
+     * Lifecycle:
+     *  - 신규 프로젝트 / fresh render 직후 → false (mutation 마다 markRenderStale 가 첫 1회 진입 허용).
+     *  - markRenderStale 가 invalidateGeneratedResults / RUNNING 가드 stale 마킹 / DB 가 이미 stale
+     *    이라 즉시 종료 — 모두 끝에서 true 로 set. 이후 mutation 들은 launch 도 안 함.
+     *  - [observeProject] 가 `project.isRenderStale=false` (= EnsureLatestRenderUseCase 가 새로 render
+     *    완료 후 set) 를 관찰한 순간 다시 false 로 풀어 다음 mutation cycle 정상.
+     *  - [resetTimelineDerivedResults] (영상편집 commit) 직후에도 explicit true — DB 가 stale 이므로
+     *    observeProject 의 fresh 검사가 자동 reset 하지 않으니 명시.
+     *
+     * @Volatile 은 다른 코루틴이 set 한 값을 다른 launch 안에서 즉시 보게 하기 위함 — KMP 공통이라
+     *   actual 동작은 플랫폼 메모리모델에 위임 (JVM/Native 모두 volatile 시맨틱 제공).
+     */
+    @kotlin.concurrent.Volatile
+    private var renderStaleMarked = false
+
     init {
         loadSegments()
         observeClips()
@@ -418,18 +438,81 @@ class TimelineViewModel constructor(
 
     /**
      * Timeline mutation 이 발생하면 즉시 호출 — 다음 자막/더빙/분리 시점에 EnsureLatestRender 가
-     * 새로 BFF render 잡을 보내도록 표시. mutation handler 들을 wrapping 하지 않고 caller 가 명시 호출.
+     * 새로 BFF render 잡을 보내도록 표시 + 이전에 생성된 자막/더빙 결과를 제거 (timeline 과 어긋난
+     * stale 결과 노출 방지). 이미 stale 상태면 no-op (idempotent — 첫 mutation 시 1회만 정리).
+     * pushUndoState 와 함께 호출되는 곳마다 한 줄 추가하면 됨 — segment add/remove/trim/speed/volume/
+     * split/duplicate/range mutate 등.
      *
-     * 이미 stale 상태면 no-op (불필요한 DB write 방지). pushUndoState 와 함께 호출되는 곳마다
-     * 한 줄 추가하면 됨 — segment add/remove/trim/speed/volume/split/duplicate/range mutate 등.
+     * 자막/더빙 generation 이 RUNNING 인 도중에 호출되면 clip 삭제 시 race 가능 — clip 정리는 보류하고
+     * `isRenderStale=true` 만 마킹. 사용자가 generation 직후 timeline 편집을 시도하는 드문 케이스에 대비.
+     *
+     * Hot-path 최적화: in-memory [renderStaleMarked] 플래그로 이미 마킹됐으면 launch 도 skip.
      */
     private fun markRenderStale() {
+        if (renderStaleMarked) return
+        val current = _uiState.value
+        // generation 진행 중 — clip 정리는 race 위험. stale 만 마킹하고 자막/더빙 결과 정리는 보류.
+        if (current.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+            current.autoDubStatus == AutoJobStatus.RUNNING
+        ) {
+            viewModelScope.launch {
+                val project = editProjectRepository.getProject(projectId) ?: return@launch
+                if (!project.isRenderStale) {
+                    editProjectRepository.updateProject(project.copy(isRenderStale = true))
+                }
+                renderStaleMarked = true
+            }
+            return
+        }
         viewModelScope.launch {
             val project = editProjectRepository.getProject(projectId) ?: return@launch
-            if (project.isRenderStale) return@launch
-            editProjectRepository.updateProject(project.copy(isRenderStale = true))
+            if (project.isRenderStale) {
+                renderStaleMarked = true
+                return@launch
+            }
+            invalidateGeneratedResults(project)
+            renderStaleMarked = true
         }
     }
+
+    /**
+     * timeline 편집으로 무효화된 자막/더빙 결과 정리 — clips 삭제 + project 의 dubbed paths /
+     * job ids / status 모두 IDLE 로 + render 캐시 두 슬롯 비움 + isRenderStale=true.
+     * separation 결과와 segment volume 은 건드리지 않음 (영상편집 commit 시 [resetTimelineDerivedResults]
+     * 가 별도 처리).
+     *
+     * 진행 중 코루틴 (generateAutoSubtitles / generateAutoDub) 이 있으면 race 가능 — [markRenderStale]
+     * 의 RUNNING 가드가 본 함수 호출 자체를 skip 하므로 본 함수 진입 시점엔 이미 IDLE/READY/FAILED.
+     */
+    private suspend fun invalidateGeneratedResults(project: EditProject) {
+        subtitleClipRepository.deleteAllClips(projectId)
+        dubClipRepository.deleteAllClips(projectId)
+        editProjectRepository.updateProject(project.clearAutoSubtitleDub())
+        subtitleGate = TriggerGate.ARMED
+        dubGate = TriggerGate.ARMED
+        reviewSheetGate = TriggerGate.ARMED
+        _uiState.value = _uiState.value.clearAutoSubtitleDubUiState()
+    }
+
+    /**
+     * 자막/더빙 무효화 시 UI state reset — sheet 닫기 + 검토 / 진행 표시 초기화.
+     * `invalidateGeneratedResults` (timeline mutation 트리거) 와 `resetTimelineDerivedResults`
+     * (영상편집 commit) 양쪽이 같은 UI 표면을 정리하므로 단일 helper.
+     */
+    private fun TimelineUiState.clearAutoSubtitleDubUiState(): TimelineUiState = copy(
+        sttPreflightStatus = AutoJobStatus.IDLE,
+        sttPreflightError = null,
+        regenerateSubtitleStatus = AutoJobStatus.IDLE,
+        regenerateSubtitleError = null,
+        pendingReviewCues = null,
+        pendingReviewTargetLangs = emptyList(),
+        // observeProject 가 한 프레임 뒤 DB(null csv) 보고 동기화하지만 즉시 false 로 — 라벨 깜빡임 방지.
+        subtitleReviewPending = false,
+        showScriptReviewSheet = false,
+        showSubtitleEditSheet = false,
+        showRegenerateSubtitleSheet = false,
+        previewLangCode = null,
+    )
 
     private fun observeBgmClips() {
         viewModelScope.launch {
@@ -486,6 +569,12 @@ class TimelineViewModel constructor(
                         hasSeededUndoSnapshot = true
                         // 첫 진입 — DB 의 현재 상태 baseline 만 push. mutation 아니라 stale 마킹 안 함.
                         pushUndoState(markStale = false)
+                    }
+                    // Hot-path 가드 동기화 — DB 가 fresh (=EnsureLatestRender 가 새로 render 후 false 로
+                    // set 했거나 신규 프로젝트가 아직 mutation 없는 상태) 면 in-memory 플래그도 false 로
+                    // 풀어 다음 mutation 의 markRenderStale 가 정상 진입 가능.
+                    if (!project.isRenderStale && renderStaleMarked) {
+                        renderStaleMarked = false
                     }
                     maybeTriggerAutoPipelines(project)
                 }
@@ -896,7 +985,10 @@ class TimelineViewModel constructor(
             val trimmed = newText.trim()
             if (trimmed.isEmpty() || trimmed == clip.text.trim()) return@launch
             subtitleClipRepository.updateClip(clip.copy(text = trimmed))
-            pushUndoState()
+            // 자막 cue 자체 mutation — markStale=false. invalidateGeneratedResults 가 deleteAllClips 로
+            // 방금 수정한 자막을 즉시 지우는 self-deletion 회피. 자막 mutation 은 timeline 구조 변경이
+            // 아니므로 render 캐시도 보존 (다국어 재생성도 source 자막이 있어야 가능).
+            pushUndoState(markStale = false)
         }
     }
 
@@ -965,7 +1057,9 @@ class TimelineViewModel constructor(
                 fontFamily, fontSizeSp, colorHex, backgroundColorHex,
             )
             _uiState.value = _uiState.value.copy(showSubtitleSheet = false)
-            pushUndoState()
+            // 자막 추가 — markStale=false. 자동 생성 자막(`dubbedAudioPaths` / autoSubtitleStatus) 의
+            // stale 여부와 무관 + 이미 생성된 cue 들을 invalidateGeneratedResults 가 지우지 않도록.
+            pushUndoState(markStale = false)
         }
     }
 
@@ -973,7 +1067,10 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             val clip = _uiState.value.dubClips.find { it.id == clipId } ?: return@launch
             moveDubClip(clip, newStartMs, _uiState.value.videoDurationMs)
-            pushUndoState()
+            // 더빙 clip 위치 변경 — markStale=false. DubClip 행은 사용자 추가 더빙으로 timeline 구조와
+            // 별개 (자동 더빙 결과는 project.dubbedAudioPaths 맵에 따로 저장). 이동만으로 render 캐시
+            // 무효화 + 자동 더빙 결과 삭제는 과도.
+            pushUndoState(markStale = false)
         }
     }
 
@@ -1024,13 +1121,18 @@ class TimelineViewModel constructor(
             val clamped = volume.coerceIn(0f, 2f)
             if (clamped == clip.volume) return@launch
             dubClipRepository.updateClip(clip.copy(volume = clamped))
-            pushUndoState()
+            // 더빙 clip 볼륨 변경 — markStale=false (자막/더빙 clip mutation 정책).
+            pushUndoState(markStale = false)
         }
     }
 
     fun onDeleteSelectedClip() {
         viewModelScope.launch {
             val state = _uiState.value
+            // 자막/더빙 클립 삭제는 자동 생성 결과 stale 여부에 영향 없음 → markStale=false.
+            // image clip (overlay) 은 timeline structure 변경이라 markStale=true 필요 → mixed 시점은
+            // 실제 삭제된 카테고리에 따라 분기.
+            val deletedImage = state.selectedImageClipId != null
             state.selectedDubClipId?.let { dubClipId ->
                 deleteDubClip(dubClipId)
                 subtitleClipRepository.deleteClipsBySourceDubClipId(dubClipId)
@@ -1042,7 +1144,7 @@ class TimelineViewModel constructor(
                 selectedSubtitleClipId = null,
                 selectedImageClipId = null
             )
-            pushUndoState()
+            pushUndoState(markStale = deletedImage)
         }
     }
 
@@ -1179,7 +1281,8 @@ class TimelineViewModel constructor(
             subtitleClipRepository.updateClip(
                 clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
             )
-            pushUndoState()
+            // 자막 위치 변경 — markStale=false (자막 clip mutation 정책).
+            pushUndoState(markStale = false)
         }
     }
 
@@ -1211,7 +1314,8 @@ class TimelineViewModel constructor(
                     )
                 )
             }
-            pushUndoState()
+            // 자막 스타일 일괄 변경 — markStale=false (자막 clip mutation 정책).
+            pushUndoState(markStale = false)
         }
     }
 
@@ -1253,7 +1357,8 @@ class TimelineViewModel constructor(
                     )
                 }
             }
-            pushUndoState()
+            // 자막 스타일 변경 — markStale=false (자막 clip mutation 정책).
+            pushUndoState(markStale = false)
         }
     }
 
@@ -1940,6 +2045,9 @@ class TimelineViewModel constructor(
     /**
      * onCommitSegmentEdit 시 호출되는 reset — 영상편집 결과로 음원분리/자막/더빙이 timeline 과
      * 어긋나므로 모두 초기화. 사용자는 다시 음원분리/자막/더빙 생성 단계를 거쳐야 한다.
+     *
+     * 자막/더빙 필드는 [EditProject.clearAutoSubtitleDub] helper 와 공유 (SSOT) — separation 관련
+     * 필드만 본 함수 고유.
      */
     private suspend fun resetTimelineDerivedResults() {
         // 1) 음원분리 directive 모두 삭제 + 영상 전체 음소거 해제
@@ -1952,31 +2060,14 @@ class TimelineViewModel constructor(
         // 3) 진행 중 잡 폴링 취소
         separationJob?.cancel()
         separationJob = null
-        // 4) EditProject 의 자동 잡/더빙 결과 필드 초기화 + render 캐시 무효화 (영상편집 결과로 source 변경).
+        // 4) EditProject 의 자동 잡/더빙 결과 + 음원분리 필드 초기화 + render 캐시 무효화.
         editProjectRepository.getProject(projectId)?.let { p ->
             editProjectRepository.updateProject(
-                p.copy(
-                    autoSubtitleStatus = AutoJobStatus.IDLE,
-                    autoDubStatus = AutoJobStatus.IDLE,
-                    autoSubtitleError = null,
-                    autoDubError = null,
-                    autoSubtitleJobId = null,
-                    autoDubJobId = null,
-                    autoDubStatusByLang = emptyMap(),
-                    autoDubJobIdByLang = emptyMap(),
-                    dubbedAudioPaths = emptyMap(),
-                    dubbedVideoPaths = emptyMap(),
-                    dubbedAudioPath = null,
+                p.clearAutoSubtitleDub().copy(
                     separationJobId = null,
                     separationSegmentId = null,
                     separationStatus = AutoJobStatus.IDLE,
                     separationError = null,
-                    pendingReviewTargetLangsCsv = null,
-                    // 영상편집 모드 결과 reset 시 render output 도 stale — 다음 자막/더빙/분리 시 새로 render.
-                    // audio/video 두 슬롯 모두 비움 (timeline 자체가 변경됐으므로 어느 종류도 재사용 불가).
-                    isRenderStale = true,
-                    currentAudioRenderJobId = null,
-                    currentVideoRenderJobId = null,
                 )
             )
         }
@@ -1985,21 +2076,13 @@ class TimelineViewModel constructor(
         dubGate = TriggerGate.ARMED
         separationGate = TriggerGate.ARMED
         reviewSheetGate = TriggerGate.ARMED
-        // 6) UI 상태 — sheet 닫고 audioSeparation hydrate 데이터도 클리어
-        _uiState.value = _uiState.value.copy(
+        // render 캐시도 stale 마킹됐으므로 hot-path 플래그도 동기화 — markRenderStale 가 다음 호출에서
+        // 즉시 skip 가능. observeProject 의 fresh 검사가 false (=stale) 이므로 자동 reset 안 됨 → 명시적.
+        renderStaleMarked = true
+        // 6) UI 상태 — 자막/더빙 공통 reset + audioSeparation hydrate 데이터도 클리어
+        _uiState.value = _uiState.value.clearAutoSubtitleDubUiState().copy(
             audioSeparation = null,
             showAudioSeparationSheet = false,
-            sttPreflightStatus = AutoJobStatus.IDLE,
-            sttPreflightError = null,
-            regenerateSubtitleStatus = AutoJobStatus.IDLE,
-            regenerateSubtitleError = null,
-            pendingReviewCues = null,
-            pendingReviewTargetLangs = emptyList(),
-            // observeProject 가 한 프레임 뒤 DB(null csv) 보고 동기화하지만 즉시 false 로 — 라벨 깜빡임 방지.
-            subtitleReviewPending = false,
-            showScriptReviewSheet = false,
-            showSubtitleEditSheet = false,
-            showRegenerateSubtitleSheet = false,
             showDetailEdit = false,
         )
     }

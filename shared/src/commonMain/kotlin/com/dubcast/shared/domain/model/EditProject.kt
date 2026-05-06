@@ -99,6 +99,32 @@ data class EditProject(
 enum class AutoJobStatus { IDLE, RUNNING, READY, FAILED }
 
 /**
+ * 자동 자막/더빙 관련 모든 필드를 IDLE 로 리셋 + render 캐시 두 슬롯 비움 + `isRenderStale=true`.
+ *
+ * 호출자가 추가로 정리할 필드 (separation*, segments volume 등) 는 별도 `.copy()` 로 merge.
+ * timeline mutation 시 `TimelineViewModel.invalidateGeneratedResults` (구 `clearGeneratedSubtitleAndDub`)
+ * 와 영상편집 commit 시 `resetTimelineDerivedResults` 양쪽이 본 helper 를 공유 — 두 곳에서
+ * 자막/더빙 무효화 필드 set 이 어긋나지 않도록 SSOT.
+ */
+fun EditProject.clearAutoSubtitleDub(): EditProject = copy(
+    autoSubtitleStatus = AutoJobStatus.IDLE,
+    autoDubStatus = AutoJobStatus.IDLE,
+    autoSubtitleError = null,
+    autoDubError = null,
+    autoSubtitleJobId = null,
+    autoDubJobId = null,
+    autoDubStatusByLang = emptyMap(),
+    autoDubJobIdByLang = emptyMap(),
+    dubbedAudioPaths = emptyMap(),
+    dubbedVideoPaths = emptyMap(),
+    dubbedAudioPath = null,
+    pendingReviewTargetLangsCsv = null,
+    isRenderStale = true,
+    currentAudioRenderJobId = null,
+    currentVideoRenderJobId = null,
+)
+
+/**
  * 원본 언어 자막 (lang="" SubtitleClip) 이 export variant / preview chip 에 노출 가능한 상태인지.
  *
  * 조건:
