@@ -109,6 +109,7 @@ object ProjectContextBuilder {
             isRangeSelecting = state.isRangeSelecting,
             pendingRangeStartMs = rangeStart,
             pendingRangeEndMs = rangeEnd,
+            videoDurationMs = state.videoDurationMs,
         )
     }
 }

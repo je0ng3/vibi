@@ -72,12 +72,15 @@ class ChatToolDispatcher {
                 if (bgmId == null && segId == null) {
                     throw IllegalArgumentException("segmentId or bgmClipId required")
                 }
+                if (bgmId != null && segId != null) {
+                    throw IllegalArgumentException("segmentId 와 bgmClipId 는 동시에 줄 수 없습니다 (XOR)")
+                }
                 vm.applySeparateRangeFromChat(
                     segmentId = segId,
                     bgmClipId = bgmId,
                     trimStartMs = a.optLong("trimStartMs"),
                     trimEndMs = a.optLong("trimEndMs"),
-                    numberOfSpeakers = a.optInt("numberOfSpeakers") ?: 2,
+                    numberOfSpeakers = a.requireInt("numberOfSpeakers"),
                 )
             }
             "update_stem_volume" -> {
@@ -156,6 +159,10 @@ class ChatToolDispatcher {
     private fun JsonObject.requireFloat(key: String): Float =
         (get(key) as? JsonPrimitive)?.float
             ?: throw IllegalArgumentException("Missing float arg: $key")
+
+    private fun JsonObject.requireInt(key: String): Int =
+        (get(key) as? JsonPrimitive)?.long?.toInt()
+            ?: throw IllegalArgumentException("Missing int arg: $key")
 
     private fun JsonObject.requireStringArray(key: String): List<String> =
         (get(key) as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content }

@@ -2434,17 +2434,26 @@ class TimelineViewModel constructor(
     // 0 으로 깎이는 버그가 있었다. 본 그룹 메서드들은 UI state 를 거치지 않고 use case 를 직접
     // 호출 — chat tool 이 자연어로 받은 [start, end] 를 그대로 적용. range 모드 진입/종료 부수효과 0.
 
+    /**
+     * 입력 [start, end] 가 timeline 안에 들어가고 최소 길이 충족하는지 검증해 slice. 잘못된 입력은
+     * IllegalArgumentException — dispatcher 가 [DispatchResult.Failure] 로 노출, 사용자에게 가시화.
+     */
     private fun chatRangeSlices(start: Long, end: Long): List<SegmentRangeSlice> {
         val total = _uiState.value.videoDurationMs.coerceAtLeast(0L)
-        val s = start.coerceIn(0L, total)
-        val e = end.coerceIn(0L, total)
-        if (e - s < MIN_RANGE_MS) return emptyList()
-        return sliceGlobalRange(s, e).sortedByDescending { it.order }
+        if (start < 0L || end > total || end - start < MIN_RANGE_MS) {
+            throw IllegalArgumentException(
+                "range 가 유효하지 않습니다 (start=$start, end=$end, total=$total)"
+            )
+        }
+        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        if (slices.isEmpty()) {
+            throw IllegalArgumentException("range 가 video segment 와 겹치지 않습니다")
+        }
+        return slices
     }
 
     fun applyDeleteRangeFromChat(start: Long, end: Long) {
         val slices = chatRangeSlices(start, end)
-        if (slices.isEmpty()) return
         viewModelScope.launch {
             slices.forEach { sl -> removeSegmentRange(sl.segmentId, sl.localStart, sl.localEnd) }
             refreshSegmentsStateFromDb()
@@ -2454,7 +2463,6 @@ class TimelineViewModel constructor(
 
     fun applyDuplicateRangeFromChat(start: Long, end: Long) {
         val slices = chatRangeSlices(start, end)
-        if (slices.isEmpty()) return
         viewModelScope.launch {
             slices.forEach { sl -> duplicateSegmentRange(sl.segmentId, sl.localStart, sl.localEnd) }
             refreshSegmentsStateFromDb()
@@ -2464,11 +2472,11 @@ class TimelineViewModel constructor(
 
     fun applyVolumeRangeFromChat(start: Long, end: Long, value: Float) {
         val slices = chatRangeSlices(start, end)
-        if (slices.isEmpty()) return
+        val v = value.coerceIn(0f, 2f)
         viewModelScope.launch {
             slices.forEach { sl ->
                 val r = splitSegment(sl.segmentId, sl.localStart, sl.localEnd)
-                updateSegmentVolume(r.middle.id, value)
+                updateSegmentVolume(r.middle.id, v)
             }
             refreshSegmentsStateFromDb()
             pushUndoState()
@@ -2477,11 +2485,11 @@ class TimelineViewModel constructor(
 
     fun applySpeedRangeFromChat(start: Long, end: Long, value: Float) {
         val slices = chatRangeSlices(start, end)
-        if (slices.isEmpty()) return
+        val v = value.coerceIn(0.25f, 4f)
         viewModelScope.launch {
             slices.forEach { sl ->
                 val r = splitSegment(sl.segmentId, sl.localStart, sl.localEnd)
-                updateSegmentSpeed(r.middle.id, value)
+                updateSegmentSpeed(r.middle.id, v)
             }
             refreshSegmentsStateFromDb()
             pushUndoState()
@@ -2503,12 +2511,18 @@ class TimelineViewModel constructor(
         numberOfSpeakers: Int,
     ) {
         if (bgmClipId != null) {
-            onStartBgmSeparation(bgmClipId)
+            val bgm = _uiState.value.bgmClips.firstOrNull { it.id == bgmClipId }
+                ?: throw IllegalArgumentException("bgmClipId 가 projectContext.bgmClips 에 없습니다")
+            onStartBgmSeparation(bgm.id)
             return
         }
-        val segId = segmentId ?: return
-        val seg = _uiState.value.segments.firstOrNull { it.id == segId } ?: return
-        if (seg.type != SegmentType.VIDEO) return
+        val segId = segmentId
+            ?: throw IllegalArgumentException("segmentId 또는 bgmClipId 중 하나는 필수입니다")
+        val seg = _uiState.value.segments.firstOrNull { it.id == segId }
+            ?: throw IllegalArgumentException("segmentId 가 projectContext.segments 에 없습니다")
+        if (seg.type != SegmentType.VIDEO) {
+            throw IllegalArgumentException("video segment 만 음원분리 가능합니다")
+        }
         val rs = trimStartMs
         val re = trimEndMs
         val (rangeStart, rangeEnd) = if (rs != null && re != null && re > rs) rs to re else null to null

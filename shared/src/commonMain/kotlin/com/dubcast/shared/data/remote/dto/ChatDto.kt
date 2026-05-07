@@ -30,6 +30,7 @@ data class ProjectContextDto(
     val isRangeSelecting: Boolean = false,
     val pendingRangeStartMs: Long? = null,
     val pendingRangeEndMs: Long? = null,
+    val videoDurationMs: Long = 0L,
 )
 
 @Serializable
