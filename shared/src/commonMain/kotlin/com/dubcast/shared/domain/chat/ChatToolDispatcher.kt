@@ -41,25 +41,29 @@ class ChatToolDispatcher {
         val a = step.args
         when (step.name) {
             // --- 영상 편집 ---
+            // applyXxxFromChat 은 UI 슬라이더 clamp 를 우회하는 code-path. dispatcher 가 받은
+            // startMs/endMs 가 그대로 use case 로 흘러간다 — range 모드 진입 불필요.
             "delete_segment_range" -> {
-                vm.onSetPendingRangeStart(a.requireLong("startMs"))
-                vm.onSetPendingRangeEnd(a.requireLong("endMs"))
-                vm.onDeleteRange()
+                vm.applyDeleteRangeFromChat(a.requireLong("startMs"), a.requireLong("endMs"))
             }
             "duplicate_segment_range" -> {
-                vm.onSetPendingRangeStart(a.requireLong("startMs"))
-                vm.onSetPendingRangeEnd(a.requireLong("endMs"))
-                vm.onDuplicateRange()
+                vm.applyDuplicateRangeFromChat(a.requireLong("startMs"), a.requireLong("endMs"))
             }
             "update_segment_volume" -> {
-                vm.onSetPendingRangeStart(0L)
-                vm.onSetPendingRangeEnd(Long.MAX_VALUE)
-                vm.onApplyRangeVolume(a.requireFloat("volumeScale"))
+                val total = vm.uiState.value.videoDurationMs
+                vm.applyVolumeRangeFromChat(
+                    start = a.optLong("startMs") ?: 0L,
+                    end = a.optLong("endMs") ?: total,
+                    value = a.requireFloat("volumeScale"),
+                )
             }
             "update_segment_speed" -> {
-                vm.onSetPendingRangeStart(0L)
-                vm.onSetPendingRangeEnd(Long.MAX_VALUE)
-                vm.onApplyRangeSpeed(a.requireFloat("speedScale"))
+                val total = vm.uiState.value.videoDurationMs
+                vm.applySpeedRangeFromChat(
+                    start = a.optLong("startMs") ?: 0L,
+                    end = a.optLong("endMs") ?: total,
+                    value = a.requireFloat("speedScale"),
+                )
             }
             // --- 음성 분리 ---
             "separate_audio_range" -> {

@@ -2428,6 +2428,66 @@ class TimelineViewModel constructor(
         )
     }
 
+    // ── 채팅 dispatcher 전용 code-path ────────────────────────────────────────────
+    // UI 슬라이더용 onSetPendingRangeStart/End 는 입력값을 현 pendingRange 와 mode bounds 에 맞춰
+    // clamp 해버려서, range 모드가 아닌 상태에서 dispatcher 가 startMs/endMs 를 그대로 넘기면
+    // 0 으로 깎이는 버그가 있었다. 본 그룹 메서드들은 UI state 를 거치지 않고 use case 를 직접
+    // 호출 — chat tool 이 자연어로 받은 [start, end] 를 그대로 적용. range 모드 진입/종료 부수효과 0.
+
+    private fun chatRangeSlices(start: Long, end: Long): List<SegmentRangeSlice> {
+        val total = _uiState.value.videoDurationMs.coerceAtLeast(0L)
+        val s = start.coerceIn(0L, total)
+        val e = end.coerceIn(0L, total)
+        if (e - s < MIN_RANGE_MS) return emptyList()
+        return sliceGlobalRange(s, e).sortedByDescending { it.order }
+    }
+
+    fun applyDeleteRangeFromChat(start: Long, end: Long) {
+        val slices = chatRangeSlices(start, end)
+        if (slices.isEmpty()) return
+        viewModelScope.launch {
+            slices.forEach { sl -> removeSegmentRange(sl.segmentId, sl.localStart, sl.localEnd) }
+            refreshSegmentsStateFromDb()
+            pushUndoState()
+        }
+    }
+
+    fun applyDuplicateRangeFromChat(start: Long, end: Long) {
+        val slices = chatRangeSlices(start, end)
+        if (slices.isEmpty()) return
+        viewModelScope.launch {
+            slices.forEach { sl -> duplicateSegmentRange(sl.segmentId, sl.localStart, sl.localEnd) }
+            refreshSegmentsStateFromDb()
+            pushUndoState()
+        }
+    }
+
+    fun applyVolumeRangeFromChat(start: Long, end: Long, value: Float) {
+        val slices = chatRangeSlices(start, end)
+        if (slices.isEmpty()) return
+        viewModelScope.launch {
+            slices.forEach { sl ->
+                val r = splitSegment(sl.segmentId, sl.localStart, sl.localEnd)
+                updateSegmentVolume(r.middle.id, value)
+            }
+            refreshSegmentsStateFromDb()
+            pushUndoState()
+        }
+    }
+
+    fun applySpeedRangeFromChat(start: Long, end: Long, value: Float) {
+        val slices = chatRangeSlices(start, end)
+        if (slices.isEmpty()) return
+        viewModelScope.launch {
+            slices.forEach { sl ->
+                val r = splitSegment(sl.segmentId, sl.localStart, sl.localEnd)
+                updateSegmentSpeed(r.middle.id, value)
+            }
+            refreshSegmentsStateFromDb()
+            pushUndoState()
+        }
+    }
+
     /** segment edit mode 종료 ("저장" 버튼) — range/segment 상태를 모두 정리하고 기본 timeline 으로. */
     fun onFinishSegmentEdit() {
         _uiState.value = _uiState.value.copy(

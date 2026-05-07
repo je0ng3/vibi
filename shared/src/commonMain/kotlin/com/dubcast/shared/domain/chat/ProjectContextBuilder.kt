@@ -87,6 +87,16 @@ object ProjectContextBuilder {
             ?: state.selectedImageClipId
             ?: state.selectedBgmClipId
 
+        // 사용자가 UI 로 잡아둔 구간을 함께 전달 — Gemini 가 "이 구간..." 같은 deictic 발화를
+        // pendingRange 로 풀 수 있게. range 모드가 아니면 null 로 보내 LLM 이 추정 안 함.
+        val (rangeStart, rangeEnd) = if (state.isRangeSelecting &&
+            state.pendingRangeEndMs > state.pendingRangeStartMs
+        ) {
+            state.pendingRangeStartMs to state.pendingRangeEndMs
+        } else {
+            null to null
+        }
+
         return ProjectContextDto(
             segments = segs,
             subtitleClips = subs,
@@ -96,6 +106,9 @@ object ProjectContextBuilder {
             currentPlayheadMs = state.playbackPositionMs,
             selectedSegmentId = state.selectedSegmentId,
             selectedClipId = selectedClipId,
+            isRangeSelecting = state.isRangeSelecting,
+            pendingRangeStartMs = rangeStart,
+            pendingRangeEndMs = rangeEnd,
         )
     }
 }
