@@ -1831,17 +1831,8 @@ private fun BgmTimelineLane(
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
     val rowStridePx = with(density) { rowStrideDp.toPx() }
-    val handleHeight = 6.dp
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .border(  // BGM 영역 + 핸들 통합 테두리.
-                width = 1.dp,
-                color = accent.copy(alpha = 0.4f),
-                shape = RoundedCornerShape(4.dp),
-            ),
-    ) {
+    val handleHeight = 10.dp
+    Column(modifier = Modifier.fillMaxWidth()) {
     // rowCount 가 drag 도중 변경되어도 inner pointerInput closure 가 stale 한 옛 값을 잡지 않게.
     val currentRowCount by rememberUpdatedState(rowCount)
     androidx.compose.foundation.layout.BoxWithConstraints(
@@ -1951,33 +1942,38 @@ private fun BgmTimelineLane(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(handleHeight)
-            .background(accent.copy(alpha = 0.12f))  // 핸들 영역 살짝 강조.
-            .pointerInput(rowStridePx) {
-                detectDragGestures(
-                    onDragStart = {
-                        dragAccumPy = 0f
-                        laneCountBase = currentLaneCount
-                    },
-                    onDrag = { change: PointerInputChange, drag: Offset ->
-                        change.consume()
-                        dragAccumPy += drag.y
-                        if (rowStridePx > 0f) {
-                            val laneDelta = (dragAccumPy / rowStridePx).toInt()
-                            val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
-                            if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
-                        }
-                    },
-                )
-            },
+            .height(handleHeight),
         contentAlignment = Alignment.Center,
     ) {
+        // 동그란 pill 모양 drag handle — 자체 테두리. 영역 외곽선 없음.
         Box(
             modifier = Modifier
-                .width(40.dp)
-                .height(2.dp)
-                .clip(RoundedCornerShape(1.dp))
-                .background(accent.copy(alpha = 0.7f)),
+                .width(48.dp)
+                .height(handleHeight)
+                .clip(RoundedCornerShape(handleHeight / 2))
+                .background(accent.copy(alpha = 0.18f))
+                .border(
+                    width = 1.dp,
+                    color = accent.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(handleHeight / 2),
+                )
+                .pointerInput(rowStridePx) {
+                    detectDragGestures(
+                        onDragStart = {
+                            dragAccumPy = 0f
+                            laneCountBase = currentLaneCount
+                        },
+                        onDrag = { change: PointerInputChange, drag: Offset ->
+                            change.consume()
+                            dragAccumPy += drag.y
+                            if (rowStridePx > 0f) {
+                                val laneDelta = (dragAccumPy / rowStridePx).toInt()
+                                val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
+                                if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
+                            }
+                        },
+                    )
+                },
         )
     }
     }  // 외부 Column 닫음
