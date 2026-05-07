@@ -654,8 +654,7 @@ fun TimelineScreen(
                     onSelectClip = { viewModel.onSelectBgmClip(it) },
                     onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
                     onUpdateLane = { id, lane -> viewModel.onUpdateBgmLane(id, lane) },
-                    onIncreaseLaneCount = { viewModel.onIncreaseBgmLaneCount() },
-                    onDecreaseLaneCount = { viewModel.onDecreaseBgmLaneCount() },
+                    onSetLaneCount = { viewModel.onSetBgmLaneCount(it) },
                 )
             }
             }  // 재생바 + BGM 묶음 Column 닫음
@@ -1822,8 +1821,7 @@ private fun BgmTimelineLane(
     onSelectClip: (String) -> Unit,
     onUpdateStart: (String, Long) -> Unit,
     onUpdateLane: (String, Int) -> Unit,
-    onIncreaseLaneCount: () -> Unit,
-    onDecreaseLaneCount: () -> Unit,
+    onSetLaneCount: (Int) -> Unit,
 ) {
     if (totalMs <= 0L) return
     val rowHeight = 10.dp
@@ -1833,10 +1831,19 @@ private fun BgmTimelineLane(
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
     val rowStridePx = with(density) { rowStrideDp.toPx() }
-    val handleHeight = 8.dp
+    val handleHeight = 6.dp
     Column(
-        modifier = Modifier.fillMaxWidth(),  // 재생바 직속 — 외부 Column 의 spacedBy 제거됨.
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .border(  // BGM 영역 + 핸들 통합 테두리.
+                width = 1.dp,
+                color = accent.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(4.dp),
+            ),
     ) {
+    // rowCount 가 drag 도중 변경되어도 inner pointerInput closure 가 stale 한 옛 값을 잡지 않게.
+    val currentRowCount by rememberUpdatedState(rowCount)
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -1911,10 +1918,12 @@ private fun BgmTimelineLane(
                                 }
                                 // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
                                 // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
+                                // currentRowCount (rememberUpdatedState) 로 drag 도중 lane 수 확장
+                                // 시에도 즉시 반영 — 새 lane 으로 곧바로 drop 가능.
                                 dragAccumPyAbs += drag.y
                                 if (rowStridePx > 0f) {
                                     val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
-                                    laneOverride = (laneBase + laneDelta).coerceIn(0, rowCount - 1)
+                                    laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
                                 }
                             },
                             onDragEnd = {
@@ -1934,18 +1943,21 @@ private fun BgmTimelineLane(
             )
         }
     }  // BoxWithConstraints 닫음
-    // BGM 영역 하단 drag handle — 끌어서 lane 수 직접 조절. dy / rowStridePx 만큼 lane 변경.
+    // BGM 영역 하단 drag handle — 끌어서 lane 수 직접 조절. dy / rowStridePx 단위 step.
+    // base 는 drag start 시점의 laneCount, 매 tick onSetLaneCount 직접 호출 (부드러움).
+    val currentLaneCount by rememberUpdatedState(laneCount)
     var dragAccumPy by remember { mutableStateOf(0f) }
     var laneCountBase by remember { mutableStateOf(laneCount) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(handleHeight)
+            .background(accent.copy(alpha = 0.12f))  // 핸들 영역 살짝 강조.
             .pointerInput(rowStridePx) {
                 detectDragGestures(
                     onDragStart = {
                         dragAccumPy = 0f
-                        laneCountBase = laneCount
+                        laneCountBase = currentLaneCount
                     },
                     onDrag = { change: PointerInputChange, drag: Offset ->
                         change.consume()
@@ -1953,28 +1965,19 @@ private fun BgmTimelineLane(
                         if (rowStridePx > 0f) {
                             val laneDelta = (dragAccumPy / rowStridePx).toInt()
                             val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
-                            // 현재값과 다르면 +/- 호출 — 한 step 씩 commit.
-                            while (targetCount > laneCount) {
-                                onIncreaseLaneCount()
-                                break  // 다음 onDrag tick 에서 다시 평가
-                            }
-                            while (targetCount < laneCount) {
-                                onDecreaseLaneCount()
-                                break
-                            }
+                            if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
                         }
                     },
                 )
             },
         contentAlignment = Alignment.Center,
     ) {
-        // 가로 막대 시각 표시 — 사용자에게 drag 가능 영역 indication.
         Box(
             modifier = Modifier
                 .width(40.dp)
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(accent.copy(alpha = 0.5f)),
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(accent.copy(alpha = 0.7f)),
         )
     }
     }  // 외부 Column 닫음

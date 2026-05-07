@@ -563,6 +563,17 @@ class TimelineViewModel constructor(
         _uiState.value = current.copy(bgmClips = updated)
     }
 
+    /** BGM 영역 lane 개수 직접 set. drag handle 이 부드럽게 여러 step 한 번에 적용. */
+    fun onSetBgmLaneCount(count: Int) {
+        val current = _uiState.value
+        val nextCount = count.coerceIn(1, 8)
+        // 마지막 lane 들 안에 clip 이 있으면 그 lane 까지는 유지 (축소 보류).
+        val maxOccupiedLane = current.bgmClips.maxOfOrNull { it.lane } ?: -1
+        val safeCount = nextCount.coerceAtLeast(maxOccupiedLane + 1)
+        if (safeCount == current.bgmLaneCount) return
+        _uiState.value = current.copy(bgmLaneCount = safeCount)
+    }
+
     /** BGM 영역 lane 개수 +1 (최대 8). 사용자가 명시적 확장. */
     fun onIncreaseBgmLaneCount() {
         val current = _uiState.value
