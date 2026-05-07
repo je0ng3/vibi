@@ -42,36 +42,41 @@ data class DubCastColors(
     val timelineBarDirective: Color,
 )
 
+// Linear palette — VoltAgent/awesome-design-md/design-md/linear.app/DESIGN.md 기준.
+// 핵심: near-black canvas (#010102) + 단일 chromatic accent (#5e6ad2 라벤더-블루) +
+// charcoal panels (#0f1011) + hairline borders. 강조는 brand mark / focus / 의도된 CTA 한정.
 val DarkDubCastColors = DubCastColors(
-    backgroundPrimary = Color.Black,
-    onBackgroundPrimary = Color.White,
-    chipBg = Color(0x33FFFFFF),
-    chipBgDisabled = Color(0x14FFFFFF),
-    chipContentDisabled = Color(0x66FFFFFF),
-    panelBg = Color(0xFF1C1C1E),
-    subtitleOverlayBg = Color(0xCC000000),
-    mutedText = Color(0x99EBEBF5),
-    accent = Color(0xFF0A84FF),
-    timelineBarTrack = Color(0xFF1F1F22),
-    timelineBarSegment = Color(0xFF3A3A3C),
-    timelineBarSegmentEdited = Color(0xFFFF9F0A),  // iOS systemOrange (다크) — accent 파랑과 시각 분리
-    timelineBarDirective = Color(0xFF6B6B6E),  // segment 보다 약간 짙은 grey
+    backgroundPrimary = Color(0xFF010102),  // canvas
+    onBackgroundPrimary = Color(0xFFF7F8F8),  // ink
+    chipBg = Color(0xFF18191A),  // surface-3 — opaque chip on canvas
+    chipBgDisabled = Color(0xFF141516),  // surface-2
+    chipContentDisabled = Color(0xFF62666D),  // ink-tertiary
+    panelBg = Color(0xFF0F1011),  // surface-1 (charcoal panel)
+    subtitleOverlayBg = Color(0xCC010102),  // canvas with alpha — overlay tint
+    mutedText = Color(0xFF8A8F98),  // ink-subtle
+    accent = Color(0xFF5E6AD2),  // primary lavender-blue
+    timelineBarTrack = Color(0xFF0F1011),  // surface-1 — 얇은 트랙
+    timelineBarSegment = Color(0xFF23252A),  // hairline — 중성, accent 와 분리
+    timelineBarSegmentEdited = Color(0xFF828FFF),  // primary-hover (밝은 라벤더) — Linear 팔레트 내부에서 edited 강조
+    timelineBarDirective = Color(0xFF3E3E44),  // hairline-tertiary — segment 보다 약간 짙은 중성
 )
 
+// Light variant — Linear 의 inverse-* 토큰 기반. Linear 자체는 거의 다크 전용이지만
+// system light 시 일관성 유지.
 val LightDubCastColors = DubCastColors(
-    backgroundPrimary = Color.White,
-    onBackgroundPrimary = Color.Black,
-    chipBg = Color(0x14000000),
-    chipBgDisabled = Color(0x08000000),
+    backgroundPrimary = Color(0xFFFFFFFF),  // inverse-canvas
+    onBackgroundPrimary = Color(0xFF000000),  // inverse-ink
+    chipBg = Color(0xFFF5F6F6),  // inverse-surface-1
+    chipBgDisabled = Color(0xFFF6F7F7),  // inverse-surface-2
     chipContentDisabled = Color(0x66000000),
-    panelBg = Color(0xFFF2F2F7),
+    panelBg = Color(0xFFF5F6F6),  // inverse-surface-1
     subtitleOverlayBg = Color(0xCCFFFFFF),
-    mutedText = Color(0x993C3C43),
-    accent = Color(0xFF007AFF),
-    timelineBarTrack = Color(0xFFE5E5EA),
-    timelineBarSegment = Color(0xFFC7C7CC),
-    timelineBarSegmentEdited = Color(0xFFFF9500),  // iOS systemOrange (라이트) — accent 와 시각 분리
-    timelineBarDirective = Color(0xFF8E8E93),  // segment 보다 약간 짙은 grey
+    mutedText = Color(0xFF62666D),  // ink-tertiary 톤
+    accent = Color(0xFF5E6AD2),  // primary lavender (light/dark 공통 brand)
+    timelineBarTrack = Color(0xFFF5F6F6),
+    timelineBarSegment = Color(0xFFD0D6E0),  // ink-muted (light bg 위 중성 회색)
+    timelineBarSegmentEdited = Color(0xFF5E6AD2),  // primary 그대로 — light bg 에서 라벤더가 충분히 띔
+    timelineBarDirective = Color(0xFF8A8F98),  // ink-subtle
 )
 
 val LocalDubCastColors = staticCompositionLocalOf { DarkDubCastColors }
@@ -82,12 +87,14 @@ fun DubCastTheme(
     content: @Composable () -> Unit
 ) {
     val tokens = if (darkTheme) DarkDubCastColors else LightDubCastColors
+    // Linear 패턴: primary 는 항상 라벤더 accent. 이전엔 dark 에서 primary=white 였는데
+    // 라벤더 강조 일관성을 위해 dark/light 모두 accent 로 통일. on-primary 는 Linear 의 #ffffff.
     val colorScheme = if (darkTheme) {
         darkColorScheme(
             background = tokens.backgroundPrimary,
             surface = tokens.panelBg,
-            primary = tokens.onBackgroundPrimary,
-            onPrimary = tokens.backgroundPrimary,
+            primary = tokens.accent,
+            onPrimary = Color.White,
             onBackground = tokens.onBackgroundPrimary,
             onSurface = tokens.onBackgroundPrimary
         )
