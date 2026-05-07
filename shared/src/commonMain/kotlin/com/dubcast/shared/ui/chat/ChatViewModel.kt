@@ -35,8 +35,12 @@ class ChatViewModel(
             error = null,
         )
         viewModelScope.launch {
+            // BFF/Gemini turn 은 user/model 만 의미. UI 전용 "system" (dispatcher 결과 라벨) 은
+            // 컨텍스트 노이즈라 BFF 전송 리스트에서 제외. role 정합성은 appendLocalGuide 에서 "model"
+            // 로 push 해 user/model alternation 을 깨지 않게 유지.
+            val turnsForBff = _state.value.messages.filter { it.role == "user" || it.role == "model" }
             val req = ChatRequestDto(
-                messages = _state.value.messages,
+                messages = turnsForBff,
                 projectContext = projectContext,
                 locale = locale,
             )
@@ -106,10 +110,12 @@ class ChatViewModel(
      * "어떤 편집을 할 수 있는지" 같은 capability 안내가 대표 케이스.
      */
     fun appendLocalGuide(userPrompt: String, assistantReply: String) {
+        // role 은 Gemini 규약 (user/model) 으로 통일 — "assistant" 는 OpenAI 스타일이라 BFF coerce 시
+        // user 로 깎여 turn alternation 이 깨졌었다.
         _state.value = _state.value.copy(
             messages = _state.value.messages +
                 ChatMessageDto(role = "user", content = userPrompt) +
-                ChatMessageDto(role = "assistant", content = assistantReply),
+                ChatMessageDto(role = "model", content = assistantReply),
         )
     }
 
