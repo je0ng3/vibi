@@ -11,7 +11,6 @@ import platform.CoreMedia.CMTimeMake
 import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
-import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.writeToFile
 import platform.UIKit.UIImage
@@ -32,11 +31,8 @@ class IosVideoThumbnailExtractor : VideoThumbnailExtractor {
         val cachePath = "$cacheDir/${uri.hashCode().toUInt()}_${atMs}.jpg"
         if (NSFileManager.defaultManager.fileExistsAtPath(cachePath)) return cachePath
 
-        val url = if (uri.startsWith("file://")) {
-            NSURL.URLWithString(uri) ?: NSURL.fileURLWithPath(uri.removePrefix("file://"))
-        } else {
-            NSURL.fileURLWithPath(uri)
-        }
+        // resolver: 상대 / 절대 / file:// / 옛 UUID remap.
+        val url = resolveStoredUriToFileUrl(uri) ?: return null
         val asset: AVAsset = AVURLAsset(
             uRL = url,
             options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to true)

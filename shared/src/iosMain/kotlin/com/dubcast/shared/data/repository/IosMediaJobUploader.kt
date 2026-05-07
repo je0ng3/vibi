@@ -1,6 +1,7 @@
 package com.dubcast.shared.data.repository
 
 import com.dubcast.shared.data.remote.api.BinaryPart
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
@@ -8,7 +9,6 @@ import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSData
-import platform.Foundation.NSURL
 import platform.Foundation.dataWithContentsOfURL
 import platform.posix.memcpy
 
@@ -21,13 +21,10 @@ class IosMediaJobUploader {
         prefix: String
     ): BinaryPart = withContext(Dispatchers.Default) {
         val (ext, contentType) = resolveMediaType(mediaType)
-        // file:// scheme 면 URLWithString, 절대 경로면 fileURLWithPath. URLWithString 에 절대
-        // 경로 넣으면 invalid URL 객체가 만들어지고 fallback 도 안 발동돼 dataWithContentsOfURL nil.
-        val url = if (sourceUri.startsWith("file://")) {
-            NSURL.URLWithString(sourceUri) ?: NSURL.fileURLWithPath(sourceUri.removePrefix("file://"))
-        } else {
-            NSURL.fileURLWithPath(sourceUri)
-        }
+        // resolver 가 상대 / 절대 / file:// / 옛 UUID remap 모두 처리. 모든 분기에서
+        // fileURLWithPath 사용 → URLWithString invalid-URL 버그 회피.
+        val url = resolveStoredUriToFileUrl(sourceUri)
+            ?: throw RuntimeException("Cannot resolve source media path: $sourceUri")
         val data: NSData = NSData.dataWithContentsOfURL(url)
             ?: throw RuntimeException("Cannot read source media: $sourceUri")
         val length = data.length.toInt()

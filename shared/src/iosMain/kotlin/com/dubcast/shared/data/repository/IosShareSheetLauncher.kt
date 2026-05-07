@@ -1,6 +1,7 @@
 package com.dubcast.shared.data.repository
 
 import com.dubcast.shared.domain.usecase.share.ShareSheetLauncher
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -40,14 +41,11 @@ class IosShareSheetLauncher : ShareSheetLauncher {
     ): Result<Unit> = runCatching {
         require(sourcePaths.isNotEmpty()) { "sourcePaths must not be empty" }
 
-        val urls: List<NSURL> = sourcePaths.map { path ->
-            // PHPicker 절대 경로 / file:// 모두 처리. NSURL.URLWithString 의 absolute path bug 회피.
-            if (path.startsWith("file://")) {
-                NSURL.URLWithString(path) ?: NSURL.fileURLWithPath(path.removePrefix("file://"))
-            } else {
-                NSURL.fileURLWithPath(path)
-            }
+        val urls: List<NSURL> = sourcePaths.mapNotNull { path ->
+            // resolver: 상대 / 절대 / file:// / 옛 UUID remap. 모든 분기 fileURLWithPath.
+            resolveStoredUriToFileUrl(path)
         }
+        require(urls.isNotEmpty()) { "no resolvable paths in $sourcePaths" }
 
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->

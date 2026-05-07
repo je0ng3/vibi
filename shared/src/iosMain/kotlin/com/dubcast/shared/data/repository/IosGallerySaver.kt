@@ -1,10 +1,10 @@
 package com.dubcast.shared.data.repository
 
 import com.dubcast.shared.domain.usecase.share.GallerySaver
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.suspendCancellableCoroutine
-import platform.Foundation.NSURL
 import platform.Photos.PHAssetChangeRequest
 import platform.Photos.PHPhotoLibrary
 import kotlin.coroutines.resume
@@ -20,7 +20,9 @@ class IosGallerySaver : GallerySaver {
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     override suspend fun saveVideo(sourcePath: String, displayName: String): Result<Unit> = runCatching {
-        val url = NSURL.fileURLWithPath(sourcePath)
+        // resolver: 상대 / 절대 / file:// / 옛 UUID remap.
+        val url = resolveStoredUriToFileUrl(sourcePath)
+            ?: error("Cannot resolve path to save: $sourcePath")
 
         suspendCancellableCoroutine { cont ->
             PHPhotoLibrary.sharedPhotoLibrary().performChanges(

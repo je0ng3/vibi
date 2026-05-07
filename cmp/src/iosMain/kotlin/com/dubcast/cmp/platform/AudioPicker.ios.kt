@@ -78,7 +78,8 @@ private fun copyAudioToDocuments(srcUrl: NSURL): String? {
     val docs = NSSearchPathForDirectoriesInDomains(
         NSDocumentDirectory, NSUserDomainMask, true
     ).firstOrNull() as? String ?: return null
-    val dir = "$docs/picked_audio"
+    val relDir = "picked_audio"
+    val dir = "$docs/$relDir"
     NSFileManager.defaultManager.createDirectoryAtPath(dir, true, null, null)
     val name = srcUrl.lastPathComponent ?: "audio_${currentTimeMillis()}.m4a"
     val destPath = "$dir/$name"
@@ -88,7 +89,8 @@ private fun copyAudioToDocuments(srcUrl: NSURL): String? {
         toURL = NSURL.fileURLWithPath(destPath),
         error = null,
     )
-    return if (ok) destPath else null
+    // 상대경로 반환 — Documents 기준. container UUID 변경 후에도 resolver 가 복원.
+    return if (ok) "$relDir/$name" else null
 }
 
 private fun topViewControllerForAudioPicker(): UIViewController? {

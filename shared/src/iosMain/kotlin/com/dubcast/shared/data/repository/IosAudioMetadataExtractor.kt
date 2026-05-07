@@ -2,6 +2,7 @@ package com.dubcast.shared.data.repository
 
 import com.dubcast.shared.domain.usecase.input.AudioInfo
 import com.dubcast.shared.domain.usecase.input.AudioMetadataExtractor
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.AVFoundation.AVURLAsset
@@ -9,19 +10,13 @@ import platform.AVFoundation.AVURLAssetPreferPreciseDurationAndTimingKey
 import platform.AVFoundation.duration
 import platform.AVFoundation.loadValuesAsynchronouslyForKeys
 import platform.CoreMedia.CMTimeGetSeconds
-import platform.Foundation.NSURL
 
 class IosAudioMetadataExtractor : AudioMetadataExtractor {
 
     @OptIn(ExperimentalForeignApi::class)
     override suspend fun extract(uri: String): AudioInfo? {
-        // shared/CLAUDE.md:78 known iOS bug — URLWithString(absolutePath) 은 nil 대신 invalid
-        // URL 을 만들어 fileURLWithPath fallback 이 발동 안 함. file:// 접두사 유무로 분기.
-        val url = if (uri.startsWith("file://")) {
-            NSURL.URLWithString(uri) ?: NSURL.fileURLWithPath(uri.removePrefix("file://"))
-        } else {
-            NSURL.fileURLWithPath(uri)
-        }
+        // resolver: 상대 / 절대 / file:// / 옛 UUID remap. 모든 분기 fileURLWithPath.
+        val url = resolveStoredUriToFileUrl(uri) ?: return null
         val asset = AVURLAsset(
             uRL = url,
             options = mapOf<Any?, Any>(AVURLAssetPreferPreciseDurationAndTimingKey to true),

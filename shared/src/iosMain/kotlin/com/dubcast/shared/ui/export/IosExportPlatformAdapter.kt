@@ -6,6 +6,7 @@ import com.dubcast.shared.domain.model.Segment
 import com.dubcast.shared.domain.usecase.export.ExportWithDubbingUseCase
 import com.dubcast.shared.domain.usecase.export.FrameInput
 import com.dubcast.shared.domain.usecase.export.SegmentInput
+import com.dubcast.shared.platform.resolveStoredUriToPath
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.Dispatchers
@@ -95,12 +96,13 @@ class IosExportPlatformAdapter(
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     private suspend fun resolveSegmentSource(segment: Segment, cacheDir: String): String? {
         val uri = segment.sourceUri
-        return if (uri.startsWith("file://") || uri.startsWith("/")) {
-            // PHPicker 가 반환한 file:// URI 또는 절대 경로 — 그대로 사용.
-            uri.removePrefix("file://")
-        } else {
-            copyUriToCache(uri, cacheDir, prefix = "seg")
+        // resolver 가 상대경로 / 절대경로 / file:// / 옛 UUID remap 모두 처리하고 현재 valid path 반환.
+        // resolver 가 처리 가능한 형태면 (= local file path) 그대로 사용. 아니면 (HTTP 등) cache 로 download.
+        val resolved = resolveStoredUriToPath(uri)
+        if (resolved != null && NSFileManager.defaultManager.fileExistsAtPath(resolved)) {
+            return resolved
         }
+        return copyUriToCache(uri, cacheDir, prefix = "seg")
     }
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
@@ -110,9 +112,13 @@ class IosExportPlatformAdapter(
         prefix: String
     ): String? = withContext(Dispatchers.Default) {
         try {
-            // 이미 절대 경로면 복사 없이 반환.
-            if (uri.startsWith("/")) return@withContext uri
-            if (uri.startsWith("file://")) return@withContext uri.removePrefix("file://")
+            // local path 형태(절대/상대/file://) 면 resolver 로 path 만 추출 후 그대로 반환.
+            if (uri.startsWith("/") || uri.startsWith("file://") ||
+                !uri.contains("://")
+            ) {
+                val resolved = resolveStoredUriToPath(uri) ?: return@withContext null
+                return@withContext resolved
+            }
 
             val url = NSURL.URLWithString(uri) ?: return@withContext null
             val data: NSData = NSData.dataWithContentsOfURL(url) ?: return@withContext null

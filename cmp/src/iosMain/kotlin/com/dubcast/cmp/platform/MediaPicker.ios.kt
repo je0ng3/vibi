@@ -40,6 +40,11 @@ private val SystemBlue = Color(0xFF007AFF)
  *
  * **PHPicker 의 임시 file URL 은 picker dismiss 후 만료**되므로 loadFileRepresentation
  * 콜백 안에서 즉시 NSDocumentDirectory 로 복사하고 영구 경로를 [onPicked] 로 전달.
+ *
+ * **상대경로 반환**: app container UUID 가 재설치/build version 변경 시 바뀌므로 절대경로
+ * (`/Users/.../Application/<UUID>/Documents/picker_media/foo.mov`) 를 그대로 저장하면 UUID
+ * 변경 후 invalid path 가 됨. `picker_media/<filename>` 같은 Documents-relative path 만 저장하고,
+ * 재생/업로드 시점에 `IosFilePathResolver` 가 현재 Documents 기준으로 resolve.
  */
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 @Composable
@@ -123,7 +128,8 @@ private fun copyToDocuments(tempUrl: NSURL): String? {
     val docs = NSSearchPathForDirectoriesInDomains(
         NSDocumentDirectory, NSUserDomainMask, true
     ).firstOrNull() as? String ?: return null
-    val mediaDir = "$docs/picker_media"
+    val relDir = "picker_media"
+    val mediaDir = "$docs/$relDir"
     NSFileManager.defaultManager.createDirectoryAtPath(
         path = mediaDir,
         withIntermediateDirectories = true,
@@ -142,7 +148,9 @@ private fun copyToDocuments(tempUrl: NSURL): String? {
         toURL = destUrl,
         error = null
     )
-    return if (ok) destPath else null
+    // 상대경로 반환 — Documents 기준. 재설치로 container UUID 가 바뀌어도 resolver 가 현재
+    // Documents 와 join 해서 valid path 로 복원.
+    return if (ok) "$relDir/$fileName" else null
 }
 
 private fun topViewController(): UIViewController? {

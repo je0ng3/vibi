@@ -546,13 +546,16 @@ class TimelineViewModel constructor(
                 // 사용자가 lane N 에 clip 둔 채 종료 → 재진입 시 default 3 으로 lane N 이 영역 밖 시각
                 // 깜빡임 방지. 현재 lane 수가 점유보다 작으면 그만큼 자동 확장.
                 val maxOccupiedLane = applied.maxOfOrNull { it.lane } ?: -1
-                val current = _uiState.value
                 val minLaneCount = (maxOccupiedLane + 1).coerceAtLeast(3).coerceAtMost(8)
-                val nextLaneCount = current.bgmLaneCount.coerceAtLeast(minLaneCount)
-                _uiState.value = current.copy(
-                    bgmClips = applied,
-                    bgmLaneCount = nextLaneCount,
-                )
+                // _uiState.update — concurrent observers 간 race 방지 (atomic CAS).
+                // value = value.copy(...) 패턴은 다른 observer 가 동시에 write 시 일부 필드 (e.g.
+                // videoUri, segments) 가 stale 한 옛 값으로 덮어쓰일 수 있음.
+                _uiState.update { current ->
+                    current.copy(
+                        bgmClips = applied,
+                        bgmLaneCount = current.bgmLaneCount.coerceAtLeast(minLaneCount),
+                    )
+                }
             }
         }
     }

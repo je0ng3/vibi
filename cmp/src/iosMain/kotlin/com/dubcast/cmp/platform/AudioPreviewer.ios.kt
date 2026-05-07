@@ -3,6 +3,7 @@ package com.dubcast.cmp.platform
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.AVFAudio.AVAudioPlayer
@@ -67,12 +68,8 @@ actual fun rememberAudioPreviewer(): AudioPreviewerHandle {
                     return
                 }
 
-                // shared/CLAUDE.md:78 NSURL 절대 경로 패턴.
-                val nsUrl = if (url.startsWith("file://")) {
-                    NSURL.URLWithString(url) ?: NSURL.fileURLWithPath(url.removePrefix("file://"))
-                } else {
-                    NSURL.fileURLWithPath(url)
-                }
+                // resolver 가 상대 / 절대 / file:// / 옛 UUID remap 모두 처리.
+                val nsUrl = resolveStoredUriToFileUrl(url) ?: return
                 localPlayer?.let {
                     it.delegate = null
                     it.stop()

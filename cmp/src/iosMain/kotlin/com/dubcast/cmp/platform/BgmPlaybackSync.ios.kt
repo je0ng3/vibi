@@ -5,12 +5,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import com.dubcast.shared.domain.model.BgmClip
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.AVFAudio.AVAudioPlayer
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
 import platform.AVFAudio.setActive
-import platform.Foundation.NSURL
 
 /**
  * 클립별 AVAudioPlayer 를 hold 한 후 (id, sourceUri) 기준으로 dedupe / 재생성. video 재생 상태와
@@ -45,12 +45,8 @@ actual fun BgmPlaybackSync(
             val existing = players[clip.id]
             val sameUri = existing != null
             if (!sameUri) {
-                val nsUrl = if (clip.sourceUri.startsWith("file://")) {
-                    NSURL.URLWithString(clip.sourceUri)
-                        ?: NSURL.fileURLWithPath(clip.sourceUri.removePrefix("file://"))
-                } else {
-                    NSURL.fileURLWithPath(clip.sourceUri)
-                }
+                // resolver 가 상대경로 / 절대 / file:// / 옛 UUID 모두 처리.
+                val nsUrl = resolveStoredUriToFileUrl(clip.sourceUri) ?: return@forEach
                 val p = runCatching {
                     AVAudioPlayer(contentsOfURL = nsUrl, error = null)
                 }.getOrNull() ?: return@forEach

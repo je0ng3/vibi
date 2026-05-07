@@ -2,6 +2,7 @@ package com.dubcast.shared.data.repository
 
 import com.dubcast.shared.domain.model.VideoInfo
 import com.dubcast.shared.domain.usecase.input.VideoMetadataExtractor
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
 import kotlin.coroutines.resume
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
@@ -18,18 +19,16 @@ import platform.AVFoundation.tracksWithMediaType
 import platform.CoreMedia.CMTimeGetSeconds
 import platform.CoreMedia.CMTimeRangeGetEnd
 import platform.Foundation.NSFileManager
-import platform.Foundation.NSURL
 
 class IosVideoMetadataExtractor : VideoMetadataExtractor {
 
     @OptIn(ExperimentalForeignApi::class)
     override suspend fun extract(uri: String): VideoInfo? {
         println("[Extractor] enter uri=$uri")
-        // file:// 시작이면 URLWithString, 그 외엔 fileURLWithPath (절대 경로 가정)
-        val url = if (uri.startsWith("file://")) {
-            NSURL.URLWithString(uri) ?: NSURL.fileURLWithPath(uri.removePrefix("file://"))
-        } else {
-            NSURL.fileURLWithPath(uri)
+        // resolver: 상대 / 절대 / file:// / 옛 UUID remap. 모든 분기 fileURLWithPath.
+        val url = resolveStoredUriToFileUrl(uri) ?: run {
+            println("[Extractor] resolver returned null")
+            return null
         }
         println("[Extractor] url path=${url.path} isFileURL=${url.fileURL}")
         val asset = AVURLAsset(

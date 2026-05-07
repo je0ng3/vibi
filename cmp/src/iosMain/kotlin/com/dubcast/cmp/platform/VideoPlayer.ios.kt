@@ -1,5 +1,8 @@
 package com.dubcast.cmp.platform
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -8,8 +11,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.UIKitView
+import com.dubcast.shared.platform.resolveStoredUriToFileUrl
+import com.dubcast.shared.platform.storedUriFileExists
 import kotlinx.cinterop.CValue
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCAction
@@ -86,6 +93,17 @@ actual fun VideoPlayer(
     modifier: Modifier
 ) {
     if (items.isEmpty()) return
+    // 모든 segment 의 sourceUri 파일이 실제 존재하는지 사전 검사. 하나라도 누락 시 흰 화면
+    // 대신 placeholder 를 노출 — container UUID 가 바뀐 옛 절대경로 + remap 도 실패한 케이스.
+    // sourceUri 들이 변경될 때만 재검사 (recomposition 마다 stat 호출 누적 방지).
+    val sourceUris = items.map { it.sourceUri }
+    val anyMissing = remember(sourceUris) {
+        sourceUris.any { !storedUriFileExists(it) }
+    }
+    if (anyMissing) {
+        VideoSourceMissingPlaceholder(modifier)
+        return
+    }
     if (items.size == 1) {
         SingleItemVideoPlayer(items[0], isPlaying, seekToMs, onPositionChanged, onEnded, modifier)
     } else {
@@ -93,9 +111,32 @@ actual fun VideoPlayer(
     }
 }
 
-private fun toFileUrl(s: String): NSURL = if (s.startsWith("file://"))
-    NSURL.URLWithString(s) ?: NSURL.fileURLWithPath(s.removePrefix("file://"))
-else NSURL.fileURLWithPath(s)
+/**
+ * Source file 부재 시 fallback. AVPlayerLayer 를 빈 NSURL 로 attach 하면 흰 화면이 그대로 노출돼
+ * 사용자가 "앱 깨짐" 으로 인지함. 명시적 안내 문구로 대체.
+ */
+@Composable
+private fun VideoSourceMissingPlaceholder(modifier: Modifier) {
+    Box(
+        modifier = modifier.background(Color(0xFF1C1C1E)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "영상 파일을 찾을 수 없습니다",
+            color = Color.White,
+        )
+    }
+}
+
+/**
+ * 저장된 sourceUri (절대 / 상대 / file://) 를 NSURL 로 변환. resolver 가 container UUID
+ * 변경 시의 옛 절대경로도 best-effort 로 remap 해서 file:// URL 반환.
+ *
+ * resolver 가 null 을 반환하면 (path 추출 불가) 원본 string 으로 fileURLWithPath fallback —
+ * empty NSURL 이라도 만들어서 호출자가 에러 처리 가능하게.
+ */
+private fun toFileUrl(s: String): NSURL =
+    resolveStoredUriToFileUrl(s) ?: NSURL.fileURLWithPath(s.removePrefix("file://"))
 
 /**
  * UIView 서브클래스 — `layoutSubviews` override 로 sublayer (AVPlayerLayer) 의 frame 을
