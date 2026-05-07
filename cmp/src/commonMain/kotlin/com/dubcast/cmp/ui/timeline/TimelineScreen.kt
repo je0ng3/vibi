@@ -1831,7 +1831,7 @@ private fun BgmTimelineLane(
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
     val rowStridePx = with(density) { rowStrideDp.toPx() }
-    val handleHeight = 10.dp
+    val handleHeight = 6.dp
     Column(modifier = Modifier.fillMaxWidth()) {
     // rowCount 가 drag 도중 변경되어도 inner pointerInput closure 가 stale 한 옛 값을 잡지 않게.
     val currentRowCount by rememberUpdatedState(rowCount)
