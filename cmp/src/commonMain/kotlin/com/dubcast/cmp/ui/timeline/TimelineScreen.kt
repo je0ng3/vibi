@@ -1819,9 +1819,9 @@ private fun BgmTimelineLane(
     if (totalMs <= 0L) return
     val rowHeight = 10.dp
     val rowGap = 2.dp
-    // 항상 최소 1행. 가장 큰 lane 인덱스 + 1 만큼 행 확보.
+    // 항상 최소 3행 + 사용된 최대 lane + 빈 lane 1개 (사용자에게 새 lane drop 가능 영역 노출).
     val maxLane = clips.maxOfOrNull { it.lane.coerceAtLeast(0) } ?: 0
-    val rowCount = (maxLane + 1).coerceAtLeast(1)
+    val rowCount = maxOf(3, maxLane + 2)
     val totalHeight = rowHeight * rowCount + rowGap * (rowCount - 1).coerceAtLeast(0)
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
@@ -1834,6 +1834,13 @@ private fun BgmTimelineLane(
     ) {
         val laneWidthDp = maxWidth
         val laneWidthPx = with(density) { laneWidthDp.toPx() }
+        // BGM 영역 단일 배경 — lane 칸 칸을 줄줄이 보이지 않게 하나의 영역으로 인식되게.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(4.dp))
+                .background(accent.copy(alpha = 0.06f)),
+        )
         clips.forEach { clip ->
             val globalDurMs = ((clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))).toLong()
                 .coerceAtLeast(1L)
@@ -1847,6 +1854,10 @@ private fun BgmTimelineLane(
             var laneOverride by remember(clip.id) { mutableStateOf<Int?>(null) }
             var laneBase by remember(clip.id) { mutableStateOf(0) }
             var dragAccumPyAbs by remember(clip.id) { mutableStateOf(0f) }
+            // pointerInput 의 코루틴 closure 가 forEach 의 옛 clip 을 capture 하지 않도록
+            // 항상 최신 clip 을 참조 — 특히 lane/startMs 가 ViewModel 측 갱신 후 onDragStart
+            // 의 base 값으로 stale 한 옛 lane 을 잡던 버그 방지.
+            val currentClip by rememberUpdatedState(clip)
             val effectiveStartMs = dragOverrideMs ?: clip.startMs
             val effectiveLane = (laneOverride ?: clip.lane).coerceAtLeast(0)
             val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
@@ -1871,10 +1882,10 @@ private fun BgmTimelineLane(
                         // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
                         detectDragGestures(
                             onDragStart = {
-                                dragBaseStartMs = clip.startMs
+                                dragBaseStartMs = currentClip.startMs
                                 dragAccumPx = 0f
-                                dragOverrideMs = clip.startMs
-                                laneBase = clip.lane.coerceAtLeast(0)
+                                dragOverrideMs = currentClip.startMs
+                                laneBase = currentClip.lane.coerceAtLeast(0)
                                 dragAccumPyAbs = 0f
                                 laneOverride = laneBase
                             },
@@ -1897,9 +1908,9 @@ private fun BgmTimelineLane(
                                 }
                             },
                             onDragEnd = {
-                                dragOverrideMs?.let { onUpdateStart(clip.id, it) }
+                                dragOverrideMs?.let { onUpdateStart(currentClip.id, it) }
                                 laneOverride?.let { newLane ->
-                                    if (newLane != clip.lane) onUpdateLane(clip.id, newLane)
+                                    if (newLane != currentClip.lane) onUpdateLane(currentClip.id, newLane)
                                 }
                                 dragOverrideMs = null
                                 laneOverride = null
@@ -2020,6 +2031,37 @@ private fun BgmActionSheet(
                     modifier = Modifier.weight(1f),
                 )
                 Text("${(clip.speedScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+            }
+            // 구간 크기 — timeline 상 BGM 클립 width. speedScale 의 역수 매핑으로 직관적 길이(초) 슬라이더.
+            // length = sourceDurationMs / speedScale → speedScale = sourceDurationMs / length.
+            // 범위: D/MAX_SPEED (가장 짧음) ~ D/MIN_SPEED (가장 김).
+            val srcSec = (clip.sourceDurationMs / 1000f).coerceAtLeast(0.001f)
+            val minLengthSec = srcSec / com.dubcast.shared.domain.model.BgmClip.MAX_SPEED
+            val maxLengthSec = srcSec / com.dubcast.shared.domain.model.BgmClip.MIN_SPEED
+            val currentLengthSec = (clip.effectiveDurationMs / 1000f).coerceIn(minLengthSec, maxLengthSec)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("길이", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
+                Slider(
+                    value = currentLengthSec,
+                    valueRange = minLengthSec..maxLengthSec,
+                    onValueChange = { newLengthSec ->
+                        val safe = newLengthSec.coerceIn(minLengthSec, maxLengthSec).coerceAtLeast(0.001f)
+                        val newSpeed = (srcSec / safe).coerceIn(
+                            com.dubcast.shared.domain.model.BgmClip.MIN_SPEED,
+                            com.dubcast.shared.domain.model.BgmClip.MAX_SPEED,
+                        )
+                        onUpdateSpeed(newSpeed)
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${(currentLengthSec * 10).toInt() / 10f}s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.onBackgroundPrimary,
+                )
             }
         }
     }
