@@ -66,11 +66,11 @@ kotlin {
 }
 
 android {
-    namespace = "com.dubcast.cmp"
+    namespace = "com.vibi.cmp"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.dubcast.cmp"
+        applicationId = "com.vibi.cmp"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -79,7 +79,7 @@ android {
         buildConfigField(
             "String",
             "BFF_BASE_URL",
-            "\"${localProperties.getProperty("BFF_BASE_URL", "https://api.dubcast.example.com/")}\""
+            "\"${localProperties.getProperty("BFF_BASE_URL", "https://api.vibi.example.com/")}\""
         )
     }
 

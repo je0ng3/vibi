@@ -3,8 +3,7 @@
 영상 하나로 AI 더빙 + 자동 자막을 만들어 다국어 버전을 한 번에 내보내는 모바일 앱.
 **Kotlin Multiplatform** + **Compose Multiplatform** 으로 Android · iOS 단일 코드 베이스.
 
-> 폴더·docs 는 `vibi` 로 통일됐지만 코드 패키지 (`com.dubcast.*`), Room `DubCastDatabase`,
-> iOS framework 이름 등 일부 식별자는 legacy `dubcast` 명을 유지한다 — 별도 마이그레이션 예정.
+> 폴더·docs 는 `vibi` 로 통일됐지만 코드 패키지 (`com.vibi.*`), Room `VibiDatabase`,
 
 ## 의존 백엔드
 
@@ -92,7 +91,7 @@ open iosApp/iosApp.xcodeproj
 ```
 vibi-mobile/
 ├── shared/                                 # :shared — KMP 비즈니스 로직
-│   ├── commonMain/com/dubcast/shared/
+│   ├── commonMain/com/vibi/shared/
 │   │   ├── domain/{model,repository,usecase}/
 │   │   ├── data/{remote,repository,local/db}/    # Ktor Client + Room v19
 │   │   ├── ui/{input,timeline,export,share}/     # ViewModel
@@ -100,7 +99,7 @@ vibi-mobile/
 │   ├── androidMain/  └── iosMain/                # 플랫폼별 actual
 │   └── (commonTest 13개 + 마이그레이션 테스트)
 ├── cmp/                                    # :cmp — Compose Multiplatform UI
-│   ├── commonMain/com/dubcast/cmp/
+│   ├── commonMain/com/vibi/cmp/
 │   │   ├── App.kt + ui/navigation/         # sealed-class NavHost
 │   │   ├── ui/{input,timeline,export,share}/
 │   │   └── platform/                       # VideoPlayer / MediaPicker expect

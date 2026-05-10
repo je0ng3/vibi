@@ -26,6 +26,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DubCast"
+rootProject.name = "vibi"
 include(":shared")
 include(":cmp")

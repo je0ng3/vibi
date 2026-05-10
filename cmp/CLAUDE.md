@@ -27,14 +27,14 @@ cmp/
     ├── androidMain/
     │   ├── AndroidManifest.xml
     │   ├── res/values/themes.xml
-    │   └── kotlin/com/dubcast/android/
-    │       ├── DubCastApplication.kt
+    │   └── kotlin/com/vibi/android/
+    │       ├── VibiApplication.kt
     │       └── MainActivity.kt
     ├── commonMain/                    # (현재 비어있음 — CMP 전환 후 활성)
     └── iosMain/                       # (현재 비어있음 — iOS 타깃 추가 후 활성)
 ```
 
-`com.dubcast.*` 패키지명은 앱 이름 변경(`DubCast → vibi`) 이전부터 사용. 폴더는 `vibi-mobile/cmp` 로 통일됐지만 코드 패키지는 `com.dubcast.cmp`/`com.dubcast.android` 로 남아있다 — 패키지 마이그레이션은 별도 작업 (iOS framework 이름 + Xcode 통합 영향).
+`com.vibi.*` 패키지명은 앱 이름 변경(`Vibi → vibi`) 이전부터 사용. 폴더는 `vibi-mobile/cmp` 로 통일됐지만 코드 패키지는 `com.vibi.cmp`/`com.vibi.android` 로 남아있다 — 패키지 마이그레이션은 별도 작업 (iOS framework 이름 + Xcode 통합 영향).
 
 ## 중요 제약
 

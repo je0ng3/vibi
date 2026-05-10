@@ -1,0 +1,44 @@
+package com.vibi.shared.data.local.db.dao
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import com.vibi.shared.data.local.db.entity.SegmentEntity
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface SegmentDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(segment: SegmentEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(segments: List<SegmentEntity>)
+
+    @Update
+    suspend fun update(segment: SegmentEntity)
+
+    @Query("SELECT * FROM segments WHERE projectId = :projectId ORDER BY `order` ASC")
+    fun observeByProjectId(projectId: String): Flow<List<SegmentEntity>>
+
+    @Query("SELECT * FROM segments WHERE projectId = :projectId ORDER BY `order` ASC")
+    suspend fun getByProjectId(projectId: String): List<SegmentEntity>
+
+    /** Lightweight thumbnail/draft 용 — sourceUri 한 컬럼만, 첫 row 만 반환. */
+    @Query("SELECT sourceUri FROM segments WHERE projectId = :projectId ORDER BY `order` ASC LIMIT 1")
+    suspend fun getFirstSourceUri(projectId: String): String?
+
+    @Query("SELECT * FROM segments WHERE id = :id")
+    suspend fun getById(id: String): SegmentEntity?
+
+    @Query("SELECT MAX(`order`) FROM segments WHERE projectId = :projectId")
+    suspend fun getMaxOrder(projectId: String): Int?
+
+    @Query("DELETE FROM segments WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM segments WHERE projectId = :projectId")
+    suspend fun deleteByProjectId(projectId: String)
+}

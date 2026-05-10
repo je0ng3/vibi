@@ -18,11 +18,11 @@
         android:maxSdkVersion="28" />
 
     <application
-        android:name=".DubCastApplication"
-        android:label="DubCast"
+        android:name=".VibiApplication"
+        android:label="vibi"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
-        android:theme="@style/Theme.DubCast">
+        android:theme="@style/Theme.Vibi">
         <activity
             android:name=".MainActivity"
             android:exported="true">

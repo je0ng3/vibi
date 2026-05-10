@@ -64,7 +64,7 @@ kotlin {
 }
 
 android {
-    namespace = "com.dubcast.shared"
+    namespace = "com.vibi.shared"
     compileSdk = 36
     defaultConfig {
         minSdk = 24
