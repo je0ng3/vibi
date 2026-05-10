@@ -15,7 +15,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 채팅 패널 in-memory 세션. v1 은 Room 영구 보관 X — 시트 닫고 다시 열면 messages 초기화.
+ * 채팅 패널 in-memory 세션. v1 은 Room 영구 보관 X — 앱 프로세스 종료 시 휘발.
+ *
+ * **projectId 별 격리**: ViewModelStoreOwner 가 영상 간 공유돼도 messages 가 섞이지 않도록
+ * [bindProject] 가 active session 을 swap. 영상 A→B→A 로 돌아오면 A 의 기록 보존.
  *
  * pending proposal 이 있을 때만 [ChatPanel] 이 ProposalCard 를 렌더. 사용자 [적용] 시
  * 호출자(ChatPanel)가 dispatcher 를 직접 호출 — VM 은 timelineVm 을 직접 소유 안 함.
@@ -25,6 +28,21 @@ class ChatViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
+
+    private var boundProjectId: String? = null
+    private val sessionsByProject = mutableMapOf<String, ChatUiState>()
+
+    /**
+     * ChatPanel 이 LaunchedEffect(projectId) 로 호출. 다른 projectId 로 전환되면 현재 _state 를
+     * 이전 슬롯에 보관 후 새 projectId 의 세션을 복원 (없으면 빈 ChatUiState).
+     */
+    fun bindProject(projectId: String) {
+        if (projectId.isBlank()) return
+        if (boundProjectId == projectId) return
+        boundProjectId?.let { prev -> sessionsByProject[prev] = _state.value }
+        boundProjectId = projectId
+        _state.value = sessionsByProject[projectId] ?: ChatUiState()
+    }
 
     fun send(text: String, projectContext: ProjectContextDto, locale: String = "ko") {
         if (text.isBlank()) return
@@ -102,6 +120,21 @@ class ChatViewModel(
         _state.value = _state.value.copy(
             messages = _state.value.messages + ChatMessageDto(role = "system", content = "취소되었습니다."),
             pending = null,
+        )
+    }
+
+    /**
+     * TimelineViewModel 의 비동기 작업 (예: STT 완료 후 스크립트 표시) 결과를 채팅 thread 에
+     * model 메시지로 push. Gemini 호출 없이 로컬 추가만. ChatPanel 이 timelineVm.chatAssistantEvents
+     * 를 collect 후 본 메서드 호출.
+     *
+     * 다음 user turn 에서 BFF 로 송신될 때 [send] 가 messages 를 그대로 컨텍스트로 보내므로,
+     * Gemini 가 직전 push 된 스크립트 본문을 보고 "3번째 줄을 X로" 같은 후속 발화를 정확히 해석.
+     */
+    fun pushAssistantMessage(content: String) {
+        if (content.isBlank()) return
+        _state.value = _state.value.copy(
+            messages = _state.value.messages + ChatMessageDto(role = "model", content = content),
         )
     }
 

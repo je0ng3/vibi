@@ -18,6 +18,8 @@ import com.dubcast.shared.domain.model.SeparationDirective
 import com.dubcast.shared.domain.model.SubtitleClip
 import com.dubcast.shared.domain.model.BgmClip
 import com.dubcast.shared.domain.model.SubtitlePosition
+import com.dubcast.shared.domain.model.SubtitleSource
+import com.dubcast.shared.platform.generateId
 import com.dubcast.shared.domain.model.TargetLanguage
 import com.dubcast.shared.domain.model.TextOverlay
 import com.dubcast.shared.domain.repository.BgmClipRepository
@@ -55,6 +57,7 @@ import com.dubcast.shared.domain.usecase.subtitle.GenerateAutoDubUseCase
 import com.dubcast.shared.domain.usecase.subtitle.GenerateAutoSubtitlesUseCase
 import com.dubcast.shared.domain.usecase.subtitle.GenerateOriginalScriptUseCase
 import com.dubcast.shared.domain.usecase.subtitle.RegenerateSubtitlesUseCase
+import com.dubcast.shared.domain.usecase.subtitle.SrtParser
 import com.dubcast.shared.domain.usecase.subtitle.UndoRedoManager
 import com.dubcast.shared.domain.usecase.text.AddTextOverlayUseCase
 import com.dubcast.shared.domain.usecase.text.DeleteTextOverlayUseCase
@@ -79,7 +82,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -377,6 +382,25 @@ class TimelineViewModel constructor(
      */
     private val _navigateBackHome = MutableSharedFlow<Unit>()
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
+
+    /**
+     * 채팅 패널에 비동기로 어시스턴트 메시지를 push 하기 위한 1회성 이벤트 채널.
+     *
+     * 동기: 채팅 dispatch 는 fire-and-forget — apply 메서드가 viewModelScope 에서 BFF 호출을
+     * 시작하지만 결과(예: STT 스크립트)는 수십 초~수 분 후. 결과를 사용자에게 보여주려면 ChatVM
+     * 으로 메시지를 흘려보내야 한다. ChatVM 을 직접 주입하면 KMP DI 사이클 + UI/도메인 결합 →
+     * SharedFlow 로 한 단계 풀고 [ChatPanel] 이 collect 후 ChatVM.pushAssistantMessage 호출.
+     *
+     * 사용처: [applyTranscribeForSubtitlesFromChat] STT 완료 시 SRT 본문 push.
+     */
+    // extraBufferCapacity + DROP_OLDEST: collector(ChatPanel)가 일시적으로 떨어져 있어도 emit 이
+    // suspend 로 멈추지 않게 — 자막 STT 완료 코루틴이 hang 되면 사용자가 panel 다시 열어도 영영
+    // 못 받음. 작은 버퍼면 충분.
+    private val _chatAssistantEvents = MutableSharedFlow<String>(
+        extraBufferCapacity = 4,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val chatAssistantEvents: SharedFlow<String> = _chatAssistantEvents.asSharedFlow()
 
     private val undoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
     /**
@@ -2508,7 +2532,6 @@ class TimelineViewModel constructor(
         bgmClipId: String?,
         trimStartMs: Long?,
         trimEndMs: Long?,
-        numberOfSpeakers: Int,
     ) {
         if (bgmClipId != null) {
             val bgm = _uiState.value.bgmClips.firstOrNull { it.id == bgmClipId }
@@ -2526,11 +2549,14 @@ class TimelineViewModel constructor(
         val rs = trimStartMs
         val re = trimEndMs
         val (rangeStart, rangeEnd) = if (rs != null && re != null && re > rs) rs to re else null to null
+        // numberOfSpeakers 는 Perso audio-separation 전용 endpoint 가 받지 않는 dead 인자
+        // (BFF SeparationSpec 에 남아있긴 하나 PersoClient.submitAudioSeparation 에 미전달).
+        // chat 경로는 default 1 로 채움 — UI sheet 경로의 호환성 위해 필드 자체는 유지.
         _uiState.value = _uiState.value.copy(
             audioSeparation = AudioSeparationUiState(
                 segmentId = segId,
                 step = AudioSeparationStep.SETUP,
-                numberOfSpeakers = numberOfSpeakers.coerceIn(1, 10),
+                numberOfSpeakers = 1,
                 rangeStartMs = rangeStart,
                 rangeEndMs = rangeEnd,
             ),
@@ -2538,6 +2564,255 @@ class TimelineViewModel constructor(
             isPlaying = false,
         )
         onStartSeparation()
+    }
+
+    /**
+     * 채팅 dispatcher 전용 stem 볼륨 변경. UI 의 [onUpdateStemVolume] 은 sheet 가 열려있고
+     * (`audioSeparation != null`) 편집 모드에 진입한 상태(`editingDirectiveId != null`)에만
+     * 동작하는 silent return 가 3중으로 걸려 있어서, 채팅으로 호출하면 아무 일도 안 일어남.
+     *
+     * 본 메서드는 UI state 와 무관하게 [SeparationDirective.selections] 를 직접 갱신해
+     * persist — export render 가 새 볼륨으로 amix 한다. sheet 가 열려있다면 in-memory
+     * 미러도 함께 갱신해 즉시 preview 반영.
+     *
+     * stemId 가 어느 directive 에도 없으면 throw — dispatcher 가 사용자에게 가시화한다.
+     */
+    fun applyUpdateStemVolumeFromChat(stemId: String, volume: Float) {
+        val clamped = volume.coerceIn(0f, 2f)
+        val directive = _uiState.value.separationDirectives.firstOrNull { d ->
+            d.selections.any { it.stemId == stemId }
+        } ?: throw IllegalArgumentException(
+            "stemId '$stemId' 에 해당하는 분리 결과가 없습니다 — 음원분리를 먼저 진행하세요"
+        )
+        val updatedSelections = directive.selections.map { sel ->
+            if (sel.stemId == stemId) sel.copy(volume = clamped) else sel
+        }
+        viewModelScope.launch {
+            separationDirectiveRepository.add(directive.copy(selections = updatedSelections))
+        }
+        // sheet 가 열려있으면 in-memory state 도 동기화 — 사용자가 sheet 안에서 chat 호출한 경우
+        // slider 값이 즉시 반영되도록.
+        val sep = _uiState.value.audioSeparation
+        if (sep != null) {
+            val current = sep.selections[stemId]
+            if (current != null) {
+                val nextSelections = sep.selections + (stemId to current.copy(volume = clamped))
+                updateSeparation { it.copy(selections = nextSelections) }
+            }
+        }
+    }
+
+    /**
+     * 채팅 dispatcher 전용 — 자막 흐름의 1단계 (transcribe_for_subtitles). STT 만 실행해서
+     * 원본 스크립트를 lang="" SubtitleClip 으로 저장한 뒤, SRT 본문을 [chatAssistantEvents]
+     * 로 push 한다. 사용자는 채팅에서 그 스크립트를 보고 confirm 또는 수정 요청 → Gemini 가
+     * `apply_subtitles_with_script` 로 [applyApplySubtitlesWithScriptFromChat] 호출.
+     *
+     * 기존 [GenerateOriginalScriptUseCase] 를 그대로 재사용 — UI 의 "스크립트 생성" 버튼과
+     * 동일한 영속화. 사용자가 채팅 외에 timeline UI 로 스크립트를 추가 편집해도 정합.
+     */
+    fun applyTranscribeForSubtitlesFromChat(targetLanguageCodes: List<String>) {
+        val source = _uiState.value.segments.firstOrNull()?.sourceUri
+        if (source.isNullOrBlank()) {
+            throw IllegalStateException("source video 없음 — timeline 에 영상을 먼저 올리세요")
+        }
+        val targets = targetLanguageCodes.filter { it.isNotBlank() }.distinct()
+        if (targets.isEmpty()) {
+            throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
+        }
+        viewModelScope.launch {
+            println("[Chat] applyTranscribeForSubtitlesFromChat targets=$targets source=$source")
+            val r = generateOriginalScript(
+                projectId = projectId,
+                sourceUri = source,
+                mediaType = "VIDEO",
+                onRenderProgress = { p -> setRenderProgress(p) },
+            )
+            setRenderProgress(null)
+            if (r.isFailure) {
+                val err = r.exceptionOrNull()?.message ?: "스크립트 생성 실패"
+                _chatAssistantEvents.emit("⚠ 스크립트 생성에 실패했습니다: $err")
+                return@launch
+            }
+            // 저장된 lang="" 클립을 SRT 로 직렬화 → 채팅에 사람-친화 포맷으로 push.
+            val clips = subtitleClipRepository.observeClips(projectId).first()
+                .filter { it.languageCode.isBlank() }
+                .sortedBy { it.startMs }
+            if (clips.isEmpty()) {
+                _chatAssistantEvents.emit("⚠ STT 결과가 비어있습니다 — 영상에 음성이 없을 수 있습니다.")
+                return@launch
+            }
+            val script = formatScriptForChat(clips)
+            val targetLabel = targets.joinToString(", ")
+            _chatAssistantEvents.emit(
+                "스크립트가 준비됐습니다 (${clips.size}줄):\n\n$script\n\n" +
+                    "이대로 [$targetLabel] 자막을 만들까요? 수정 사항이 있으면 알려주세요 " +
+                    "(예: \"3번째 줄을 X로 바꿔\")."
+            )
+        }
+    }
+
+    /**
+     * 채팅 dispatcher 전용 — 자막 흐름의 2단계 (apply_subtitles_with_script). 1단계에서 저장된
+     * lang="" 클립 (사용자가 수정한 SRT 가 있으면 그것으로 교체) 을 source 로 다국어 자막 생성.
+     *
+     * @param srt 사용자가 수정 요청을 했고 Gemini 가 수정된 SRT 를 보낸 경우 — lang="" 클립을
+     *            이 SRT 의 cue 들로 교체. null 이면 1단계에서 저장된 클립 그대로 사용.
+     * @param targetLanguageCodes 번역 대상. 1단계의 targets 와 같아야 정상이지만 검증 안 함 (Gemini 책임).
+     */
+    fun applyApplySubtitlesWithScriptFromChat(srt: String?, targetLanguageCodes: List<String>) {
+        val targets = targetLanguageCodes.filter { it.isNotBlank() }.distinct()
+        if (targets.isEmpty()) {
+            throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
+        }
+        viewModelScope.launch {
+            println("[Chat] applyApplySubtitlesWithScriptFromChat srtProvided=${srt != null} targets=$targets")
+
+            // 1) srt 인자가 있으면 lang="" 클립 교체. 없으면 1단계 결과 그대로 사용.
+            if (!srt.isNullOrBlank()) {
+                val cues = runCatching { SrtParser.parse(srt) }.getOrElse {
+                    _chatAssistantEvents.emit("⚠ 수정된 SRT 파싱 실패: ${it.message}")
+                    return@launch
+                }
+                if (cues.isEmpty()) {
+                    _chatAssistantEvents.emit("⚠ 수정된 SRT 에 cue 가 없습니다.")
+                    return@launch
+                }
+                val existing = subtitleClipRepository.observeClips(projectId).first()
+                    .filter { it.languageCode.isBlank() }
+                existing.forEach { subtitleClipRepository.deleteClip(it.id) }
+                val rows = cues.map { cue ->
+                    SubtitleClip(
+                        id = generateId(),
+                        projectId = projectId,
+                        text = cue.text,
+                        startMs = cue.startMs,
+                        endMs = cue.endMs,
+                        position = SubtitlePosition(),
+                        source = SubtitleSource.AUTO,
+                        languageCode = "",
+                    )
+                }
+                subtitleClipRepository.addClips(rows)
+            }
+
+            // 프로젝트 targetLanguageCodes 에 신규 lang merge — UI preview 토글 등에서 사용.
+            editProjectRepository.getProject(projectId)?.let { p ->
+                val merged = (p.targetLanguageCodes + targets).distinct()
+                if (merged != p.targetLanguageCodes) {
+                    editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
+                }
+            }
+
+            // 2) lang="" 를 source 로 다국어 자막 생성.
+            val r = regenerateSubtitles(
+                projectId = projectId,
+                sourceLanguageCode = "",
+                targetLanguageCodes = targets,
+            )
+            if (r.isFailure) {
+                val err = r.exceptionOrNull()?.message ?: "자막 생성 실패"
+                _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
+                return@launch
+            }
+            val current = _uiState.value.previewLangCode
+            if (current == null || current !in _uiState.value.targetLanguageCodes) {
+                _uiState.value = _uiState.value.copy(previewLangCode = targets.first())
+            }
+            _chatAssistantEvents.emit("자막이 준비됐습니다 — [${targets.joinToString(", ")}]")
+        }
+    }
+
+    /**
+     * SubtitleClip 들을 채팅 표시용으로 포맷. 정식 SRT (timestamp + index + text) 가 아니라
+     * 1-based 번호 + 텍스트만 — 사용자가 "3번째 줄 바꿔줘" 같이 가리키기 쉬운 형태.
+     * Gemini 는 직전 turn 에 이 포맷을 보고 수정 요청 응답 시 SRT 를 새로 생성한다.
+     */
+    private fun formatScriptForChat(clips: List<SubtitleClip>): String {
+        val sb = StringBuilder()
+        clips.forEachIndexed { idx, c ->
+            sb.append(idx + 1).append(". ").append(c.text.trim().replace('\n', ' '))
+            if (idx < clips.size - 1) sb.append('\n')
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 채팅 dispatcher 전용 자막 생성. UI flow(onSetLocalizationMode/onToggleLocalizationLang/
+     * onStartLocalization) 우회 — review-mode 우회, silent return 분기 throw 로 가시화.
+     * 동기 검증(throw)은 dispatcher 가 즉시 받고, BFF 호출은 기존 apply…FromChat 들과
+     * 동일하게 viewModelScope.launch 로 fire-and-forget.
+     */
+    fun applyGenerateSubtitlesFromChat(targetLanguageCodes: List<String>) {
+        val source = _uiState.value.segments.firstOrNull()?.sourceUri
+        if (source.isNullOrBlank()) {
+            throw IllegalStateException("source video 없음 — timeline 에 영상을 먼저 올리세요")
+        }
+        val langs = targetLanguageCodes.filter { it.isNotBlank() }.distinct()
+        if (langs.isEmpty()) {
+            throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
+        }
+        viewModelScope.launch {
+            println("[Chat] applyGenerateSubtitlesFromChat langs=$langs source=$source")
+            editProjectRepository.getProject(projectId)?.let { p ->
+                val merged = (p.targetLanguageCodes + langs).distinct()
+                if (merged != p.targetLanguageCodes) {
+                    editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
+                }
+            }
+            val r = generateAutoSubtitles(
+                projectId = projectId,
+                sourceUri = source,
+                mediaType = "VIDEO",
+                sourceLanguageCode = "auto",
+                targetLanguageCodes = langs,
+                numberOfSpeakers = 1,
+                onRenderProgress = { p -> setRenderProgress(p) },
+                includeOriginalLanguage = false,
+            )
+            setRenderProgress(null)
+            println("[Chat] subtitle result isSuccess=${r.isSuccess} err=${r.exceptionOrNull()?.message}")
+            if (r.isSuccess) {
+                val current = _uiState.value.previewLangCode
+                if (current == null || current !in _uiState.value.targetLanguageCodes) {
+                    _uiState.value = _uiState.value.copy(previewLangCode = langs.first())
+                }
+            }
+        }
+    }
+
+    /**
+     * 채팅 dispatcher 전용 더빙 생성. UI flow 우회 — silent return 분기 throw 로 가시화.
+     * tool def 가 single lang 이라 1회만 호출.
+     */
+    fun applyGenerateDubFromChat(targetLanguageCode: String) {
+        val source = _uiState.value.segments.firstOrNull()?.sourceUri
+        if (source.isNullOrBlank()) {
+            throw IllegalStateException("source video 없음 — timeline 에 영상을 먼저 올리세요")
+        }
+        val lang = targetLanguageCode.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("targetLanguageCode 가 비었습니다")
+        viewModelScope.launch {
+            println("[Chat] applyGenerateDubFromChat lang=$lang source=$source")
+            editProjectRepository.getProject(projectId)?.let { p ->
+                val merged = (p.targetLanguageCodes + lang).distinct()
+                if (merged != p.targetLanguageCodes) {
+                    editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
+                }
+            }
+            runCatching {
+                generateAutoDub(
+                    projectId = projectId,
+                    sourceUri = source,
+                    mediaType = "VIDEO",
+                    sourceLanguageCode = "auto",
+                    targetLanguageCode = lang,
+                    numberOfSpeakers = 1,
+                    onRenderProgress = { p -> setRenderProgress(p) },
+                )
+            }.onFailure { println("[Chat] dub failed lang=$lang err=${it.message}") }
+            setRenderProgress(null)
+        }
     }
 
     /** segment edit mode 종료 ("저장" 버튼) — range/segment 상태를 모두 정리하고 기본 timeline 으로. */

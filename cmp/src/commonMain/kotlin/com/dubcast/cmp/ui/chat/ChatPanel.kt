@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,21 @@ fun ChatPanel(
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     val tokens = LocalDubCastColors.current
+
+    // ChatViewModel 인스턴스가 ViewModelStoreOwner 안에서 영상 간 공유될 수 있어 — projectId 변경
+    // 시 active 세션을 swap (영상별 격리). 같은 영상으로 돌아오면 이전 기록 복원.
+    LaunchedEffect(timelineState.projectId) {
+        chatVm.bindProject(timelineState.projectId)
+    }
+
+    // TimelineViewModel 의 비동기 작업 결과 (예: 자막 흐름 1단계 STT 완료 후 스크립트) 를
+    // 채팅 thread 에 model 메시지로 push. SharedFlow 라 collect 끊겨도 새 collect 부터 다시 받음 —
+    // panel 닫혀있는 동안 emit 된 이벤트는 유실 가능. STT 진행 중에는 panel 열어두는 흐름이라 OK.
+    LaunchedEffect(timelineVm) {
+        timelineVm.chatAssistantEvents.collect { msg ->
+            chatVm.pushAssistantMessage(msg)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

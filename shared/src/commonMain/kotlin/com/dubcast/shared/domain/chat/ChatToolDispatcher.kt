@@ -2,6 +2,8 @@ package com.dubcast.shared.domain.chat
 
 import com.dubcast.shared.data.remote.dto.ToolCallDto
 import com.dubcast.shared.domain.model.SeparationMediaType
+import com.dubcast.shared.domain.model.Stem
+import com.dubcast.shared.domain.model.StemKind
 import com.dubcast.shared.ui.timeline.TimelineViewModel
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -66,6 +68,9 @@ class ChatToolDispatcher {
                 )
             }
             // --- 음성 분리 ---
+            // tool def 가 startMs/endMs 로 통일됐지만 chat history 의 옛 호출이 trimStartMs/trimEndMs
+            // 로 남아있을 수 있어 둘 다 받아 새 이름 우선. numberOfSpeakers 는 Perso audio-separation
+            // 전용 endpoint 가 받지 않는 dead 인자라 무시.
             "separate_audio_range" -> {
                 val bgmId = a.optString("bgmClipId")
                 val segId = a.optString("segmentId")
@@ -75,32 +80,40 @@ class ChatToolDispatcher {
                 if (bgmId != null && segId != null) {
                     throw IllegalArgumentException("segmentId 와 bgmClipId 는 동시에 줄 수 없습니다 (XOR)")
                 }
+                val startMs = a.optLong("startMs") ?: a.optLong("trimStartMs")
+                val endMs = a.optLong("endMs") ?: a.optLong("trimEndMs")
                 vm.applySeparateRangeFromChat(
                     segmentId = segId,
                     bgmClipId = bgmId,
-                    trimStartMs = a.optLong("trimStartMs"),
-                    trimEndMs = a.optLong("trimEndMs"),
-                    numberOfSpeakers = a.requireInt("numberOfSpeakers"),
+                    trimStartMs = startMs,
+                    trimEndMs = endMs,
                 )
             }
             "update_stem_volume" -> {
-                vm.onUpdateStemVolume(a.requireString("stemId"), a.requireFloat("volume"))
+                vm.applyUpdateStemVolumeFromChat(a.requireString("stemId"), a.requireFloat("volume"))
             }
             // --- 자막·더빙 (영상) ---
+            // applyGenerateXxxFromChat 은 onSetLocalizationMode/onToggleLocalizationLang/
+            // onStartLocalization UI flow 우회. 기존 경로는 silent return 분기가 많아
+            // (source 없음 / filter 결과 빈 리스트 / review-mode 진입) dispatcher 가 success
+            // 반환했지만 BFF 호출이 안 일어나는 사고 발생.
             "update_subtitle_text" -> {
                 vm.onUpdateSubtitleText(a.requireString("clipId"), a.requireString("text"))
             }
+            "transcribe_for_subtitles" -> {
+                vm.applyTranscribeForSubtitlesFromChat(a.requireStringArray("targetLanguageCodes"))
+            }
+            "apply_subtitles_with_script" -> {
+                vm.applyApplySubtitlesWithScriptFromChat(
+                    srt = a.optString("srt"),
+                    targetLanguageCodes = a.requireStringArray("targetLanguageCodes"),
+                )
+            }
             "generate_subtitles" -> {
-                val targets = a.requireStringArray("targetLanguageCodes")
-                val mode = "subtitle"
-                vm.onSetLocalizationMode(mode)
-                targets.forEach { vm.onToggleLocalizationLang(it) }
-                vm.onStartLocalization()
+                vm.applyGenerateSubtitlesFromChat(a.requireStringArray("targetLanguageCodes"))
             }
             "generate_dub" -> {
-                vm.onSetLocalizationMode("dub")
-                vm.onToggleLocalizationLang(a.requireString("targetLanguageCode"))
-                vm.onStartLocalization()
+                vm.applyGenerateDubFromChat(a.requireString("targetLanguageCode"))
             }
             // --- BGM 위치/볼륨 ---
             "move_bgm_clip" -> {
@@ -134,10 +147,28 @@ class ChatToolDispatcher {
             "duplicate_segment_range" -> "구간 복제 (${a.optLong("startMs") ?: 0}–${a.optLong("endMs") ?: 0}ms)"
             "update_segment_volume" -> "세그먼트 볼륨 ${(a.optFloat("volumeScale") ?: 1f).times(100).toInt()}%"
             "update_segment_speed" -> "세그먼트 속도 ${(a.optFloat("speedScale") ?: 1f).times(100).toInt()}%"
-            "separate_audio_range" -> "음원 분리 (화자 ${a.optInt("numberOfSpeakers") ?: 2})"
-            "update_stem_volume" -> "stem 볼륨 ${(a.optFloat("volume") ?: 1f).times(100).toInt()}%"
+            "separate_audio_range" -> {
+                val s = a.optLong("startMs") ?: a.optLong("trimStartMs")
+                val e = a.optLong("endMs") ?: a.optLong("trimEndMs")
+                if (s != null && e != null) "음원 분리 (${s}–${e}ms)" else "음원 분리 (전체)"
+            }
+            "update_stem_volume" -> {
+                val stemId = a.optString("stemId") ?: ""
+                val pct = (a.optFloat("volume") ?: 1f).times(100).toInt()
+                val name = stemDisplayName(stemId)
+                when {
+                    pct == 0 -> "$name 음소거"
+                    pct == 100 -> "$name 볼륨 원래대로"
+                    else -> "$name 볼륨 ${pct}%"
+                }
+            }
             "update_subtitle_text" -> "자막 텍스트 변경"
-            "generate_subtitles" -> "자막 생성: ${a.optStringArray("targetLanguageCodes")?.joinToString(",")}"
+            "transcribe_for_subtitles" -> "스크립트 생성 (검토용): ${a.optStringArray("targetLanguageCodes")?.joinToString(",")}"
+            "apply_subtitles_with_script" -> {
+                val edited = if (a.optString("srt").isNullOrBlank()) "" else " (수정 반영)"
+                "자막 생성: ${a.optStringArray("targetLanguageCodes")?.joinToString(",")}$edited"
+            }
+            "generate_subtitles" -> "자막 생성 (검토 생략): ${a.optStringArray("targetLanguageCodes")?.joinToString(",")}"
             "generate_dub" -> "더빙 생성: ${a.optString("targetLanguageCode")}"
             "move_bgm_clip" -> "음원 위치 이동"
             "update_bgm_volume" -> "음원 볼륨 ${(a.optFloat("volumeScale") ?: 1f).times(100).toInt()}%"
@@ -145,6 +176,20 @@ class ChatToolDispatcher {
             "generate_dub_for_bgm" -> "음원 더빙 생성"
             else -> step.name
         }
+    }
+
+    /**
+     * stemId → 사용자 친화 표기. "stem" 같은 jargon 대신 "배경음/보컬/N번 화자" 로.
+     * Stem.kindFromId 가 BACKGROUND/VOICE_ALL/SPEAKER/UNKNOWN 분류.
+     */
+    private fun stemDisplayName(stemId: String): String = when (Stem.kindFromId(stemId)) {
+        StemKind.BACKGROUND -> "배경음"
+        StemKind.VOICE_ALL -> "보컬"
+        StemKind.SPEAKER -> {
+            val idx = Stem.speakerIndexFromId(stemId)
+            if (idx != null) "${idx}번 화자" else "화자"
+        }
+        StemKind.UNKNOWN -> stemId
     }
 
     // ── JsonObject helpers ─────────────────────────────────────────────────────
