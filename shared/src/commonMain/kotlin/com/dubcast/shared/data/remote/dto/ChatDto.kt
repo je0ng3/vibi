@@ -24,6 +24,7 @@ data class ProjectContextDto(
     val dubClips: List<ContextDubClipDto> = emptyList(),
     val bgmClips: List<ContextBgmClipDto> = emptyList(),
     val separationStems: List<ContextStemDto> = emptyList(),
+    val separationDirectives: List<ContextSeparationDirectiveDto> = emptyList(),
     val currentPlayheadMs: Long = 0L,
     val selectedSegmentId: String? = null,
     val selectedClipId: String? = null,
@@ -76,6 +77,19 @@ data class ContextStemDto(
     val label: String,
     val volume: Float,
     val selected: Boolean,
+)
+
+/**
+ * 이미 음성분리된 구간 — Gemini 가 (1) 중복 분리 회피 (2) 비용 안내 (3) 대안 제시
+ * (기존 삭제 후 재분리 vs 짧은 분할) 판단을 위해 참조. 1분당 비용 기준.
+ */
+@Serializable
+data class ContextSeparationDirectiveDto(
+    val id: String,
+    val rangeStartMs: Long,
+    val rangeEndMs: Long,
+    val durationMs: Long,
+    val numberOfSpeakers: Int,
 )
 
 @Serializable

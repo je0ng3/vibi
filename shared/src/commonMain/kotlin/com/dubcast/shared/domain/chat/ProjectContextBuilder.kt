@@ -3,6 +3,7 @@ package com.dubcast.shared.domain.chat
 import com.dubcast.shared.data.remote.dto.ContextBgmClipDto
 import com.dubcast.shared.data.remote.dto.ContextDubClipDto
 import com.dubcast.shared.data.remote.dto.ContextSegmentDto
+import com.dubcast.shared.data.remote.dto.ContextSeparationDirectiveDto
 import com.dubcast.shared.data.remote.dto.ContextStemDto
 import com.dubcast.shared.data.remote.dto.ContextSubtitleClipDto
 import com.dubcast.shared.data.remote.dto.ProjectContextDto
@@ -82,6 +83,19 @@ object ProjectContextBuilder {
             }
         }
 
+        // directive 단위 (range + numberOfSpeakers) — Gemini 의 중복 분리 거부 / 비용 안내 /
+        // 대안 제시(기존 삭제 후 재분리 vs 짧은 분할) 판단용. stems 는 stemId/label 만이라
+        // range 정보 없음.
+        val directives = state.separationDirectives.map { d ->
+            ContextSeparationDirectiveDto(
+                id = d.id,
+                rangeStartMs = d.rangeStartMs,
+                rangeEndMs = d.rangeEndMs,
+                durationMs = d.durationMs,
+                numberOfSpeakers = d.numberOfSpeakers,
+            )
+        }
+
         val selectedClipId = state.selectedDubClipId
             ?: state.selectedSubtitleClipId
             ?: state.selectedImageClipId
@@ -103,6 +117,7 @@ object ProjectContextBuilder {
             dubClips = dubs,
             bgmClips = bgms,
             separationStems = stems,
+            separationDirectives = directives,
             currentPlayheadMs = state.playbackPositionMs,
             selectedSegmentId = state.selectedSegmentId,
             selectedClipId = selectedClipId,
