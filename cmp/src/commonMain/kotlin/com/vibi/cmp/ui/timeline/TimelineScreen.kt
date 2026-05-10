@@ -1108,7 +1108,7 @@ fun TimelineScreen(
                 .navigationBarsPadding()
                 .padding(20.dp),
             containerColor = tokens.accent,
-            contentColor = tokens.onBackgroundPrimary,
+            contentColor = tokens.backgroundPrimary,
         ) {
             Text("Chat", fontSize = 22.sp)
         }

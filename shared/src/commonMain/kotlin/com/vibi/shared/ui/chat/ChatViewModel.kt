@@ -9,7 +9,9 @@ import com.vibi.shared.data.remote.dto.ProjectContextDto
 import com.vibi.shared.data.remote.dto.ProposalDto
 import com.vibi.shared.data.remote.dto.ToolCallDto
 import com.vibi.shared.data.repository.ChatRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -32,6 +34,11 @@ class ChatViewModel(
     private var boundProjectId: String? = null
     private val sessionsByProject = mutableMapOf<String, ChatUiState>()
 
+    // TimelineViewModel.chatAssistantEvents 를 ChatPanel(ModalBottomSheet) 가 아니라 본 VM 의
+    // viewModelScope 에서 collect — 패널이 dismiss 되어도 STT/자막 완료 메시지를 messages 에 누적.
+    // SharedFlow 의 replay=0 이라 collect 끊기면 그 사이 emit 은 유실되는 문제 회피.
+    private var assistantEventsJob: Job? = null
+
     /**
      * ChatPanel 이 LaunchedEffect(projectId) 로 호출. 다른 projectId 로 전환되면 현재 _state 를
      * 이전 슬롯에 보관 후 새 projectId 의 세션을 복원 (없으면 빈 ChatUiState).
@@ -42,6 +49,22 @@ class ChatViewModel(
         boundProjectId?.let { prev -> sessionsByProject[prev] = _state.value }
         boundProjectId = projectId
         _state.value = sessionsByProject[projectId] ?: ChatUiState()
+    }
+
+    /**
+     * TimelineViewModel 의 chatAssistantEvents 를 본 VM scope 에서 collect 시작.
+     * ChatPanel(ModalBottomSheet) 의 LaunchedEffect 에서 collect 하면 패널 dismiss 시 collect
+     * 가 cancel 되어 STT 완료/자막 완료 emit 이 유실됨 — 본 VM 으로 옮겨 panel 가시성과 무관하게
+     * 누적되도록 한다.
+     *
+     * 호출자(ChatPanel)는 매 LaunchedEffect(timelineVm) 에서 호출 — 같은 flow 인스턴스로 재호출되면
+     * 기존 Job 은 cancel 후 재시작.
+     */
+    fun bindTimelineEvents(events: SharedFlow<String>) {
+        assistantEventsJob?.cancel()
+        assistantEventsJob = viewModelScope.launch {
+            events.collect { msg -> pushAssistantMessage(msg) }
+        }
     }
 
     fun send(text: String, projectContext: ProjectContextDto, locale: String = "ko") {

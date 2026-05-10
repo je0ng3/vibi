@@ -80,7 +80,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -2490,6 +2492,7 @@ class TimelineViewModel constructor(
             val bgm = _uiState.value.bgmClips.firstOrNull { it.id == bgmClipId }
                 ?: throw IllegalArgumentException("bgmClipId 가 projectContext.bgmClips 에 없습니다")
             onStartBgmSeparation(bgm.id)
+            watchSeparationForChat()
             return
         }
         val segId = segmentId
@@ -2517,6 +2520,32 @@ class TimelineViewModel constructor(
             isPlaying = false,
         )
         onStartSeparation()
+        watchSeparationForChat()
+    }
+
+    /**
+     * 채팅 dispatcher 가 [applySeparateRangeFromChat] 으로 분리를 시작했을 때, 결과(PICK_STEMS/FAILED)
+     * 를 채팅 thread 로 push 하기 위한 1회성 watcher. UI sheet 흐름에는 영향 없음 (sheet 호출자는
+     * 본 메서드를 호출하지 않음).
+     *
+     * `audioSeparation.step` 의 PROCESSING → PICK_STEMS / FAILED 전이를 first() 로 한 번만 잡는다.
+     */
+    private fun watchSeparationForChat() {
+        viewModelScope.launch {
+            val terminal = _uiState
+                .mapNotNull { it.audioSeparation?.step }
+                .filter { it == AudioSeparationStep.PICK_STEMS || it == AudioSeparationStep.FAILED }
+                .first()
+            when (terminal) {
+                AudioSeparationStep.PICK_STEMS ->
+                    _chatAssistantEvents.emit("음원 분리가 완료됐습니다 — timeline 의 stem 막대를 확인하세요.")
+                AudioSeparationStep.FAILED -> {
+                    val err = _uiState.value.audioSeparation?.errorMessage ?: "알 수 없는 오류"
+                    _chatAssistantEvents.emit("⚠ 음원 분리에 실패했습니다: $err")
+                }
+                else -> {}
+            }
+        }
     }
 
     /**
@@ -2668,6 +2697,14 @@ class TimelineViewModel constructor(
                 _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
                 return@launch
             }
+            // chat 흐름은 원본 자막을 export variant 로 노출하려는 의도가 아님 — source 역할만 한
+            // lang="" 클립이 살아있으면 hasConfirmedOriginalSubtitle 이 true 가 되어 SAVE picker 에
+            // KEY_ORIGINAL_SUBTITLE 변종이 자동 포함되고 default 체크되어 "원본 자막 영상" 까지 생성됨.
+            // target 생성이 끝났으므로 source 는 정리.
+            val sourceClips = subtitleClipRepository.observeClips(projectId).first()
+                .filter { it.languageCode.isBlank() }
+            sourceClips.forEach { subtitleClipRepository.deleteClip(it.id) }
+
             val current = _uiState.value.previewLangCode
             if (current == null || current !in _uiState.value.targetLanguageCodes) {
                 _uiState.value = _uiState.value.copy(previewLangCode = targets.first())
@@ -2730,6 +2767,10 @@ class TimelineViewModel constructor(
                 if (current == null || current !in _uiState.value.targetLanguageCodes) {
                     _uiState.value = _uiState.value.copy(previewLangCode = langs.first())
                 }
+                _chatAssistantEvents.emit("자막이 준비됐습니다 — [${langs.joinToString(", ")}]")
+            } else {
+                val err = r.exceptionOrNull()?.message ?: "자막 생성 실패"
+                _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
             }
         }
     }
@@ -2763,7 +2804,12 @@ class TimelineViewModel constructor(
                     numberOfSpeakers = 1,
                     onRenderProgress = { p -> setRenderProgress(p) },
                 )
-            }.onFailure { println("[Chat] dub failed lang=$lang err=${it.message}") }
+            }.onSuccess {
+                _chatAssistantEvents.emit("더빙이 준비됐습니다 — [$lang]")
+            }.onFailure {
+                println("[Chat] dub failed lang=$lang err=${it.message}")
+                _chatAssistantEvents.emit("⚠ 더빙 생성에 실패했습니다: ${it.message ?: "알 수 없는 오류"}")
+            }
             setRenderProgress(null)
         }
     }

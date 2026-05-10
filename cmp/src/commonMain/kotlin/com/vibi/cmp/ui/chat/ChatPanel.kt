@@ -78,12 +78,10 @@ fun ChatPanel(
     }
 
     // TimelineViewModel 의 비동기 작업 결과 (예: 자막 흐름 1단계 STT 완료 후 스크립트) 를
-    // 채팅 thread 에 model 메시지로 push. SharedFlow 라 collect 끊겨도 새 collect 부터 다시 받음 —
-    // panel 닫혀있는 동안 emit 된 이벤트는 유실 가능. STT 진행 중에는 panel 열어두는 흐름이라 OK.
+    // 채팅 thread 에 model 메시지로 push. ChatPanel 은 ModalBottomSheet 라 dismiss 시 dispose
+    // 되므로 collect 를 ChatVM scope 에 위임 — 패널 닫혀있는 동안 emit 도 messages 에 누적.
     LaunchedEffect(timelineVm) {
-        timelineVm.chatAssistantEvents.collect { msg ->
-            chatVm.pushAssistantMessage(msg)
-        }
+        chatVm.bindTimelineEvents(timelineVm.chatAssistantEvents)
     }
 
     ModalBottomSheet(
@@ -257,7 +255,7 @@ private fun buildPrompts(state: TimelineUiState): List<String> {
 private fun MessageBubble(msg: ChatMessageDto) {
     val tokens = LocalVibiColors.current
     val (bg, color, align) = when (msg.role) {
-        "user" -> Triple(tokens.accent, tokens.onBackgroundPrimary, Alignment.End)
+        "user" -> Triple(tokens.accent, tokens.backgroundPrimary, Alignment.End)
         "system" -> Triple(tokens.chipBg, tokens.mutedText, Alignment.CenterHorizontally)
         else -> Triple(tokens.panelBg, tokens.onBackgroundPrimary, Alignment.Start)
     }

@@ -39,7 +39,7 @@ targets:
           NSAllowsLocalNetworking: true
           # 실기기 dev 시 LAN IP (192.168.x.x) 의 HTTP BFF 호출 허용. production 출시 전 제거.
           NSExceptionDomains:
-            "192.168.40.207":
+            "192.168.0.11":
               NSExceptionAllowsInsecureHTTPLoads: true
               NSIncludesSubdomains: false
         # UILaunchScreen 누락 시 iOS 가 320×480 호환 모드로 앱을 강제 — 화면 작게 잘림.
