@@ -292,7 +292,7 @@ fun TimelineScreen(
             }
             Text(
                 text = headerTitle,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.headlineSmall,
                 color = tokens.onBackgroundPrimary,
                 modifier = Modifier.weight(1f),
             )
