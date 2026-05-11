@@ -17,7 +17,7 @@ interface EditProjectRepository {
 
     /**
      * 7일 만료 cleanup. updatedAt < [thresholdMs] 인 모든 project + 자식 row cascade 삭제.
-     * 호출자는 보통 InputScreen 진입 시점.
+     * 호출자는 보통 InputScreen 진입 시점. 현재 로그인 계정 한정.
      */
     suspend fun expireOldDrafts(thresholdMs: Long)
 }

@@ -8,6 +8,8 @@ import com.vibi.shared.domain.model.TargetLanguage
 @Entity(tableName = "edit_projects")
 data class EditProjectEntity(
     @PrimaryKey val projectId: String,
+    /** JWT sub claim. 같은 기기에 다른 계정이 로그인했을 때 이전 작업 노출 방지용 스코핑 키. */
+    val userId: String,
     val createdAt: Long,
     val updatedAt: Long,
     val title: String? = null,

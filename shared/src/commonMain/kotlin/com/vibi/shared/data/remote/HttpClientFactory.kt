@@ -41,7 +41,9 @@ fun createBffHttpClient(
 
         install(HttpTimeout) {
             requestTimeoutMillis = 300_000L
-            connectTimeoutMillis = 15_000L
+            // connect 는 TCP handshake 라 정상 환경이면 ms 단위. dev 시 BFF_BASE_URL 이
+            // stale IP 라 닿지 않는 케이스를 5초 안에 명확히 깨도록 짧게 잡는다.
+            connectTimeoutMillis = 5_000L
             socketTimeoutMillis = 300_000L
         }
 

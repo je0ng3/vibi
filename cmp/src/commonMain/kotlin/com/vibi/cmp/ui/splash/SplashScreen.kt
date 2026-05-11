@@ -28,6 +28,9 @@ fun SplashScreen(
 ) {
     LaunchedEffect(Unit) {
         delay(SPLASH_DURATION_MS)
+        // 저장된 JWT 의 sub 또는 lastUserId 로 UserSession 복원 — 콜드 스타트 후
+        // EditProjectRepository 의 user-scoped 쿼리가 즉시 올바른 userId 를 사용하도록.
+        authRepository.restoreSession()
         onDone(authRepository.hasValidSession())
     }
     Box(

@@ -2,6 +2,7 @@ package com.vibi.shared.data.repository
 
 import androidx.room.immediateTransaction
 import androidx.room.useWriterConnection
+import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.local.db.VibiDatabase
 import com.vibi.shared.data.local.db.dao.BgmClipDao
 import com.vibi.shared.data.local.db.dao.DubClipDao
@@ -18,7 +19,9 @@ import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.platform.currentTimeMillis
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 
 class EditProjectRepositoryImpl constructor(
@@ -31,6 +34,7 @@ class EditProjectRepositoryImpl constructor(
     private val textOverlayDao: TextOverlayDao,
     private val bgmClipDao: BgmClipDao,
     private val separationDirectiveDao: SeparationDirectiveDao,
+    private val userSession: UserSession,
 ) : EditProjectRepository {
 
     override suspend fun createProject(project: EditProject) {
@@ -66,13 +70,18 @@ class EditProjectRepositoryImpl constructor(
         cascadeDeleteProject(projectId)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeAllProjects(): Flow<List<EditProject>> =
-        dao.observeAll().map { list -> list.map { it.toDomain() } }
+        userSession.userId.flatMapLatest { uid ->
+            dao.observeAllForUser(uid).map { list -> list.map { it.toDomain() } }
+        }
 
     override suspend fun expireOldDrafts(thresholdMs: Long) {
         // updatedAt < threshold 인 projectId 들 fetch 후 각각 cascade.
         // 자식 cascade 삭제도 runCatching 로 감싸 일부 실패 시 다음 project 진행.
-        val expiredIds = runCatching { dao.getExpiredIds(thresholdMs) }.getOrDefault(emptyList())
+        val uid = userSession.current()
+        val expiredIds = runCatching { dao.getExpiredIdsForUser(uid, thresholdMs) }
+            .getOrDefault(emptyList())
         expiredIds.forEach { id ->
             runCatching { cascadeDeleteProject(id) }
         }
@@ -134,6 +143,9 @@ class EditProjectRepositoryImpl constructor(
 
     private fun EditProject.toEntity() = EditProjectEntity(
         projectId = projectId,
+        // 도메인 모델에는 userId 가 없음 (multi-account 는 클라이언트 로컬 관심사).
+        // 항상 현재 로그인 계정으로 stamp — 다른 계정의 row 는 update 경로로 흘러올 수 없음.
+        userId = userSession.current(),
         createdAt = createdAt,
         updatedAt = updatedAt,
         title = title,

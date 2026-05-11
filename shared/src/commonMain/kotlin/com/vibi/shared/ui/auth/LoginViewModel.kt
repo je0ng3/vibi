@@ -3,8 +3,11 @@ package com.vibi.shared.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vibi.shared.data.repository.AuthRepository
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -15,24 +18,29 @@ class LoginViewModel(
     sealed interface UiState {
         data object Idle : UiState
         data object Loading : UiState
-        data object Success : UiState
         data class Error(val message: String) : UiState
     }
 
     private val _state = MutableStateFlow<UiState>(UiState.Idle)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    // success 는 sticky state 가 아니라 일회성 navigation 이벤트.
+    // ViewModelStoreOwner 캐시 (Activity 단일 store) 때문에 로그아웃 후 LoginScreen 재진입 시
+    // 이전 Success state 가 그대로 남아 즉시 홈으로 튕기던 버그 방지.
+    private val _navigateToHome = MutableSharedFlow<Unit>()
+    val navigateToHome: SharedFlow<Unit> = _navigateToHome.asSharedFlow()
+
     fun signIn() {
         if (_state.value is UiState.Loading) return
-        // [TEMP] 시연용 Google Sign-In 우회 — 즉시 Success. BFF 는 인증 미들웨어 없어 우회 안전.
-        // 복구: 즉시 Success 라인 제거하고 viewModelScope.launch 블록 주석 해제.
-        _state.value = UiState.Success
-        // _state.value = UiState.Loading
-        // viewModelScope.launch {
-        //     authRepository.signInWithGoogle().fold(
-        //         onSuccess = { _state.value = UiState.Success },
-        //         onFailure = { e -> _state.value = UiState.Error(e.message ?: "Sign-in failed") },
-        //     )
-        // }
+        _state.value = UiState.Loading
+        viewModelScope.launch {
+            authRepository.signInWithGoogle().fold(
+                onSuccess = {
+                    _state.value = UiState.Idle
+                    _navigateToHome.emit(Unit)
+                },
+                onFailure = { e -> _state.value = UiState.Error(e.message ?: "Sign-in failed") },
+            )
+        }
     }
 }

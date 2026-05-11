@@ -32,8 +32,17 @@ class AuthTokenStore(private val settings: Settings) {
         settings.remove(KEY_EXP)
     }
 
+    /** 직전에 로그인했던 userId (계정 전환 감지용). 로그아웃 후에도 유지. */
+    fun lastUserId(): String? = settings.getStringOrNull(KEY_LAST_USER_ID)
+
+    fun saveLastUserId(userId: String) {
+        if (lastUserId() == userId) return
+        settings.putString(KEY_LAST_USER_ID, userId)
+    }
+
     companion object {
         private const val KEY_TOKEN = "auth.jwt"
         private const val KEY_EXP = "auth.exp"
+        private const val KEY_LAST_USER_ID = "auth.lastUserId"
     }
 }

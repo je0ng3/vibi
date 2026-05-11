@@ -1,6 +1,7 @@
 package com.vibi.shared.di
 
 import com.vibi.shared.data.local.AuthTokenStore
+import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.repository.AudioSeparationRepositoryImpl
 import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.data.repository.BgmClipRepositoryImpl
@@ -27,6 +28,9 @@ import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import org.koin.dsl.module
 
 val repositoryModule = module {
+    // 계정별 로컬 데이터 분리 — Repository / AuthRepository 가 공유.
+    single { UserSession() }
+
     single<EditProjectRepository> {
         EditProjectRepositoryImpl(
             database = get(),
@@ -38,6 +42,7 @@ val repositoryModule = module {
             textOverlayDao = get(),
             bgmClipDao = get(),
             separationDirectiveDao = get(),
+            userSession = get(),
         )
     }
     single<SegmentRepository> { SegmentRepositoryImpl(get()) }
@@ -61,5 +66,12 @@ val repositoryModule = module {
 
     // 인증 — Settings / GoogleSignInClient 는 platform 모듈에서 주입.
     single { AuthTokenStore(settings = get()) }
-    single { AuthRepository(signInClient = get(), bffApi = get(), tokenStore = get()) }
+    single {
+        AuthRepository(
+            signInClient = get(),
+            bffApi = get(),
+            tokenStore = get(),
+            userSession = get(),
+        )
+    }
 }

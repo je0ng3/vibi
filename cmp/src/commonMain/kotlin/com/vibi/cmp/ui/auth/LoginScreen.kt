@@ -34,8 +34,8 @@ fun LoginScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    LaunchedEffect(state) {
-        if (state is LoginViewModel.UiState.Success) onSignedIn()
+    LaunchedEffect(viewModel) {
+        viewModel.navigateToHome.collect { onSignedIn() }
     }
 
     Box(
