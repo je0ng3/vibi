@@ -26,12 +26,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,12 +42,10 @@ import com.vibi.shared.data.remote.dto.ChatMessageDto
 import com.vibi.shared.data.remote.dto.ProposalDto
 import com.vibi.shared.data.remote.dto.ToolCallDto
 import com.vibi.shared.domain.chat.ChatToolDispatcher
-import com.vibi.shared.domain.chat.DispatchResult
 import com.vibi.shared.domain.chat.ProjectContextBuilder
 import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.TimelineUiState
 import com.vibi.shared.ui.timeline.TimelineViewModel
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -67,21 +64,16 @@ fun ChatPanel(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val state by chatVm.state.collectAsState()
-    val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     val tokens = LocalVibiColors.current
 
-    // ChatViewModel 인스턴스가 ViewModelStoreOwner 안에서 영상 간 공유될 수 있어 — projectId 변경
-    // 시 active 세션을 swap (영상별 격리). 같은 영상으로 돌아오면 이전 기록 복원.
-    LaunchedEffect(timelineState.projectId) {
-        chatVm.bindProject(timelineState.projectId)
-    }
+    // bindProject / bindTimelineEvents 는 TimelineScreen 에서 panel 가시성과 무관하게 호출 —
+    // 패널 열리기 전부터 chatAssistantEvents 를 collect 해 unread 표시가 정상 동작.
 
-    // TimelineViewModel 의 비동기 작업 결과 (예: 자막 흐름 1단계 STT 완료 후 스크립트) 를
-    // 채팅 thread 에 model 메시지로 push. ChatPanel 은 ModalBottomSheet 라 dismiss 시 dispose
-    // 되므로 collect 를 ChatVM scope 에 위임 — 패널 닫혀있는 동안 emit 도 messages 에 누적.
-    LaunchedEffect(timelineVm) {
-        chatVm.bindTimelineEvents(timelineVm.chatAssistantEvents)
+    // 패널 열림/닫힘 — chatVm 의 hasUnreadMessages 토글 + 새 메시지 unread 처리에 사용.
+    DisposableEffect(Unit) {
+        chatVm.onPanelOpened()
+        onDispose { chatVm.onPanelClosed() }
     }
 
     ModalBottomSheet(
@@ -132,11 +124,10 @@ fun ChatPanel(
                     dispatcher = dispatcher,
                     labelFor = { dispatcher.labelFor(it) },
                     onApply = { steps ->
-                        scope.launch {
-                            val result = dispatcher.dispatch(steps, timelineVm)
-                            val summary = formatDispatchSummary(result)
-                            chatVm.onApplied(steps, summary)
-                        }
+                        // ChatVM scope 에서 dispatch — 패널 dismiss 해도 BFF 진행 유지.
+                        // [적용] 즉시 "⏳ 처리 중" 메시지 push, dispatch 완료 후 같은 id 메시지를
+                        // "✓ 적용 완료" / "⚠ 실패" 로 in-place replace.
+                        chatVm.applyProposal(steps, dispatcher, timelineVm)
                     },
                     onRevise = {
                         // [수정 요청] — 입력창에 prefill.
@@ -345,9 +336,3 @@ private val LOCAL_GUIDE_REPLIES = mapOf(
 직접 자연어로 입력해도 되고, 정확한 구간/언어/속도를 같이 말씀해 주시면 더 잘 맞춰 드립니다.""",
 )
 
-private fun formatDispatchSummary(result: DispatchResult): String = when (result) {
-    is DispatchResult.Success -> "✓ 적용 완료: ${result.appliedLabels.joinToString(", ")}"
-    is DispatchResult.Failure ->
-        "⚠ ${result.failedAtIndex + 1}번째 단계(${result.failedLabel}) 실패: ${result.message}\n" +
-            "이미 적용: ${result.appliedLabels.joinToString(", ").ifBlank { "없음" }}"
-}

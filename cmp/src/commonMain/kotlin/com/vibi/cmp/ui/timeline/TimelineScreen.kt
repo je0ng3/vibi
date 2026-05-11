@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
@@ -92,10 +94,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.VideoPlayer
 import com.vibi.cmp.ui.cupertino.StepHero
+import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
 import com.vibi.shared.ui.timeline.TimelineViewModel
 import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
 /**
@@ -112,6 +116,17 @@ fun TimelineScreen(
 ) {
     val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
     val state by viewModel.uiState.collectAsState()
+
+    // ChatVM — FAB unread badge 와 panel 양쪽이 같은 인스턴스 공유. bindProject / bindTimelineEvents
+    // 를 panel 가시성과 무관하게 호출해 panel 닫힌 상태에서도 chatAssistantEvents 수신 → unread 토글.
+    val chatViewModel: ChatViewModel = koinViewModel()
+    val chatState by chatViewModel.state.collectAsState()
+    LaunchedEffect(projectId) {
+        chatViewModel.bindProject(projectId)
+    }
+    LaunchedEffect(viewModel) {
+        chatViewModel.bindTimelineEvents(viewModel.chatAssistantEvents)
+    }
 
     // 채팅 패널 토글 — FAB (헤더 우측) 로 열고 ModalBottomSheet 가 자체적으로 dismiss 처리.
     var chatSheetVisible by remember { mutableStateOf(false) }
@@ -1101,16 +1116,25 @@ fun TimelineScreen(
         !state.showTextOverlaySheet &&
         !chatSheetVisible
     if (chatFabVisible) {
-        FloatingActionButton(
-            onClick = { chatSheetVisible = true },
+        BadgedBox(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
                 .padding(20.dp),
-            containerColor = tokens.accent,
-            contentColor = tokens.backgroundPrimary,
+            badge = {
+                if (chatState.hasUnreadMessages) {
+                    // Material3 Badge — content 없이 호출하면 작은 dot. AI 메시지 도착 신호.
+                    Badge()
+                }
+            },
         ) {
-            Text("Chat", fontSize = 22.sp)
+            FloatingActionButton(
+                onClick = { chatSheetVisible = true },
+                containerColor = tokens.accent,
+                contentColor = tokens.backgroundPrimary,
+            ) {
+                Text("Chat", fontSize = 22.sp)
+            }
         }
     }
     } // close Box wrapper
@@ -1247,6 +1271,7 @@ fun TimelineScreen(
             timelineVm = viewModel,
             timelineState = state,
             onDismiss = { chatSheetVisible = false },
+            chatVm = chatViewModel,
         )
     }
 }

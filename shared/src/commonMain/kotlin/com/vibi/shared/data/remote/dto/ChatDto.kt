@@ -1,6 +1,7 @@
 package com.vibi.shared.data.remote.dto
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonObject
 
 /** BFF [ChatRequest] 미러 — 모바일 → /api/v2/chat. */
@@ -15,6 +16,10 @@ data class ChatRequestDto(
 data class ChatMessageDto(
     val role: String,
     val content: String,
+    // 클라이언트 내부 식별자 — "처리 중" 메시지를 결과로 in-place 갱신용. @Transient 라 BFF
+    // 송신 JSON 에 절대 포함되지 않음 (encodeDefaults=true 환경에서 안전).
+    @Transient
+    val id: String? = null,
 )
 
 @Serializable
