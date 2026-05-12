@@ -45,6 +45,14 @@ targets:
           UIColorName: ""
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        # UIScene lifecycle 채택 — iOS 가 곧 강제. AppDelegate 는 앱 단위,
+        # SceneDelegate 는 window/URL 단위로 분리.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
         # Google Sign-In + BFF 주소는 Configs/Auth.xcconfig 의 빌드 설정을 expand.
         # 코드/plist 어디에도 client id / URL 을 직접 적지 않는다.
         GIDClientID: $(GOOGLE_OAUTH_IOS_CLIENT_ID)

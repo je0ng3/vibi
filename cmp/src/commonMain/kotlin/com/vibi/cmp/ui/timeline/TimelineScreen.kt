@@ -34,6 +34,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
@@ -62,6 +64,7 @@ import com.vibi.cmp.platform.rememberAudioRecorder
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.cmp.ui.chat.ChatPanel
 import com.vibi.shared.domain.model.AutoJobStatus
+import com.vibi.shared.domain.model.hasNonTrivialEdits
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -93,11 +96,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.VideoPlayer
-import com.vibi.cmp.ui.cupertino.StepHero
 import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
+import com.vibi.shared.ui.timeline.TimelineStep
 import com.vibi.shared.ui.timeline.TimelineViewModel
+import com.vibi.shared.ui.timeline.isLocalizationBusy
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -212,6 +216,30 @@ fun TimelineScreen(
         }
     }
 
+    // Edit 탭 = 자동 segment edit mode. segments hydrate 직후 1회 onEnterSegmentEditMode 호출.
+    // - currentStep == Edit 일 때만
+    // - 아직 mode 진입 안 했을 때만 (LaunchedEffect 가드)
+    // - firstVideoSegId 확보된 직후
+    val firstVideoSegIdForAutoEnter = state.segments.firstOrNull {
+        it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+    }?.id
+    LaunchedEffect(state.currentStep, firstVideoSegIdForAutoEnter) {
+        if (state.currentStep == TimelineStep.Edit &&
+            !state.isSegmentEditMode &&
+            firstVideoSegIdForAutoEnter != null
+        ) {
+            viewModel.onEnterSegmentEditMode(firstVideoSegIdForAutoEnter)
+        }
+    }
+
+    // 자막/더빙 단계 진입 시 생성 패널 자동 열기. 사용자가 닫으면 같은 단계 안에서 다시 열리지 않고,
+    // 다른 단계 갔다 돌아오면 다시 열림 (currentStep 키 변경으로 재발화).
+    LaunchedEffect(state.currentStep) {
+        if (state.currentStep == TimelineStep.SubtitleDub && !state.localizationOpen) {
+            viewModel.onShowLocalization()
+        }
+    }
+
     // 구간 모드 진입 + 선택 있는 경우만 재생 위치 정렬 (zero-width 선택 = 자유 재생 허용).
     LaunchedEffect(state.isRangeSelecting) {
         if (state.isRangeSelecting && state.pendingRangeEndMs > state.pendingRangeStartMs) {
@@ -251,7 +279,7 @@ fun TimelineScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 헤더: 뒤로 + StepHero + 저장 버튼. 백그라운드 잡 진행 중이면 저장 disabled.
+        // 헤더: 뒤로 + 단계 타이틀 + 공유/저장. 백그라운드 잡 진행 중이면 저장 disabled.
         // 저장 버튼이 자체적으로 모든 variant 렌더 → 갤러리 저장 → EditProject 삭제 → InputScreen 복귀를
         // 호출하므로 별도 ExportScreen 으로 이동하는 흐름은 폐기됐다.
         val saveAnyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
@@ -275,91 +303,73 @@ fun TimelineScreen(
             ) {
                 Text("‹", color = tokens.onBackgroundPrimary, style = MaterialTheme.typography.titleLarge)
             }
-            val headerTitle = if (state.isSegmentEditMode) "타임라인: 영상편집" else "타임라인"
-            StepHero(step = 2, title = headerTitle, modifier = Modifier.weight(1f), compact = true)
+            val headerTitle = when (state.currentStep) {
+                TimelineStep.Edit -> "영상 편집"
+                TimelineStep.AudioSources -> "음원"
+                TimelineStep.SubtitleDub -> "자막/더빙"
+            }
+            Text(
+                text = headerTitle,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                color = tokens.onBackgroundPrimary,
+                modifier = Modifier.weight(1f),
+            )
             val saving = state.saveStatus is SaveStatus.RUNNING
             val savingPercent = (state.saveStatus as? SaveStatus.RUNNING)?.progress ?: 0
-            if (state.isSegmentEditMode) {
-                // 영상편집 모드 — 취소(편집 무효) + 체크(편집 확정 → 타임라인 결과 초기화).
-                IconButton(
-                    onClick = { viewModel.onCancelSegmentEditChanges() },
-                    modifier = Modifier.size(40.dp),
-                ) {
+            // 공유 / 저장 — 모든 단계에서 동일하게 노출. Edit 탭의 X/✓ 분기는 "다음 단계" CTA 가
+            // 자동 commit 하므로 불필요.
+            val sharing = state.shareStatus is ShareStatus.RUNNING
+            val sharingPercent = (state.shareStatus as? ShareStatus.RUNNING)?.progress ?: 0
+            IconButton(
+                enabled = !sharing && !saveAnyJobRunning && !saving && state.segments.isNotEmpty(),
+                onClick = { viewModel.onShareExport() },
+                modifier = Modifier.size(40.dp),
+            ) {
+                if (sharing) {
+                    Text(
+                        "${sharingPercent}%",
+                        fontSize = 11.sp,
+                        color = tokens.onBackgroundPrimary,
+                    )
+                } else {
                     Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Filled.Close,
-                        contentDescription = "취소",
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
+                        contentDescription = "공유",
                         tint = tokens.onBackgroundPrimary,
                     )
                 }
-                IconButton(
-                    onClick = { viewModel.onCommitSegmentEdit() },
-                    modifier = Modifier.size(40.dp),
-                ) {
+            }
+            // 저장 아이콘 — 진행 중이면 percent 텍스트로 토글.
+            // segments 비어있으면 ExportWithDubbingUseCase 가 require(isNotEmpty) 에서 throw →
+            // 사용자가 silent crash 보기 전에 버튼 단계에서 차단.
+            IconButton(
+                enabled = !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
+                onClick = { viewModel.onSaveAllVariants() },
+                modifier = Modifier.size(40.dp),
+            ) {
+                if (saving) {
+                    Text(
+                        "${savingPercent}%",
+                        fontSize = 11.sp,
+                        color = tokens.onBackgroundPrimary,
+                    )
+                } else {
                     Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Filled.Check,
-                        contentDescription = "적용",
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
+                        contentDescription = "저장",
                         tint = tokens.onBackgroundPrimary,
                     )
-                }
-            } else {
-                // 공유 아이콘 — export → 시스템 share sheet.
-                val sharing = state.shareStatus is ShareStatus.RUNNING
-                val sharingPercent = (state.shareStatus as? ShareStatus.RUNNING)?.progress ?: 0
-                IconButton(
-                    enabled = !sharing && !saveAnyJobRunning && !saving && state.segments.isNotEmpty(),
-                    onClick = { viewModel.onShareExport() },
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    if (sharing) {
-                        Text(
-                            "${sharingPercent}%",
-                            fontSize = 11.sp,
-                            color = tokens.onBackgroundPrimary,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
-                            contentDescription = "공유",
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                    }
-                }
-                // 저장 아이콘 — 진행 중이면 percent 텍스트로 토글.
-                // segments 비어있으면 ExportWithDubbingUseCase 가 require(isNotEmpty) 에서 throw →
-                // 사용자가 silent crash 보기 전에 버튼 단계에서 차단.
-                IconButton(
-                    enabled = !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
-                    onClick = { viewModel.onSaveAllVariants() },
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    if (saving) {
-                        Text(
-                            "${savingPercent}%",
-                            fontSize = 11.sp,
-                            color = tokens.onBackgroundPrimary,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
-                            contentDescription = "저장",
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                    }
                 }
             }
         }
 
-        // 영상편집 모드 안내 — 적용 시 결과(음원분리/자막/더빙) 가 모두 초기화됨을 사용자에게 명시.
-        if (state.isSegmentEditMode) {
-            Text(
-                "영상 편집을 적용(✓)하면 음원 분리·자막·더빙 결과와 변경사항 되돌리기 스택이 모두 초기화됩니다. 다시 생성하려면 적용 후 각 단계를 처음부터 진행해야 합니다.",
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.mutedText,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-            )
-        }
+
+        // 3단계 stepper — 항상 노출. 클릭 차단은 VM 의 onSelectStep 가 처리 (in-flight job 등).
+        TimelineStepperRow(
+            currentStep = state.currentStep,
+            onStepClick = { viewModel.onSelectStep(it) },
+        )
 
         // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
         // "" sentinel = 원본 자막 (lang="" 클립). review 완료 후에만 chip 노출.
@@ -386,8 +396,8 @@ fun TimelineScreen(
             state.autoDubStatus == AutoJobStatus.RUNNING ||
             state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING
-        // 영상 편집 모드에선 변종 선택 숨김 — 원본만 표시.
-        if (!state.isSegmentEditMode) Row(
+        // 변종 선택은 자막/더빙 단계에서만 의미 있음 (Edit·음원 단계에선 "기본" 만 존재).
+        if (state.currentStep == TimelineStep.SubtitleDub) Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
         ) {
@@ -536,29 +546,7 @@ fun TimelineScreen(
                 }
             }
 
-            // 우상단 연필 버튼 — segment 편집 (복제/삭제/볼륨/속도) 진입. 첫 video segment 의 id 로
-            // ViewModel.onEnterSegmentEditMode 호출. 음성분리(onEnterRangeMode) 와 명시적 분리.
-            // (iOS UIKitView z-order 한계로 비디오 위 overlay 가 안 그려질 수 있음 — Android 우선 동작.)
-            val firstVideoSegId = state.segments.firstOrNull { it.type == com.vibi.shared.domain.model.SegmentType.VIDEO }?.id
-            if (firstVideoSegId != null && !state.isRangeSelecting) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 12.dp, end = 12.dp)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.4f))
-                        .clickable { viewModel.onEnterSegmentEditMode(firstVideoSegId) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Edit,
-                        contentDescription = "구간 편집",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
+            // Edit 탭 자동 진입으로 별도 pencil 버튼 불필요 (LaunchedEffect 가 진입 처리).
         }
 
         // Transport row: play/pause + 시간 표시
@@ -684,10 +672,11 @@ fun TimelineScreen(
             )
             // 재생바 밑 BGM 트랙 — 각 클립을 startMs 위치 시간 비율로 시각화.
             // 막대 horizontal drag → startMs 갱신, vertical drag → lane 변경, tap → 액션 시트.
-            // 영상편집 모드에선 segment 편집과 헷갈리므로 BGM lane 을 숨김. 클립 데이터는
-            // 그대로 유지되므로 모드 나가면 즉시 다시 보임. 음원분리 range 선택 모드에서는
-            // 클립 탭 무시 (range 만 선택 가능) — 매개변수 `tapEnabled` 로 차단.
-            if (!state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
+            // AudioSources 단계 전용. SubtitleDub 단계에서는 어차피 BFF render 시 BGM 이 포함되어
+            // 단일 영상으로 합쳐지므로 별도 표시 불필요. 클립 데이터는 보존되므로 AudioSources 로
+            // 돌아오면 즉시 다시 보임. 음원분리 range 선택 모드에서는 클립 탭 무시 (range 만 선택 가능).
+            if (state.currentStep == TimelineStep.AudioSources &&
+                !state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
                 BgmTimelineLane(
                     clips = state.bgmClips,
                     totalMs = state.videoDurationMs,
@@ -766,143 +755,144 @@ fun TimelineScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // 라벨 — RUNNING 만 진행 표시. READY/IDLE/FAILED 모두 "음성 분리" 로
-                // (이미 분리 결과 있어도 새 분리 시작). 기존 결과 편집은 directive 막대 클릭으로.
-                val sepLabel = when (state.separationStatus) {
-                    AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
-                    AutoJobStatus.FAILED -> "❌ 다시 시도"
-                    else -> "음원 분리"
-                }
-                // 음성분리 버튼은 자기 자신 status 만 봄 — 자막/더빙 진행 중이라도 음성분리는 독립 실행 가능.
-                // RUNNING 중엔 disabled (백그라운드 폴링은 계속 — sheet 자동 재오픈 X).
-                // 진행 결과 확인은 timeline 의 directive 막대 클릭으로.
-                OutlinedButton(
-                    enabled = firstSegId != null && state.separationStatus != AutoJobStatus.RUNNING,
-                    modifier = Modifier.height(42.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    onClick = {
-                        val segId = firstSegId ?: return@OutlinedButton
-                        when (state.separationStatus) {
-                            AutoJobStatus.FAILED -> {
-                                viewModel.onClearSeparation()
-                                viewModel.onEnterRangeMode(segId)
-                            }
-                            else -> viewModel.onEnterRangeMode(segId)
-                        }
+                // 음원 단계 액션 — 음원 분리.
+                if (state.currentStep == TimelineStep.AudioSources) {
+                    val sepLabel = when (state.separationStatus) {
+                        AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
+                        AutoJobStatus.FAILED -> "❌ 다시 시도"
+                        else -> "음원 분리"
                     }
-                ) { Text(sepLabel, fontSize = 14.sp) }
-                // 자막/더빙 생성: 자막/더빙 잡만 진행 중이면 비활성 + 진행 라벨로 변경.
-                // 음성분리는 독립이라 영향 X.
-                val localizationBusy = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-                    state.autoDubStatus == AutoJobStatus.RUNNING ||
-                    state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-                    state.sttPreflightStatus == AutoJobStatus.RUNNING
-                val localizationLabel = when {
-                    state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
-                        state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 자막·더빙 생성 중"
-                    state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-                        state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-                        state.sttPreflightStatus == AutoJobStatus.RUNNING -> "⏳ 자막 생성 중"
-                    state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 더빙 생성 중"
-                    else -> "자막/더빙 생성"
-                }
-                OutlinedButton(
-                    enabled = !localizationBusy,
-                    modifier = Modifier.height(42.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    onClick = { viewModel.onShowLocalization() }
-                ) { Text(localizationLabel, fontSize = 14.sp) }
-                // 상세 편집 — 자막 cue 별 텍스트/스타일 inline 조정. 자막 1개 이상 + idle 시.
-                val anySubtitle = remember(state.subtitleClips) {
-                    state.subtitleClips.any { it.languageCode.isNotBlank() }
-                }
-                OutlinedButton(
-                    enabled = anySubtitle && !anyJobRunning,
-                    modifier = Modifier.height(42.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    onClick = { viewModel.onToggleDetailEdit() }
-                ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
-                // 음원 삽입 — 단일 진입점. 클릭 시 [업로드 / 즉시 녹음] DropdownMenu.
-                // 녹음 진행 중에는 자체적으로 ⏹ 종료 버튼 라벨로 토글.
-                val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }
-                val recorder = rememberAudioRecorder(
-                    onRecorded = { uri, _ -> viewModel.onPickBgmAudio(uri) },
-                    onError = { /* TODO: bgmError 상태로 토스트 */ },
-                )
-                val recording = recorder.isRecording
-                // start() 와 실제 hardware 가 record() 시작 사이에 100~300ms 딜레이가 있어 사용자에게
-                // "준비 중" 상태를 표시 — 사용자가 즉시 녹음 누른 시점부터 isRecording=true 까지의 갭.
-                var pendingRecord by remember { mutableStateOf(false) }
-                LaunchedEffect(recording) { if (recording) pendingRecord = false }
-                // mic 입력 레벨 폴링 — 100ms tick. 녹음 중이 아닐 땐 0.
-                var micLevel by remember { mutableStateOf(0f) }
-                LaunchedEffect(recording) {
-                    if (!recording) { micLevel = 0f; return@LaunchedEffect }
-                    while (recording) {
-                        micLevel = recorder.currentLevel
-                        kotlinx.coroutines.delay(100)
-                    }
-                    micLevel = 0f
-                }
-                var audioMenuOpen by remember { mutableStateOf(false) }
-                Box {
+                    // 음성분리 버튼은 자기 자신 status 만 봄 — 자막/더빙 진행 중이라도 음성분리는 독립 실행 가능.
+                    // RUNNING 중엔 disabled (백그라운드 폴링은 계속 — sheet 자동 재오픈 X).
+                    // 진행 결과 확인은 timeline 의 directive 막대 클릭으로.
                     OutlinedButton(
-                        enabled = !state.isAddingBgm,
+                        enabled = firstSegId != null && state.separationStatus != AutoJobStatus.RUNNING,
                         modifier = Modifier.height(42.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                         onClick = {
-                            if (recording) recorder.stop()
-                            else audioMenuOpen = true
-                        },
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                when {
-                                    state.isAddingBgm -> "⏳ 추가 중"
-                                    recording -> "⏹ 녹음 중"
-                                    pendingRecord -> "⏳ 준비 중"
-                                    else -> "음원 삽입"
-                                },
-                                fontSize = 14.sp,
-                            )
-                            // 녹음 중일 때만 라이브 mic level bar 노출 — 12dp 폭의 작은 막대.
-                            if (recording) {
-                                Spacer(Modifier.width(8.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .height(14.dp)
-                                        .width(36.dp)
-                                        .background(tokens.timelineBarTrack, RoundedCornerShape(2.dp)),
-                                ) {
+                            val segId = firstSegId ?: return@OutlinedButton
+                            when (state.separationStatus) {
+                                AutoJobStatus.FAILED -> {
+                                    viewModel.onClearSeparation()
+                                    viewModel.onEnterRangeMode(segId)
+                                }
+                                else -> viewModel.onEnterRangeMode(segId)
+                            }
+                        }
+                    ) { Text(sepLabel, fontSize = 14.sp) }
+                }
+                // 자막/더빙 단계 액션 — 자막/더빙 생성 + 자막 편집.
+                if (state.currentStep == TimelineStep.SubtitleDub) {
+                    val localizationBusy = state.isLocalizationBusy()
+                    val localizationLabel = when {
+                        state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
+                            state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 자막·더빙 생성 중"
+                        state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+                            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+                            state.sttPreflightStatus == AutoJobStatus.RUNNING -> "⏳ 자막 생성 중"
+                        state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 더빙 생성 중"
+                        else -> "자막/더빙 생성"
+                    }
+                    OutlinedButton(
+                        enabled = !localizationBusy,
+                        modifier = Modifier.height(42.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        onClick = { viewModel.onShowLocalization() }
+                    ) { Text(localizationLabel, fontSize = 14.sp) }
+                    // 상세 편집 — 자막 cue 별 텍스트/스타일 inline 조정. 자막 1개 이상 + idle 시.
+                    val anySubtitle = remember(state.subtitleClips) {
+                        state.subtitleClips.any { it.languageCode.isNotBlank() }
+                    }
+                    OutlinedButton(
+                        enabled = anySubtitle && !anyJobRunning,
+                        modifier = Modifier.height(42.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        onClick = { viewModel.onToggleDetailEdit() }
+                    ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
+                }
+                // 음원 단계 액션 — 음원 삽입 (BGM 파일 업로드 / 즉시 녹음).
+                // 녹음 진행 중에는 자체적으로 ⏹ 종료 버튼 라벨로 토글.
+                if (state.currentStep == TimelineStep.AudioSources) {
+                    val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }
+                    val recorder = rememberAudioRecorder(
+                        onRecorded = { uri, _ -> viewModel.onPickBgmAudio(uri) },
+                        onError = { /* TODO: bgmError 상태로 토스트 */ },
+                    )
+                    val recording = recorder.isRecording
+                    // start() 와 실제 hardware 가 record() 시작 사이에 100~300ms 딜레이가 있어 사용자에게
+                    // "준비 중" 상태를 표시 — 사용자가 즉시 녹음 누른 시점부터 isRecording=true 까지의 갭.
+                    var pendingRecord by remember { mutableStateOf(false) }
+                    LaunchedEffect(recording) { if (recording) pendingRecord = false }
+                    // mic 입력 레벨 폴링 — 100ms tick. 녹음 중이 아닐 땐 0.
+                    var micLevel by remember { mutableStateOf(0f) }
+                    LaunchedEffect(recording) {
+                        if (!recording) { micLevel = 0f; return@LaunchedEffect }
+                        while (recording) {
+                            micLevel = recorder.currentLevel
+                            kotlinx.coroutines.delay(100)
+                        }
+                        micLevel = 0f
+                    }
+                    var audioMenuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(
+                            enabled = !state.isAddingBgm,
+                            modifier = Modifier.height(42.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                            onClick = {
+                                if (recording) recorder.stop()
+                                else audioMenuOpen = true
+                            },
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    when {
+                                        state.isAddingBgm -> "⏳ 추가 중"
+                                        recording -> "⏹ 녹음 중"
+                                        pendingRecord -> "⏳ 준비 중"
+                                        else -> "음원 삽입"
+                                    },
+                                    fontSize = 14.sp,
+                                )
+                                // 녹음 중일 때만 라이브 mic level bar 노출 — 12dp 폭의 작은 막대.
+                                if (recording) {
+                                    Spacer(Modifier.width(8.dp))
                                     Box(
                                         modifier = Modifier
-                                            .fillMaxHeight()
-                                            .fillMaxWidth(micLevel.coerceIn(0f, 1f))
-                                            .background(tokens.accent, RoundedCornerShape(2.dp)),
-                                    )
+                                            .height(14.dp)
+                                            .width(36.dp)
+                                            .background(tokens.timelineBarTrack, RoundedCornerShape(2.dp)),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .fillMaxWidth(micLevel.coerceIn(0f, 1f))
+                                                .background(tokens.accent, RoundedCornerShape(2.dp)),
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-                    DropdownMenu(
-                        expanded = audioMenuOpen,
-                        onDismissRequest = { audioMenuOpen = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("파일 업로드") },
-                            onClick = {
-                                audioMenuOpen = false
-                                audioPicker.launch()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("즉시 녹음") },
-                            onClick = {
-                                audioMenuOpen = false
-                                pendingRecord = true
-                                recorder.start()
-                            },
-                        )
+                        DropdownMenu(
+                            expanded = audioMenuOpen,
+                            onDismissRequest = { audioMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("파일 업로드") },
+                                onClick = {
+                                    audioMenuOpen = false
+                                    audioPicker.launch()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("즉시 녹음") },
+                                onClick = {
+                                    audioMenuOpen = false
+                                    pendingRecord = true
+                                    recorder.start()
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -913,7 +903,8 @@ fun TimelineScreen(
 
         // 상세 편집 패널 — lang chip 으로 lang 필터 + cue list + 선택 cue 의 스타일/텍스트 조정.
         // 영상 미리보기 위에 자막 overlay 가 즉시 반영되어 사용자가 보면서 조정 가능.
-        if (state.showDetailEdit && !state.isRangeSelecting && !state.localizationOpen) {
+        if (state.currentStep == TimelineStep.SubtitleDub &&
+            state.showDetailEdit && !state.isRangeSelecting && !state.localizationOpen) {
             DetailEditPanel(
                 state = state,
                 onSelectLang = { viewModel.onSetDetailEditLang(it) },
@@ -932,8 +923,9 @@ fun TimelineScreen(
             )
         }
 
-        // 자막/더빙 생성 인라인 패널 — 영상편집 모드에선 노출 금지.
-        if (state.localizationOpen && !state.isSegmentEditMode) {
+        // 자막/더빙 생성 인라인 패널 — 자막/더빙 단계 + 영상편집 모드 아닐 때.
+        if (state.currentStep == TimelineStep.SubtitleDub &&
+            state.localizationOpen && !state.isSegmentEditMode) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1080,7 +1072,7 @@ fun TimelineScreen(
                         onClick = buttonOnClick
                     ) { Text(buttonLabel) }
                     OutlinedButton(onClick = { viewModel.onDismissLocalization() }) {
-                        Text("취소")
+                        Text("닫기")
                     }
                 }
             }
@@ -1101,10 +1093,14 @@ fun TimelineScreen(
             )
             else -> Unit
         }
+
+        // 단계 이동은 상단 stepper 노드 클릭으로만 — 하단 "다음 단계" CTA 폐기.
     }
 
     // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
-    val chatFabVisible = !state.isSegmentEditMode &&
+    // 자막/더빙 단계에서는 노출 안 함.
+    val chatFabVisible = state.currentStep != TimelineStep.SubtitleDub &&
+        !state.isSegmentEditMode &&
         !state.isRangeSelecting &&
         !state.localizationOpen &&
         !state.showDetailEdit &&
@@ -1196,8 +1192,9 @@ fun TimelineScreen(
     }
 
 
-    // 자막 sheet — 영상편집 모드에선 노출 금지.
-    if (state.showSubtitleSheet && !state.isSegmentEditMode) {
+    // 자막 sheet — 자막/더빙 단계 + 영상편집 모드 아닐 때만.
+    if (state.currentStep == TimelineStep.SubtitleDub &&
+        state.showSubtitleSheet && !state.isSegmentEditMode) {
         InsertSubtitleSheet(
             playbackPositionMs = state.playbackPositionMs,
             videoDurationMs = state.videoDurationMs,
@@ -1217,7 +1214,8 @@ fun TimelineScreen(
         )
     }
 
-    // BGM 클립 액션 sheet — lane 의 막대를 탭했을 때 selectedBgmClipId 가 set 되면 표시.
+    // BGM 클립 액션 sheet — 음원 단계에서 lane 의 막대를 탭했을 때 selectedBgmClipId 가 set 되면 표시.
+    if (state.currentStep == TimelineStep.AudioSources)
     state.bgmClips.firstOrNull { it.id == state.selectedBgmClipId }?.let { selectedClip ->
         BgmActionSheet(
             clip = selectedClip,
@@ -1229,9 +1227,12 @@ fun TimelineScreen(
         )
     }
 
-    // 음성분리 sheet — 영상편집 모드에선 노출 금지.
+    // 음성분리 sheet — 음원 단계 + 영상편집 모드 아닐 때만.
     state.audioSeparation
-        ?.takeIf { state.showAudioSeparationSheet && !state.isSegmentEditMode }
+        ?.takeIf {
+            state.currentStep == TimelineStep.AudioSources &&
+                state.showAudioSeparationSheet && !state.isSegmentEditMode
+        }
         ?.let { sepState ->
         AudioSeparationSheet(
             state = sepState,
@@ -1273,6 +1274,77 @@ fun TimelineScreen(
             onDismiss = { chatSheetVisible = false },
             chatVm = chatViewModel,
         )
+    }
+
+}
+
+/**
+ * 3단계 stepper row — 라벨 + 노드 + 커넥터. 노드 안 아이콘은 현재 단계 기준 방향 표시:
+ * 과거(왼쪽)는 ← (ArrowBack), 미래(오른쪽)는 → (ArrowForward), 현재는 빈 원.
+ * 모든 노드(현재 제외) 클릭으로 [TimelineViewModel.onSelectStep] — 양방향 즉시 이동 (산출물·undo 보존).
+ */
+@Composable
+private fun TimelineStepperRow(
+    currentStep: TimelineStep,
+    onStepClick: (TimelineStep) -> Unit,
+) {
+    val tokens = LocalVibiColors.current
+    // enum 순서(Edit, AudioSources, SubtitleDub) 와 동기. 새 순서 변경 시 본 리스트도 같이 수정.
+    val labelFor: (TimelineStep) -> String = {
+        when (it) {
+            TimelineStep.Edit -> "영상 편집"
+            TimelineStep.AudioSources -> "음원"
+            TimelineStep.SubtitleDub -> "자막/더빙"
+        }
+    }
+    val steps = TimelineStep.entries
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        steps.forEachIndexed { index, step ->
+            val isCurrent = step == currentStep
+            val isPast = step.ordinal < currentStep.ordinal
+            val nodeColor = when {
+                isCurrent -> tokens.accent
+                isPast -> tokens.accent.copy(alpha = 0.5f)
+                else -> tokens.chipBgDisabled
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(enabled = !isCurrent) { onStepClick(step) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Box(
+                    modifier = Modifier.size(24.dp).clip(CircleShape).background(nodeColor),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!isCurrent) {
+                        Icon(
+                            imageVector = if (isPast) Icons.AutoMirrored.Filled.ArrowBack
+                                          else Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = if (isPast) "이전 단계로" else "다음 단계로",
+                            tint = if (isPast) tokens.backgroundPrimary else tokens.onBackgroundPrimary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+                Text(labelFor(step), fontSize = 11.sp, color = tokens.onBackgroundPrimary)
+            }
+            if (index < steps.size - 1) {
+                Box(
+                    modifier = Modifier
+                        .weight(0.4f)
+                        .height(1.dp)
+                        .background(
+                            if (currentStep.ordinal > index) tokens.accent.copy(alpha = 0.5f)
+                            else tokens.chipBgDisabled
+                        ),
+                )
+            }
+        }
     }
 }
 
@@ -1640,12 +1712,10 @@ private fun UnifiedTimelineBar(
                 horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
             ) {
                 segments.forEach { seg ->
-                    // 편집됨 = 사용자가 의도적으로 변경한 속성. trim 만으로는 split 결과 (자동 발생)
-                    // 와 구분 안 되므로 색 표시에서 제외 — 100% 볼륨/속도, duplicatedFromId 미사용 도
-                    // 미편집 취급.
-                    val edited = (seg.volumeScale != 1.0f) ||
-                        (seg.speedScale != 1.0f) ||
-                        (seg.duplicatedFromId != null)
+                    // 편집됨 = 본 segment 자체에 trim / volume / speed / duplicate 가 적용됨.
+                    // split / delete-range 결과 조각들은 각각 trim 을 가지므로 hasNonTrivialEdits 로 잡힘 —
+                    // 단순 append (다중 source) 만으로는 색 표시 안 함 (per-segment granularity 유지).
+                    val edited = seg.hasNonTrivialEdits() || (seg.duplicatedFromId != null)
                     // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
                     Box(
                         modifier = Modifier
@@ -1866,6 +1936,7 @@ private fun BgmTimelineLane(
     onUpdateStart: (String, Long) -> Unit,
     onUpdateLane: (String, Int) -> Unit,
     onSetLaneCount: (Int) -> Unit,
+    editable: Boolean = true,
 ) {
     if (totalMs <= 0L) return
     val rowHeight = 10.dp
@@ -1933,52 +2004,54 @@ private fun BgmTimelineLane(
                             if (tapEnabled) onSelectClip(clip.id)
                         })
                     }
-                    .pointerInput(clip.id, totalMs, laneWidthPx, rowStridePx) {
-                        // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
-                        // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
-                        detectDragGestures(
-                            onDragStart = {
-                                dragBaseStartMs = currentClip.startMs
-                                dragAccumPx = 0f
-                                dragOverrideMs = currentClip.startMs
-                                laneBase = currentClip.lane.coerceAtLeast(0)
-                                dragAccumPyAbs = 0f
-                                laneOverride = laneBase
-                            },
-                            onDrag = { change: PointerInputChange, drag: Offset ->
-                                change.consume()
-                                // X axis — startMs.
-                                dragAccumPx += drag.x
-                                if (laneWidthPx > 0f && totalMs > 0L) {
-                                    val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
-                                    val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
-                                    dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
-                                        .coerceIn(0L, maxStart)
-                                }
-                                // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
-                                // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
-                                // currentRowCount (rememberUpdatedState) 로 drag 도중 lane 수 확장
-                                // 시에도 즉시 반영 — 새 lane 으로 곧바로 drop 가능.
-                                dragAccumPyAbs += drag.y
-                                if (rowStridePx > 0f) {
-                                    val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
-                                    laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
-                                }
-                            },
-                            onDragEnd = {
-                                dragOverrideMs?.let { onUpdateStart(currentClip.id, it) }
-                                laneOverride?.let { newLane ->
-                                    if (newLane != currentClip.lane) onUpdateLane(currentClip.id, newLane)
-                                }
-                                dragOverrideMs = null
-                                laneOverride = null
-                            },
-                            onDragCancel = {
-                                dragOverrideMs = null
-                                laneOverride = null
-                            },
-                        )
-                    },
+                    .then(
+                        if (editable) Modifier.pointerInput(clip.id, totalMs, laneWidthPx, rowStridePx) {
+                            // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
+                            // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
+                            detectDragGestures(
+                                onDragStart = {
+                                    dragBaseStartMs = currentClip.startMs
+                                    dragAccumPx = 0f
+                                    dragOverrideMs = currentClip.startMs
+                                    laneBase = currentClip.lane.coerceAtLeast(0)
+                                    dragAccumPyAbs = 0f
+                                    laneOverride = laneBase
+                                },
+                                onDrag = { change: PointerInputChange, drag: Offset ->
+                                    change.consume()
+                                    // X axis — startMs.
+                                    dragAccumPx += drag.x
+                                    if (laneWidthPx > 0f && totalMs > 0L) {
+                                        val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
+                                        val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
+                                        dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
+                                            .coerceIn(0L, maxStart)
+                                    }
+                                    // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
+                                    // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
+                                    // currentRowCount (rememberUpdatedState) 로 drag 도중 lane 수 확장
+                                    // 시에도 즉시 반영 — 새 lane 으로 곧바로 drop 가능.
+                                    dragAccumPyAbs += drag.y
+                                    if (rowStridePx > 0f) {
+                                        val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
+                                        laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
+                                    }
+                                },
+                                onDragEnd = {
+                                    dragOverrideMs?.let { onUpdateStart(currentClip.id, it) }
+                                    laneOverride?.let { newLane ->
+                                        if (newLane != currentClip.lane) onUpdateLane(currentClip.id, newLane)
+                                    }
+                                    dragOverrideMs = null
+                                    laneOverride = null
+                                },
+                                onDragCancel = {
+                                    dragOverrideMs = null
+                                    laneOverride = null
+                                },
+                            )
+                        } else Modifier
+                    ),
             )
         }
     }  // BoxWithConstraints 닫음
@@ -1991,23 +2064,25 @@ private fun BgmTimelineLane(
         modifier = Modifier
             .fillMaxWidth()
             .height(handleHitHeight)  // 확장된 transparent hit area — Material/HIG touch target 충족.
-            .pointerInput(rowStridePx) {
-                detectDragGestures(
-                    onDragStart = {
-                        dragAccumPy = 0f
-                        laneCountBase = currentLaneCount
-                    },
-                    onDrag = { change: PointerInputChange, drag: Offset ->
-                        change.consume()
-                        dragAccumPy += drag.y
-                        if (rowStridePx > 0f) {
-                            val laneDelta = (dragAccumPy / rowStridePx).toInt()
-                            val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
-                            if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
-                        }
-                    },
-                )
-            },
+            .then(
+                if (editable) Modifier.pointerInput(rowStridePx) {
+                    detectDragGestures(
+                        onDragStart = {
+                            dragAccumPy = 0f
+                            laneCountBase = currentLaneCount
+                        },
+                        onDrag = { change: PointerInputChange, drag: Offset ->
+                            change.consume()
+                            dragAccumPy += drag.y
+                            if (rowStridePx > 0f) {
+                                val laneDelta = (dragAccumPy / rowStridePx).toInt()
+                                val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
+                                if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
+                            }
+                        },
+                    )
+                } else Modifier
+            ),
         contentAlignment = Alignment.Center,
     ) {
         // 시각 pill 만 6dp — 축소 차단 시 흐리게 표시해 사용자에게 막힘 피드백.
