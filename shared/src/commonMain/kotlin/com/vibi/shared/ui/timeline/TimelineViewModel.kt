@@ -133,9 +133,10 @@ sealed class ExportVariantPickerState {
 }
 
 /**
- * 타임라인 작업 단계 — 사용자에게 보이는 3 step linear stepper 의 모델.
- * Edit (영상 편집) → AudioSources (음원 분리·추가) → SubtitleDub (자막/더빙 생성).
- * 이전 단계로 돌아가면 그 이후 단계의 산출물이 [resetFromStep] 으로 정리된다.
+ * 타임라인 작업 단계 — 사용자에게 보이는 3 step stepper 의 모델.
+ * Edit (영상 편집) ↔ AudioSources (음원, 기본 진입) ↔ SubtitleDub (자막/더빙).
+ * 단계 이동은 산출물·undo 모두 보존하는 양방향 자유 이동. wipe 는 영상편집 모드의 ✓ commit
+ * ([resetTimelineDerivedResults]) 경로에서만 발동 — segment 자체가 바뀌어 downstream 이 stale.
  */
 enum class TimelineStep { Edit, AudioSources, SubtitleDub }
 
@@ -298,14 +299,12 @@ data class TimelineUiState(
      * null = picker 미노출 (variant 1개라 즉시 동작 중이거나 흐름 idle).
      */
     val exportVariantPicker: ExportVariantPickerState? = null,
-    /** 현재 사용자가 보고 있는 타임라인 단계. */
-    val currentStep: TimelineStep = TimelineStep.Edit,
     /**
-     * 사용자가 이전 단계 노드를 탭해서 백 이동을 요청한 상태.
-     * non-null 이면 UI 가 확인 다이얼로그를 띄움. 확인 시 currentStep 변경 + 출발 단계 undo 초기화.
-     * 산출물 (BGM/separation/자막/더빙) 은 보존.
+     * 현재 사용자가 보고 있는 타임라인 단계.
+     * 영상 선택 후 진입 시 음원 단계가 기본 — 음원이 메인 작업이라는 멘탈 모델.
+     * 좌측 영상편집/우측 자막더빙으로 양방향 자유 이동 (산출물·undo 모두 보존).
      */
-    val pendingStepBackTarget: TimelineStep? = null,
+    val currentStep: TimelineStep = TimelineStep.AudioSources,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -579,21 +578,21 @@ class TimelineViewModel constructor(
     }
 
     /** 사용자 spam-tap 으로 commit/reset 코루틴이 겹치지 않도록 단일 직렬화. */
-    private var stepTransitionJob: kotlinx.coroutines.Job? = null
+    private var advanceStepJob: kotlinx.coroutines.Job? = null
 
     fun onAdvanceStep() {
         val cur = _uiState.value
         if (!cur.isStepDone(cur.currentStep)) return
-        if (stepTransitionJob?.isActive == true) return
+        if (advanceStepJob?.isActive == true) return
         when (cur.currentStep) {
             TimelineStep.Edit -> {
-                stepTransitionJob = viewModelScope.launch {
+                advanceStepJob = viewModelScope.launch {
                     try {
                         if (cur.isSegmentEditMode) commitSegmentEdit()
                         _uiState.update { it.copy(currentStep = TimelineStep.AudioSources) }
                         updateUndoRedoState()
                     } finally {
-                        stepTransitionJob = null
+                        advanceStepJob = null
                     }
                 }
             }
@@ -606,59 +605,47 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * stepper 노드 탭 동작:
-     *  - forward (출발 < 목적지) — 즉시 이동 (확인 없음). 출발 단계 undo 스택 유지.
-     *  - backward (출발 > 목적지) — `pendingStepBackTarget` 마킹 → UI 확인 다이얼로그 →
-     *    [onConfirmStepBack] 에서 [resetFromStep] 으로 target 이후 단계 산출물 정리 + 출발 단계
-     *    undo 스택 초기화 후 이동.
+     * stepper 노드 탭 — 양방향 자유 이동. 산출물·undo 스택 모두 보존.
      *
-     * 산출물 정리 규칙 ([resetFromStep] 참조):
-     *  - target=Edit: 음원(BGM/separation) + 자막/더빙 모두 삭제 (segment 편집은 보존)
-     *  - target=AudioSources: 자막/더빙만 삭제 (음원 유지 — 자막/더빙→음원 케이스의 예외)
+     * forward (출발 < 목적지): `maxReachableStepOrdinal` 가드로 미도달 단계는 차단.
+     * backward (출발 > 목적지): 즉시 이동. 확인 다이얼로그·wipe 없음.
+     * 잡 가드: 자막/더빙 진행 중 또는 음원 분리 PROCESSING 중에는 무시.
      *
-     * (영상편집 모드의 ✓ commit 경로는 별도 stale 마킹 + 산출물 정리를 수행.)
+     * 산출물 wipe 는 오직 영상편집 모드의 ✓ commit (`commitSegmentEdit`) 경로 — segment 자체가
+     * 바뀌어 downstream 산출물이 stale 이 되는 경우에만 발동.
      */
-    fun onRequestStepBack(target: TimelineStep) {
+    fun onSelectStep(target: TimelineStep) {
         val cur = _uiState.value
         if (target == cur.currentStep) return
         if (cur.isLocalizationBusy()) return
         if (cur.audioSeparation?.step == AudioSeparationStep.PROCESSING) return
+        if (target.ordinal > cur.currentStep.ordinal &&
+            target.ordinal > cur.maxReachableStepOrdinal()) return
 
-        if (target.ordinal > cur.currentStep.ordinal) {
-            if (target.ordinal <= cur.maxReachableStepOrdinal()) {
-                _uiState.update { it.copy(currentStep = target) }
-                updateUndoRedoState()
-            }
-            return
+        // 출발 단계의 모달/편집 모드 플래그를 비파괴적으로 정리 — 산출물·undo 스택은 보존.
+        // Edit 탭은 LaunchedEffect 가 재진입 시 다시 segment edit mode 를 켠다.
+        // SubtitleDub 탭의 자동 패널 열림도 동일한 LaunchedEffect 로 복원됨.
+        _uiState.update {
+            it.copy(
+                currentStep = target,
+                isSegmentEditMode = false,
+                isRangeSelecting = false,
+                rangeTargetSegmentId = null,
+                showRangeActionSheet = false,
+                selectedSegmentId = null,
+                localizationOpen = false,
+                showAudioSeparationSheet = false,
+                showSubtitleSheet = false,
+                showScriptReviewSheet = false,
+                showAppendSheet = false,
+                showDetailEdit = false,
+                showFrameSheet = false,
+                showTextOverlaySheet = false,
+                previewLangCode = null,
+            )
         }
-        // backward — 사용자 확인 다이얼로그 띄우기 위해 마킹만.
-        _uiState.update { it.copy(pendingStepBackTarget = target) }
-    }
-
-    fun onConfirmStepBack() {
-        val target = _uiState.value.pendingStepBackTarget ?: return
-        if (stepTransitionJob?.isActive == true) return
-        val sourceStep = _uiState.value.currentStep
-        stepTransitionJob = viewModelScope.launch {
-            try {
-                // target 이후 단계 산출물 정리:
-                //  - target=Edit: 음원(BGM/separation) + 자막/더빙 모두 삭제
-                //  - target=AudioSources: 자막/더빙만 삭제 (음원 유지)
-                resetFromStep(after = target)
-                mainUndoManagersByStep.getValue(sourceStep).clear()
-                _uiState.update { it.copy(currentStep = target, pendingStepBackTarget = null) }
-                updateUndoRedoState()
-            } catch (t: Throwable) {
-                _uiState.update { it.copy(pendingStepBackTarget = null) }
-                throw t
-            } finally {
-                stepTransitionJob = null
-            }
-        }
-    }
-
-    fun onCancelStepBack() {
-        _uiState.update { it.copy(pendingStepBackTarget = null) }
+        preEditBaseline = null
+        updateUndoRedoState()
     }
 
     /**

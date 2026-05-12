@@ -34,6 +34,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
@@ -348,10 +350,10 @@ fun TimelineScreen(
         }
 
 
-        // 3단계 stepper — 항상 노출. 클릭 차단은 VM 의 onRequestStepBack 가 처리 (in-flight job 등).
+        // 3단계 stepper — 항상 노출. 클릭 차단은 VM 의 onSelectStep 가 처리 (in-flight job 등).
         TimelineStepperRow(
             currentStep = state.currentStep,
-            onStepClick = { viewModel.onRequestStepBack(it) },
+            onStepClick = { viewModel.onSelectStep(it) },
         )
 
         // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
@@ -1077,25 +1079,13 @@ fun TimelineScreen(
             else -> Unit
         }
 
-        // 다음 단계 CTA. 마지막 단계(SubtitleDub) 는 헤더 저장 버튼이 종료라 노출 안 함.
-        // Edit 탭은 자동 commit 이므로 isSegmentEditMode/isRangeSelecting 게이트 제외 (둘 다 default true).
-        // AudioSources 탭은 분리 진행 중·range 선택 중에는 advance 차단.
-        val showAdvanceCta = when (state.currentStep) {
-            TimelineStep.Edit -> state.segments.isNotEmpty()
-            TimelineStep.AudioSources -> !state.isRangeSelecting &&
-                state.audioSeparation?.step != AudioSeparationStep.PROCESSING
-            TimelineStep.SubtitleDub -> false
-        }
-        if (showAdvanceCta) {
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { viewModel.onAdvanceStep() },
-            ) { Text("다음 단계") }
-        }
+        // 단계 이동은 상단 stepper 노드 클릭으로만 — 하단 "다음 단계" CTA 폐기.
     }
 
     // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
-    val chatFabVisible = !state.isSegmentEditMode &&
+    // 자막/더빙 단계에서는 노출 안 함.
+    val chatFabVisible = state.currentStep != TimelineStep.SubtitleDub &&
+        !state.isSegmentEditMode &&
         !state.isRangeSelecting &&
         !state.localizationOpen &&
         !state.showDetailEdit &&
@@ -1261,33 +1251,12 @@ fun TimelineScreen(
         )
     }
 
-    // 이전 단계 백 이동 확인 다이얼로그. target 이후 단계 산출물 삭제 + 현재 단계 undo 초기화.
-    // 메시지는 target 별로 무엇이 삭제되는지 명시.
-    state.pendingStepBackTarget?.let { target ->
-        val message = when (target) {
-            TimelineStep.Edit ->
-                "음원(분리·삽입)·자막·더빙 생성했던 내용이 삭제됩니다."
-            TimelineStep.AudioSources ->
-                "자막·더빙 생성했던 내용이 삭제됩니다. (음원은 유지)"
-            TimelineStep.SubtitleDub -> ""  // 마지막 단계로의 백 이동은 발생하지 않음.
-        }
-        AlertDialog(
-            onDismissRequest = { viewModel.onCancelStepBack() },
-            title = { Text("이전 단계로 돌아갈까요?") },
-            text = { Text(message) },
-            confirmButton = {
-                Button(onClick = { viewModel.onConfirmStepBack() }) { Text("뒤로 가기") }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.onCancelStepBack() }) { Text("취소") }
-            },
-        )
-    }
 }
 
 /**
- * 3단계 stepper row — 라벨 + 노드 + 커넥터. 지나간 단계는 체크표시, 현재 단계 강조, 미래 단계 muted.
- * 이전 단계 노드 클릭은 [TimelineViewModel.onRequestStepBack] 으로 다이얼로그 트리거.
+ * 3단계 stepper row — 라벨 + 노드 + 커넥터. 노드 안 아이콘은 현재 단계 기준 방향 표시:
+ * 과거(왼쪽)는 ← (ArrowBack), 미래(오른쪽)는 → (ArrowForward), 현재는 빈 원.
+ * 모든 노드(현재 제외) 클릭으로 [TimelineViewModel.onSelectStep] — 양방향 즉시 이동 (산출물·undo 보존).
  */
 @Composable
 private fun TimelineStepperRow(
@@ -1311,17 +1280,15 @@ private fun TimelineStepperRow(
         steps.forEachIndexed { index, step ->
             val isCurrent = step == currentStep
             val isPast = step.ordinal < currentStep.ordinal
-            val reachable = step.ordinal <= currentStep.ordinal
             val nodeColor = when {
                 isCurrent -> tokens.accent
                 isPast -> tokens.accent.copy(alpha = 0.5f)
                 else -> tokens.chipBgDisabled
             }
-            val labelColor = if (reachable) tokens.onBackgroundPrimary else tokens.chipContentDisabled
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable(enabled = reachable && !isCurrent) { onStepClick(step) },
+                    .clickable(enabled = !isCurrent) { onStepClick(step) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -1329,22 +1296,17 @@ private fun TimelineStepperRow(
                     modifier = Modifier.size(24.dp).clip(CircleShape).background(nodeColor),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (isPast) {
+                    if (!isCurrent) {
                         Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null,
-                            tint = tokens.backgroundPrimary,
+                            imageVector = if (isPast) Icons.AutoMirrored.Filled.ArrowBack
+                                          else Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = if (isPast) "이전 단계로" else "다음 단계로",
+                            tint = if (isPast) tokens.backgroundPrimary else tokens.onBackgroundPrimary,
                             modifier = Modifier.size(14.dp),
-                        )
-                    } else {
-                        Text(
-                            "${index + 1}",
-                            color = if (isCurrent) tokens.backgroundPrimary else tokens.onBackgroundPrimary,
-                            fontSize = 12.sp,
                         )
                     }
                 }
-                Text(labelFor(step), fontSize = 11.sp, color = labelColor)
+                Text(labelFor(step), fontSize = 11.sp, color = tokens.onBackgroundPrimary)
             }
             if (index < steps.size - 1) {
                 Box(

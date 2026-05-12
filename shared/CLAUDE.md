@@ -73,11 +73,12 @@ shared/
 
 ## Timeline stepper 동작 규약
 
-`TimelineViewModel` 의 3단계 stepper (`Edit` → `AudioSources` → `SubtitleDub`) 전환 시 적용되는 비대칭 규약. 코드 곳곳에 흩어져 있어 한눈에 안 잡히므로 명시.
+`TimelineViewModel` 의 3단계 stepper (`Edit` ↔ `AudioSources` ↔ `SubtitleDub`) 전환 시 적용되는 규약. 음원이 메인 작업이라 영상 선택 직후 `AudioSources` 가 기본 진입.
 
-- **단계 이동은 산출물 wipe 안 함** — `onAdvanceStep` / `onRequestStepBack` 양방향 모두 `currentStep` 만 변경. BGM/separation/자막/더빙 결과는 다른 단계 갔다 와도 그대로 유지. 사용자가 잠깐 다른 단계 들렀다가 돌아오는 흐름이 일반적이므로 보존이 기본.
-- **`commitSegmentEdit` 만 산출물 wipe** — 사용자가 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation/자막/더빙을 정리. segment 가 바뀌면 downstream 산출물이 stale 이라 어쩔 수 없음.
-- **Undo/redo 는 단계별 분리** — `mainUndoManagersByStep: Map<TimelineStep, UndoRedoManager>` 로 step 마다 독립 스택. **forward 이동 시 출발 단계 스택 유지**, **backward 이동 시 출발 단계 스택 초기화**. 즉 "앞으로 가다 돌아와도 거기서 이어 undo 가능, 뒤로 갔다가 다시 앞으로 가면 새 시작". `activeUndoManager()` 는 `isSegmentEditMode` 시 별도 `editModeUndoRedoManager`, 아니면 currentStep 의 매니저 반환.
+- **단계 이동은 산출물·undo 모두 보존** — `onAdvanceStep` / `onRequestStepBack` 양방향 모두 `currentStep` 만 변경. BGM/separation/자막/더빙 결과·각 단계 undo 스택 모두 다른 단계 갔다 와도 그대로 유지. 사용자가 좌(Edit) ↔ 음원 ↔ 우(SubtitleDub) 를 자유롭게 오가는 흐름이 일반적이므로 보존이 기본.
+- **`commitSegmentEdit` 만 산출물 wipe** — 사용자가 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation/자막/더빙을 정리. segment 가 바뀌면 downstream 산출물이 stale 이라 어쩔 수 없음. 단순 단계 이동(편집 모드 진입·이탈 없이)은 wipe 안 함.
+- **Undo/redo 는 단계별 분리** — `mainUndoManagersByStep: Map<TimelineStep, UndoRedoManager>` 로 step 마다 독립 스택. 단계 이동은 출발/도착 단계 모두 스택 유지. `activeUndoManager()` 는 `isSegmentEditMode` 시 별도 `editModeUndoRedoManager`, 아니면 currentStep 의 매니저 반환.
+- **잡 진행 중 이동 가드** — `isLocalizationBusy()` (자막/더빙 진행) 또는 `audioSeparation.step == PROCESSING` 일 때는 stepper 이동 무시. 진행 중 잡 보호.
 - **BGM mux 시점은 lazy** — stepper 이동 시점이 아니라 자막/더빙 생성 버튼 클릭 시 `EnsureLatestRenderUseCase` 가 BFF 에 BGM/separation/image/text 포함한 단일 영상 render 잡 제출. stepper UX 만 보고 "이동 시 합성됨" 으로 오해 금지.
 
 ## Skills
