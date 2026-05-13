@@ -40,7 +40,6 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
@@ -1002,7 +1001,6 @@ fun TimelineScreen(
                             label = "원본",
                             selected = "" in state.localizationLangs || originalDone,
                             enabled = !originalBlocked,
-                            done = originalDone,
                             onClick = { viewModel.onToggleLocalizationLang("") },
                         )
                     }
@@ -1021,7 +1019,6 @@ fun TimelineScreen(
                             label = label,
                             selected = code in state.localizationLangs || done,
                             enabled = !blocked,
-                            done = done,
                             onClick = { viewModel.onToggleLocalizationLang(code) },
                         )
                     }
@@ -1380,37 +1377,22 @@ data class ClipBar(
 )
 
 /**
- * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) 또는 진행 중(blocked=!enabled) lang 을
- * 시각적으로 구별. done=true 면 ✓ 아이콘이 leading 으로 노출 + selected 처럼 색칠. blocked 인 동안
- * onClick 비활성 (FilterChip enabled=false).
- *
- * leadingIcon 을 Composable 람다 파라미터로 분리하면 inline-if 의 람다 타입 추론이 모호해져
- * 컴파일러가 `@Composable (() -> Unit)?` 와 `() -> Unit` 사이에서 헷갈린다 — wrapper 로 본 이슈 회피.
+ * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) lang 은 호출부에서 `selected=true, enabled=false`
+ * 로 넘겨 selected 색칠 + 클릭 비활성. blocked 인 동안 onClick 비활성 (FilterChip enabled=false).
  */
 @Composable
 private fun LangFilterChip(
     label: String,
     selected: Boolean,
     enabled: Boolean,
-    done: Boolean,
     onClick: () -> Unit,
 ) {
-    if (done) {
-        FilterChip(
-            selected = selected,
-            enabled = enabled,
-            onClick = onClick,
-            label = { Text(label) },
-            leadingIcon = { Icon(Icons.Filled.Check, contentDescription = "이미 생성됨") },
-        )
-    } else {
-        FilterChip(
-            selected = selected,
-            enabled = enabled,
-            onClick = onClick,
-            label = { Text(label) },
-        )
-    }
+    FilterChip(
+        selected = selected,
+        enabled = enabled,
+        onClick = onClick,
+        label = { Text(label) },
+    )
 }
 
 /**
