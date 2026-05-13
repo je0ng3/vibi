@@ -140,11 +140,12 @@ class ChatViewModel(
     }
 
     /**
-     * 제안 [적용] 클릭 — 본 VM scope 에서 dispatcher 를 실행. panel 닫혀도 BFF 호출 진행 유지.
+     * Gemini 가 emit 한 proposal 자동 적용 — TimelineScreen 의 LaunchedEffect 가 pending 도착 시
+     * 즉시 호출. 자연어 confirm 흐름이라 별도 [적용] 버튼 없음. 동의는 채팅으로 이미 받았다.
      *
-     * 1) "⏳ 처리 중: 단계1, 단계2" system 메시지 push + pending 제거
+     * 1) "⏳ 처리 중: 단계1, 단계2" system 메시지 push + pending 제거 + isApplying=true
      * 2) dispatcher.dispatch (각 step suspend 종료까지 await)
-     * 3) 같은 id 메시지를 "✓ 적용 완료" / "⚠ 실패" 로 replace
+     * 3) 같은 id 메시지를 "✓ 적용 완료" / "⚠ 실패" 로 replace + isApplying=false
      */
     fun applyProposal(
         steps: List<ToolCallDto>,
@@ -155,7 +156,7 @@ class ChatViewModel(
         val pendingMsg = appendMessage(
             role = "system",
             content = "⏳ 처리 중: ${labels.joinToString(", ")}",
-        ) { copy(pending = null) }
+        ) { copy(pending = null, isApplying = true) }
         viewModelScope.launch {
             val result = runCatching { dispatcher.dispatch(steps, timelineVm) }
                 .getOrElse { DispatchResult.Failure(
@@ -170,12 +171,14 @@ class ChatViewModel(
             }
             _state.value = _state.value.copy(
                 messages = replaced,
+                isApplying = false,
                 // 결과 메시지 도착 시 panel 닫혀있으면 unread 표시.
                 hasUnreadMessages = _state.value.hasUnreadMessages || !panelOpen,
             )
         }
     }
 
+    /** 이전 버전 호환 — 더 이상 UI 에서 호출하지 않지만 외부 호출자가 있을 수 있어 남김. */
     fun cancelProposal() {
         appendMessage("system", "취소되었습니다.") { copy(pending = null) }
     }
@@ -237,8 +240,15 @@ private fun formatDispatchResult(result: DispatchResult): String = when (result)
 
 data class ChatUiState(
     val messages: List<ChatMessageDto> = emptyList(),
+    /**
+     * Gemini 가 emit 한 proposal 중 아직 자동 dispatch 가 시작되지 않은 것. TimelineScreen 의
+     * LaunchedEffect 가 이 값을 watch 해 즉시 [ChatViewModel.applyProposal] 을 트리거.
+     * 이전 버전과 달리 UI 에는 노출 안 함 — 자연어 confirm 흐름으로 전환.
+     */
     val pending: ProposalDto? = null,
     val isSending: Boolean = false,
+    /** dispatcher 가 실행 중 — stepper 이동 가드용. */
+    val isApplying: Boolean = false,
     val error: String? = null,
     // 패널이 닫혀있는 동안 AI(model) 또는 시스템 메시지가 새로 도착하면 true. 패널 열림 시 reset.
     val hasUnreadMessages: Boolean = false,

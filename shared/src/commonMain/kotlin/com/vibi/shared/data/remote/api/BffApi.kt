@@ -21,6 +21,7 @@ import com.vibi.shared.data.remote.dto.SeparationJobResponse
 import com.vibi.shared.data.remote.dto.SeparationSpec
 import com.vibi.shared.data.remote.dto.SeparationStatusResponse
 import com.vibi.shared.data.remote.dto.SubtitleJobResponse
+import com.vibi.shared.data.remote.dto.SubtitleRegenerateSpec
 import com.vibi.shared.data.remote.dto.SubtitleSpec
 import com.vibi.shared.data.remote.dto.SubtitleStatusResponse
 import com.vibi.shared.data.remote.dto.TestdataSeparationFolderDto
@@ -228,14 +229,14 @@ class BffApi(
      */
     suspend fun regenerateSubtitleJob(
         srtFile: BinaryPart,
-        spec: SubtitleSpec
+        spec: SubtitleRegenerateSpec
     ): SubtitleJobResponse =
         client.post("api/v2/subtitles/regenerate") {
             setBody(
                 MultiPartFormDataContent(
                     formData {
                         append(srtFile)
-                        append("spec", json.encodeToString(SubtitleSpec.serializer(), spec))
+                        append("spec", json.encodeToString(SubtitleRegenerateSpec.serializer(), spec))
                     }
                 )
             )

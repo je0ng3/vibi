@@ -2,6 +2,7 @@ package com.vibi.shared.data.repository
 
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.api.BinaryPart
+import com.vibi.shared.data.remote.dto.SubtitleRegenerateSpec
 import com.vibi.shared.data.remote.dto.SubtitleSpec
 import com.vibi.shared.domain.repository.AutoSubtitleRepository
 import com.vibi.shared.domain.repository.AutoSubtitleStatus
@@ -44,11 +45,9 @@ class IosAutoSubtitleRepositoryImpl(
             bytes = srtBytes,
             contentType = "application/x-subrip"
         )
-        val spec = SubtitleSpec(
-            mediaType = "AUDIO",
+        val spec = SubtitleRegenerateSpec(
             sourceLanguageCode = sourceLanguageCode.ifBlank { "auto" },
             targetLanguageCodes = targetLanguageCodes,
-            numberOfSpeakers = 1
         )
         api.regenerateSubtitleJob(part, spec).jobId
     }

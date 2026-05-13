@@ -15,13 +15,14 @@ data class Stem(
     val speakerIndex: Int? = null
 ) {
     companion object {
+        const val STEM_ID_BACKGROUND = "background"
+        const val STEM_ID_VOICE_ALL = "voice_all"
         private const val SPEAKER_PREFIX = "speaker_"
 
-        fun kindFromId(stemId: String): StemKind = when {
-            stemId == "background" -> StemKind.BACKGROUND
-            stemId == "voice_all" -> StemKind.VOICE_ALL
-            stemId.startsWith(SPEAKER_PREFIX) -> StemKind.SPEAKER
-            else -> StemKind.UNKNOWN
+        fun kindFromId(stemId: String): StemKind = when (stemId) {
+            STEM_ID_BACKGROUND -> StemKind.BACKGROUND
+            STEM_ID_VOICE_ALL -> StemKind.VOICE_ALL
+            else -> if (stemId.startsWith(SPEAKER_PREFIX)) StemKind.SPEAKER else StemKind.UNKNOWN
         }
 
         fun speakerIndexFromId(stemId: String): Int? {

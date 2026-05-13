@@ -8,6 +8,7 @@ import com.vibi.shared.platform.currentTimeMillis
 import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.DubClip
+import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.clearAutoSubtitleDub
 import com.vibi.shared.domain.model.hasConfirmedOriginalSubtitle
@@ -306,12 +307,34 @@ data class TimelineUiState(
      * 좌측 영상편집/우측 자막더빙으로 양방향 자유 이동 (산출물·undo 모두 보존).
      */
     val currentStep: TimelineStep = TimelineStep.AudioSources,
+    /**
+     * stepper 이동을 사용자에게 한 번 더 확인받기 위한 보류 경고 상태. null = 경고 없음.
+     * UserPreferencesStore 의 don't-ask-again 플래그가 set 되어 있으면 onSelectStep 가 처음부터
+     * 경고 생성을 건너뛰고 즉시 이동한다.
+     */
+    val pendingStepWarning: StepTransitionWarning? = null,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
         get() = if (frameWidth > 0 && frameHeight > 0) {
             frameWidth.toFloat() / frameHeight.toFloat()
         } else 0f
+}
+
+/**
+ * stepper 전환 시 한 번 더 확인받는 경고 상태.
+ *
+ * - [LocalizationLock]: 음원 → 자막/더빙 이동 — 자막/더빙 생성 후 음원분리 수정이 잠금됨을 안내.
+ * - [EditReset]: 어떤 단계에서든 영상편집 단계로 되돌아갈 때 — 기존 음원/자막/더빙/분리 산출물이
+ *   영상편집 commit 시점에 초기화될 수 있음을 안내.
+ *
+ * 둘 다 don't-ask-again 옵션 (UserPreferencesStore) 가 있고, 한 번 끄면 같은 종류의 경고는 다시
+ * 안 뜸. target 은 사용자가 확인 시 그대로 이동할 목표 step.
+ */
+sealed interface StepTransitionWarning {
+    val target: TimelineStep
+    data class LocalizationLock(override val target: TimelineStep) : StepTransitionWarning
+    data class EditReset(override val target: TimelineStep) : StepTransitionWarning
 }
 
 /** 자막/더빙/검토 흐름 중 어떤 잡이라도 진행 중인지 — 백 이동 가드 + UI 버튼 disabled 공용. */
@@ -383,6 +406,7 @@ class TimelineViewModel constructor(
     private val listExportVariants: ListExportVariantsUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
     private val ensureLatestRender: EnsureLatestRenderUseCase,
+    private val userPrefs: com.vibi.shared.data.local.UserPreferencesStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -580,6 +604,58 @@ class TimelineViewModel constructor(
         if (cur.audioSeparation?.step == AudioSeparationStep.PROCESSING) return
         if (target.ordinal > cur.currentStep.ordinal && cur.segments.isEmpty()) return
 
+        // 사용자 경고 단계 — don't-ask-again 안 켜져 있으면 한 번 확인. 본 함수는 경고 state 만 set
+        // 하고 실제 이동은 [confirmStepTransition] 가 처리. 종류:
+        //   - 음원(AudioSources) → 자막/더빙(SubtitleDub): 자막/더빙을 생성하면 음원분리 수정 불가 안내
+        //   - 임의 단계 → 영상편집(Edit): 영상편집 commit 시 기존 음원/자막/더빙/분리 산출물 초기화 안내
+        val warning = when {
+            cur.currentStep == TimelineStep.AudioSources &&
+                target == TimelineStep.SubtitleDub &&
+                !userPrefs.localizationLockSuppressed ->
+                StepTransitionWarning.LocalizationLock(target)
+
+            target == TimelineStep.Edit && !userPrefs.editResetSuppressed && (
+                cur.subtitleClips.isNotEmpty() ||
+                    cur.dubClips.isNotEmpty() ||
+                    cur.bgmClips.isNotEmpty() ||
+                    cur.separationDirectives.isNotEmpty()
+                ) ->
+                StepTransitionWarning.EditReset(target)
+
+            else -> null
+        }
+
+        if (warning != null) {
+            _uiState.update { it.copy(pendingStepWarning = warning) }
+            return
+        }
+
+        applyStepTransition(target)
+    }
+
+    /**
+     * 경고 다이얼로그에서 확인 — [dontAskAgain] true 면 같은 종류의 경고는 다시 안 뜸.
+     * 보류 중인 target step 으로 즉시 이동.
+     */
+    fun confirmStepTransition(dontAskAgain: Boolean) {
+        val warning = _uiState.value.pendingStepWarning ?: return
+        if (dontAskAgain) {
+            when (warning) {
+                is StepTransitionWarning.LocalizationLock -> userPrefs.localizationLockSuppressed = true
+                is StepTransitionWarning.EditReset -> userPrefs.editResetSuppressed = true
+            }
+        }
+        _uiState.update { it.copy(pendingStepWarning = null) }
+        applyStepTransition(warning.target)
+    }
+
+    /** 경고 다이얼로그 취소 — 이동 없이 경고 state 만 정리. */
+    fun dismissStepTransitionWarning() {
+        if (_uiState.value.pendingStepWarning == null) return
+        _uiState.update { it.copy(pendingStepWarning = null) }
+    }
+
+    private fun applyStepTransition(target: TimelineStep) {
         _uiState.update {
             it.copy(
                 currentStep = target,
@@ -3970,11 +4046,18 @@ class TimelineViewModel constructor(
                             if (stem.url.startsWith("http")) stem
                             else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
                         }
+                        // BGM 분리 (= 사용자가 BgmActionSheet 의 "배경음 제거" 버튼) 는 결과적으로
+                        // 배경음 stem 만 제외하고 나머지 (보컬/speaker) 만 남겨야 함. video segment
+                        // 분리는 사용자가 sheet 에서 직접 stem 을 토글하므로 default 는 전체 선택.
+                        val isBgmBackgroundRemove = bgmSeparationTargetId != null
                         updateSeparation {
-                            // mock 흐름과 일치 — Ready 즉시 directive 자동 생성 위해 default 로 모든 stem 선택.
-                            // 사용자가 sheet 재진입 후 토글 시 새 directive 로 교체됨.
+                            // mock 흐름과 일치 — Ready 즉시 directive 자동 생성 위해 default 로 stem 선택.
+                            // BGM 모드: background 만 false. 사용자가 sheet 재진입 후 토글 시 새 directive 로 교체됨.
                             val defaults = absStems.associate { stem ->
-                                stem.stemId to StemSelectionUi(stem.stemId, selected = true, volume = 1.0f)
+                                val selected = if (isBgmBackgroundRemove) {
+                                    stem.stemId != Stem.STEM_ID_BACKGROUND
+                                } else true
+                                stem.stemId to StemSelectionUi(stem.stemId, selected = selected, volume = 1.0f)
                             }
                             it.copy(
                                 step = AudioSeparationStep.PICK_STEMS,

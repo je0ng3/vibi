@@ -20,10 +20,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -39,28 +37,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.shared.data.remote.dto.ChatMessageDto
-import com.vibi.shared.data.remote.dto.ProposalDto
-import com.vibi.shared.data.remote.dto.ToolCallDto
-import com.vibi.shared.domain.chat.ChatToolDispatcher
 import com.vibi.shared.domain.chat.ProjectContextBuilder
 import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.TimelineUiState
-import com.vibi.shared.ui.timeline.TimelineViewModel
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
- * 채팅 패널 — 사용자가 자연어로 편집 의도를 말하면 BFF/Gemini 가 proposal 로 응답, 사용자 [적용]
- * 시 [ChatToolDispatcher] 가 timelineVm 의 onXxx 들을 순차 호출.
+ * 채팅 패널 — 사용자가 자연어로 편집 의도를 말하면 BFF/Gemini 가 채팅으로 확인 질문 → 사용자
+ * 동의 시 proposal 자동 dispatch. 적용/수정/취소 버튼 없음 (자연어 confirm 흐름).
+ * 실제 dispatch 트리거는 TimelineScreen 의 LaunchedEffect 가 chatState.pending 을 watch.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatPanel(
-    timelineVm: TimelineViewModel,
     timelineState: TimelineUiState,
     onDismiss: () -> Unit,
     chatVm: ChatViewModel = koinViewModel(),
-    dispatcher: ChatToolDispatcher = koinInject(),
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val state by chatVm.state.collectAsState()
@@ -117,25 +109,9 @@ fun ChatPanel(
                 }
             }
 
-            // ProposalCard
-            state.pending?.let { proposal ->
-                ProposalCard(
-                    proposal = proposal,
-                    dispatcher = dispatcher,
-                    labelFor = { dispatcher.labelFor(it) },
-                    onApply = { steps ->
-                        // ChatVM scope 에서 dispatch — 패널 dismiss 해도 BFF 진행 유지.
-                        // [적용] 즉시 "⏳ 처리 중" 메시지 push, dispatch 완료 후 같은 id 메시지를
-                        // "✓ 적용 완료" / "⚠ 실패" 로 in-place replace.
-                        chatVm.applyProposal(steps, dispatcher, timelineVm)
-                    },
-                    onRevise = {
-                        // [수정 요청] — 입력창에 prefill.
-                        input = "방금 제안에서 다음 부분만 다르게: "
-                    },
-                    onCancel = { chatVm.cancelProposal() },
-                )
-            }
+            // Proposal 자동 적용 — 적용/수정/취소 버튼 제거된 자연어 confirm 흐름.
+            // TimelineScreen 이 chatState.pending 도착을 LaunchedEffect 로 watch 해
+            // applyProposal 을 트리거하므로 본 패널은 결과 메시지만 표시한다.
 
             state.error?.let { err ->
                 Text("⚠ $err", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -269,57 +245,8 @@ private fun MessageBubble(msg: ChatMessageDto) {
     }
 }
 
-@Composable
-private fun ProposalCard(
-    proposal: ProposalDto,
-    dispatcher: ChatToolDispatcher,
-    labelFor: (ToolCallDto) -> String,
-    onApply: (List<ToolCallDto>) -> Unit,
-    onRevise: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val tokens = LocalVibiColors.current
-    val hasCostHint = proposal.steps.any {
-        it.name in COST_INTENSIVE
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(tokens.panelBg)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            "제안",
-            style = MaterialTheme.typography.labelMedium,
-            color = tokens.mutedText,
-        )
-        Text(proposal.rationale, color = tokens.onBackgroundPrimary, fontSize = 13.sp)
-        Text(
-            proposal.steps.mapIndexed { i, s -> "${i + 1}. ${labelFor(s)}" }.joinToString("\n"),
-            color = tokens.onBackgroundPrimary,
-            fontSize = 12.sp,
-        )
-        if (hasCostHint) {
-            Text(
-                "⏱ 자동 자막/더빙·음원 분리는 수 분 소요될 수 있습니다.",
-                color = tokens.mutedText,
-                fontSize = 11.sp,
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onApply(proposal.steps) }) { Text("적용", fontSize = 13.sp) }
-            OutlinedButton(onClick = onRevise) { Text("수정 요청", fontSize = 13.sp) }
-            TextButton(onClick = onCancel) { Text("취소", fontSize = 13.sp) }
-        }
-    }
-}
-
-private val COST_INTENSIVE = setOf(
-    "generate_subtitles", "generate_dub", "separate_audio_range",
-    "generate_subtitles_for_bgm", "generate_dub_for_bgm",
-)
+// ProposalCard 는 자연어 confirm 흐름 전환으로 제거. Gemini 가 채팅으로 직접 묻고 사용자가
+// 채팅으로 동의 → 자동 dispatch.
 
 /**
  * 정해진 답이 있는 가이드 prompt → 정적 응답 매핑. 칩 tap 시 Gemini 호출 안 하고 직접 채팅에 push.

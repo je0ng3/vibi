@@ -17,6 +17,16 @@ data class SubtitleSpec(
     val editedRenderJobId: String? = null
 )
 
+/**
+ * `/api/v2/subtitles/regenerate` 용 spec. BFF 는 sourceLanguageCode 만 필수 + targetLanguageCodes
+ * 만 받음 — mediaType/numberOfSpeakers 는 의미 없어서 명시적으로 제외했다 (Perso STT 미사용).
+ */
+@Serializable
+data class SubtitleRegenerateSpec(
+    val sourceLanguageCode: String,
+    val targetLanguageCodes: List<String> = emptyList(),
+)
+
 @Serializable
 data class SubtitleJobResponse(
     val jobId: String

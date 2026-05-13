@@ -66,6 +66,7 @@ val repositoryModule = module {
 
     // 인증 — Settings / GoogleSignInClient 는 platform 모듈에서 주입.
     single { AuthTokenStore(settings = get()) }
+    single { com.vibi.shared.data.local.UserPreferencesStore(settings = get()) }
     single {
         AuthRepository(
             signInClient = get(),

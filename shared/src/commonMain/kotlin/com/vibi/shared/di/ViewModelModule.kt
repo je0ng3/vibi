@@ -68,6 +68,7 @@ val viewModelModule = module {
             listExportVariants = get(),
             shareSheetLauncher = get(),
             ensureLatestRender = get(),
+            userPrefs = get(),
         )
     }
     factory { ChatViewModel(chatRepository = get()) }

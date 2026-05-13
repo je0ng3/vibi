@@ -50,6 +50,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,6 +100,7 @@ import com.vibi.cmp.platform.VideoPlayer
 import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
+import com.vibi.shared.ui.timeline.StepTransitionWarning
 import com.vibi.shared.ui.timeline.TimelineStep
 import com.vibi.shared.ui.timeline.TimelineViewModel
 import com.vibi.shared.ui.timeline.isLocalizationBusy
@@ -130,6 +132,14 @@ fun TimelineScreen(
     }
     LaunchedEffect(viewModel) {
         chatViewModel.bindTimelineEvents(viewModel.chatAssistantEvents)
+    }
+
+    // 자연어 confirm 흐름 — Gemini 가 채팅으로 동의를 받은 후 emit 한 proposal 을 자동으로 dispatch.
+    // 적용/수정/취소 버튼이 없으므로 panel 가시성과 무관하게 본 화면에서 트리거.
+    val chatDispatcher: com.vibi.shared.domain.chat.ChatToolDispatcher = koinInject()
+    LaunchedEffect(chatState.pending) {
+        val proposal = chatState.pending ?: return@LaunchedEffect
+        chatViewModel.applyProposal(proposal.steps, chatDispatcher, viewModel)
     }
 
     // 채팅 패널 토글 — FAB (헤더 우측) 로 열고 ModalBottomSheet 가 자체적으로 dismiss 처리.
@@ -359,9 +369,14 @@ fun TimelineScreen(
 
 
         // 3단계 stepper — 항상 노출. 클릭 차단은 VM 의 onSelectStep 가 처리 (in-flight job 등).
+        // 추가: 채팅 dispatcher 가 실행 중이면 stepper 이동 차단 — 처리 중 step 이 바뀌면 UI 가
+        // 새 step 의 진입 sheet 를 띄워 dispatch 결과 화면이 가려진다.
         TimelineStepperRow(
             currentStep = state.currentStep,
-            onStepClick = { viewModel.onSelectStep(it) },
+            onStepClick = { target ->
+                if (chatState.isApplying) return@TimelineStepperRow
+                viewModel.onSelectStep(target)
+            },
         )
 
         // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
@@ -743,24 +758,39 @@ fun TimelineScreen(
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
             state.sttPreflightStatus == AutoJobStatus.RUNNING
         if (!state.isRangeSelecting && !state.localizationOpen) {
-            androidx.compose.foundation.layout.FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // 음원 단계 액션 — 음원 분리.
-                if (state.currentStep == TimelineStep.AudioSources) {
-                    val sepLabel = when (state.separationStatus) {
-                        AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
-                        AutoJobStatus.FAILED -> "❌ 다시 시도"
-                        else -> "음원 분리"
+            // 음원 단계 — 음원분리/음원삽입 두 버튼을 가로 양쪽 끝까지 채워 양쪽 정렬.
+            // 좌: 음원분리, 우: 음원삽입. weight(1f) 로 절반씩 균등 분배.
+            if (state.currentStep == TimelineStep.AudioSources) {
+                val sepLabel = when (state.separationStatus) {
+                    AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
+                    AutoJobStatus.FAILED -> "❌ 다시 시도"
+                    else -> "음원 분리"
+                }
+                val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }
+                val recorder = rememberAudioRecorder(
+                    onRecorded = { uri, _ -> viewModel.onPickBgmAudio(uri) },
+                    onError = { /* TODO: bgmError 상태로 토스트 */ },
+                )
+                val recording = recorder.isRecording
+                var pendingRecord by remember { mutableStateOf(false) }
+                LaunchedEffect(recording) { if (recording) pendingRecord = false }
+                var micLevel by remember { mutableStateOf(0f) }
+                LaunchedEffect(recording) {
+                    if (!recording) { micLevel = 0f; return@LaunchedEffect }
+                    while (recording) {
+                        micLevel = recorder.currentLevel
+                        kotlinx.coroutines.delay(100)
                     }
-                    // 음성분리 버튼은 자기 자신 status 만 봄 — 자막/더빙 진행 중이라도 음성분리는 독립 실행 가능.
-                    // RUNNING 중엔 disabled (백그라운드 폴링은 계속 — sheet 자동 재오픈 X).
-                    // 진행 결과 확인은 timeline 의 directive 막대 클릭으로.
+                    micLevel = 0f
+                }
+                var audioMenuOpen by remember { mutableStateOf(false) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     OutlinedButton(
                         enabled = firstSegId != null && state.separationStatus != AutoJobStatus.RUNNING,
-                        modifier = Modifier.height(42.dp),
+                        modifier = Modifier.weight(1f).height(42.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                         onClick = {
                             val segId = firstSegId ?: return@OutlinedButton
@@ -773,64 +803,12 @@ fun TimelineScreen(
                             }
                         }
                     ) { Text(sepLabel, fontSize = 14.sp) }
-                }
-                // 자막/더빙 단계 액션 — 자막/더빙 생성 + 자막 편집.
-                if (state.currentStep == TimelineStep.SubtitleDub) {
-                    val localizationBusy = state.isLocalizationBusy()
-                    val localizationLabel = when {
-                        state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
-                            state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 자막·더빙 생성 중"
-                        state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-                            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-                            state.sttPreflightStatus == AutoJobStatus.RUNNING -> "⏳ 자막 생성 중"
-                        state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 더빙 생성 중"
-                        else -> "자막/더빙 생성"
-                    }
-                    OutlinedButton(
-                        enabled = !localizationBusy,
-                        modifier = Modifier.height(42.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        onClick = { viewModel.onShowLocalization() }
-                    ) { Text(localizationLabel, fontSize = 14.sp) }
-                    // 상세 편집 — 자막 cue 별 텍스트/스타일 inline 조정. 자막 1개 이상 + idle 시.
-                    val anySubtitle = remember(state.subtitleClips) {
-                        state.subtitleClips.any { it.languageCode.isNotBlank() }
-                    }
-                    OutlinedButton(
-                        enabled = anySubtitle && !anyJobRunning,
-                        modifier = Modifier.height(42.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        onClick = { viewModel.onToggleDetailEdit() }
-                    ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
-                }
-                // 음원 단계 액션 — 음원 삽입 (BGM 파일 업로드 / 즉시 녹음).
-                // 녹음 진행 중에는 자체적으로 ⏹ 종료 버튼 라벨로 토글.
-                if (state.currentStep == TimelineStep.AudioSources) {
-                    val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }
-                    val recorder = rememberAudioRecorder(
-                        onRecorded = { uri, _ -> viewModel.onPickBgmAudio(uri) },
-                        onError = { /* TODO: bgmError 상태로 토스트 */ },
-                    )
-                    val recording = recorder.isRecording
-                    // start() 와 실제 hardware 가 record() 시작 사이에 100~300ms 딜레이가 있어 사용자에게
-                    // "준비 중" 상태를 표시 — 사용자가 즉시 녹음 누른 시점부터 isRecording=true 까지의 갭.
-                    var pendingRecord by remember { mutableStateOf(false) }
-                    LaunchedEffect(recording) { if (recording) pendingRecord = false }
-                    // mic 입력 레벨 폴링 — 100ms tick. 녹음 중이 아닐 땐 0.
-                    var micLevel by remember { mutableStateOf(0f) }
-                    LaunchedEffect(recording) {
-                        if (!recording) { micLevel = 0f; return@LaunchedEffect }
-                        while (recording) {
-                            micLevel = recorder.currentLevel
-                            kotlinx.coroutines.delay(100)
-                        }
-                        micLevel = 0f
-                    }
-                    var audioMenuOpen by remember { mutableStateOf(false) }
-                    Box {
+                    // Box wrap — DropdownMenu (audioMenuOpen) 가 buttom 부모 박스를 anchor 로
+                    // 위치 계산. 음원분리 버튼처럼 OutlinedButton 에 weight 만 걸면 메뉴 위치가 어긋남.
+                    Box(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             enabled = !state.isAddingBgm,
-                            modifier = Modifier.height(42.dp),
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                             onClick = {
                                 if (recording) recorder.stop()
@@ -847,7 +825,6 @@ fun TimelineScreen(
                                     },
                                     fontSize = 14.sp,
                                 )
-                                // 녹음 중일 때만 라이브 mic level bar 노출 — 12dp 폭의 작은 막대.
                                 if (recording) {
                                     Spacer(Modifier.width(8.dp))
                                     Box(
@@ -888,6 +865,42 @@ fun TimelineScreen(
                         }
                     }
                 }
+            }
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // 자막/더빙 단계 액션 — 자막/더빙 생성 + 자막 편집.
+                if (state.currentStep == TimelineStep.SubtitleDub) {
+                    val localizationBusy = state.isLocalizationBusy()
+                    val localizationLabel = when {
+                        state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
+                            state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 자막·더빙 생성 중"
+                        state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+                            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+                            state.sttPreflightStatus == AutoJobStatus.RUNNING -> "⏳ 자막 생성 중"
+                        state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 더빙 생성 중"
+                        else -> "자막/더빙 생성"
+                    }
+                    OutlinedButton(
+                        enabled = !localizationBusy,
+                        modifier = Modifier.height(42.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        onClick = { viewModel.onShowLocalization() }
+                    ) { Text(localizationLabel, fontSize = 14.sp) }
+                    // 상세 편집 — 자막 cue 별 텍스트/스타일 inline 조정. 자막 1개 이상 + idle 시.
+                    val anySubtitle = remember(state.subtitleClips) {
+                        state.subtitleClips.any { it.languageCode.isNotBlank() }
+                    }
+                    OutlinedButton(
+                        enabled = anySubtitle && !anyJobRunning,
+                        modifier = Modifier.height(42.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        onClick = { viewModel.onToggleDetailEdit() }
+                    ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
+                }
+                // 음원 단계 (음원분리 + 음원삽입) 는 위 Row 에서 이미 처리.
             }
         }
 
@@ -1110,8 +1123,14 @@ fun TimelineScreen(
                 .padding(20.dp),
             badge = {
                 if (chatState.hasUnreadMessages) {
-                    // Material3 Badge — content 없이 호출하면 작은 dot. AI 메시지 도착 신호.
-                    Badge()
+                    // AI 메시지 도착 신호 — 기본 Material3 Badge 의 6dp dot 은 너무 작아 멀리서 안 보임.
+                    // 16dp 빨간 원으로 키워서 알아보기 쉽게.
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.error),
+                    )
                 }
             },
         ) {
@@ -1258,10 +1277,21 @@ fun TimelineScreen(
         )
     }
 
+    // stepper 단계 전환 경고 다이얼로그 — onSelectStep 가 set 한 보류 경고를 사용자에게 보여줌.
+    // "다시 묻지 않기" 체크 시 UserPreferencesStore 에 영속 → 다음 세션에도 안 뜸.
+    state.pendingStepWarning?.let { warning ->
+        StepTransitionWarningDialog(
+            warning = warning,
+            onConfirm = { dontAskAgain ->
+                viewModel.confirmStepTransition(dontAskAgain)
+            },
+            onDismiss = { viewModel.dismissStepTransitionWarning() },
+        )
+    }
+
     // 채팅 어시스턴트 sheet — 영상편집 모드와 무관하게 띄울 수 있지만 위 FAB 가 모드 중엔 숨김.
     if (chatSheetVisible) {
         ChatPanel(
-            timelineVm = viewModel,
             timelineState = state,
             onDismiss = { chatSheetVisible = false },
             chatVm = chatViewModel,
@@ -2138,7 +2168,7 @@ private fun BgmActionSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                TextButton(onClick = onSeparate) { Text("음원분리", fontSize = 13.sp, color = tokens.accent) }
+                TextButton(onClick = onSeparate) { Text("배경음 제거", fontSize = 13.sp, color = tokens.accent) }
                 TextButton(onClick = {
                     if (isPreviewing) {
                         previewer.stop()
@@ -2196,37 +2226,9 @@ private fun BgmActionSheet(
                 )
                 Text("${(clip.speedScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
             }
-            // 구간 크기 — timeline 상 BGM 클립 width. speedScale 의 역수 매핑으로 직관적 길이(초) 슬라이더.
-            // length = sourceDurationMs / speedScale → speedScale = sourceDurationMs / length.
-            // 범위: D/MAX_SPEED (가장 짧음) ~ D/MIN_SPEED (가장 김).
-            val srcSec = (clip.sourceDurationMs / 1000f).coerceAtLeast(0.001f)
-            val minLengthSec = srcSec / com.vibi.shared.domain.model.BgmClip.MAX_SPEED
-            val maxLengthSec = srcSec / com.vibi.shared.domain.model.BgmClip.MIN_SPEED
-            val currentLengthSec = (clip.effectiveDurationMs / 1000f).coerceIn(minLengthSec, maxLengthSec)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("길이", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
-                Slider(
-                    value = currentLengthSec,
-                    valueRange = minLengthSec..maxLengthSec,
-                    onValueChange = { newLengthSec ->
-                        val safe = newLengthSec.coerceIn(minLengthSec, maxLengthSec).coerceAtLeast(0.001f)
-                        val newSpeed = (srcSec / safe).coerceIn(
-                            com.vibi.shared.domain.model.BgmClip.MIN_SPEED,
-                            com.vibi.shared.domain.model.BgmClip.MAX_SPEED,
-                        )
-                        onUpdateSpeed(newSpeed)
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    "${(currentLengthSec * 10).toInt() / 10f}s",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = tokens.onBackgroundPrimary,
-                )
-            }
+            // 길이 슬라이더는 제거 — 사용자 요청: BGM 편집 sheet 에 길이 조절 UI 노출 안 함.
+            // 속도 조절로 결국 효과 길이가 바뀌긴 하지만, 사용자에게는 "속도 = 길이" 가 직관 충돌이라
+            // 속도만 노출. 정확한 길이가 필요하면 추후 별도 trim flow.
         }
     }
 }
@@ -2291,6 +2293,54 @@ private fun RangeHandle(
                 .background(gripColor)
         )
     }
+}
+
+/**
+ * stepper 단계 전환 경고 다이얼로그. 음원→자막/더빙 (LocalizationLock) 또는 →영상편집 (EditReset)
+ * 진입 시 한 번 확인. "다시 묻지 않기" 체크박스 → UserPreferencesStore 영속화.
+ */
+@Composable
+private fun StepTransitionWarningDialog(
+    warning: StepTransitionWarning,
+    onConfirm: (dontAskAgain: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var dontAskAgain by remember { mutableStateOf(false) }
+    val (title, body) = when (warning) {
+        is StepTransitionWarning.LocalizationLock ->
+            "자막/더빙 단계로 이동" to
+                "자막 또는 더빙을 생성하면 이전 단계의 음원 분리(분리 결과·stem 선택) 를 더 이상 수정할 수 없습니다. 음원 작업을 마무리했는지 확인해 주세요."
+        is StepTransitionWarning.EditReset ->
+            "영상 편집 단계로 이동" to
+                "영상 편집(구간 삭제/복제/속도 변경 등)을 적용하면 기존에 생성한 음원 분리·자막·더빙·BGM 배치가 모두 초기화됩니다. 그래도 진행하시겠어요?"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(body, style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { dontAskAgain = !dontAskAgain },
+                ) {
+                    Checkbox(
+                        checked = dontAskAgain,
+                        onCheckedChange = { dontAskAgain = it },
+                    )
+                    Text("다시 묻지 않기", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(dontAskAgain) }) { Text("계속") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("취소") }
+        },
+    )
 }
 
 /** ARGB hex (#AARRGGBB or #RRGGBB) → Compose Color. 잘못된 입력은 white fallback. */

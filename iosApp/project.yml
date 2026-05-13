@@ -31,6 +31,9 @@ targets:
       properties:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        # HTTPS 만 호출 + 자체 암호화 알고리즘 없음 → App Store export compliance 면제.
+        # 매 업로드마다 ASC 에서 답하지 않으려 plist 에 박아둠.
+        ITSAppUsesNonExemptEncryption: false
         CADisableMinimumFrameDurationOnPhone: true
         NSPhotoLibraryUsageDescription: 편집할 동영상을 선택하기 위해 사진 라이브러리 접근이 필요합니다.
         NSPhotoLibraryAddUsageDescription: 완성된 동영상을 사진 라이브러리에 저장하기 위해 권한이 필요합니다.
@@ -52,6 +55,11 @@ targets:
         # 코드/plist 어디에도 client id / URL 을 직접 적지 않는다.
         GIDClientID: $(GOOGLE_OAUTH_IOS_CLIENT_ID)
         BFFBaseURL: $(BFF_BASE_URL)
+        # 로컬 BFF (http://localhost:8080, 또는 실기기에서 맥 LAN IP) 테스트용 ATS 예외.
+        # NSAllowsLocalNetworking 은 localhost / .local / private IP 에만 cleartext 허용 —
+        # public host (api.vibi.fm 등) 는 그대로 HTTPS 강제 (cleartext 차단 정책 유지).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
@@ -64,9 +72,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibi.ios
         # Personal Team (무료 Apple ID) 도 development install 가능. Xcode 가 등록된 Apple ID 의
         # Personal Team 을 자동 매칭. Team ID 명시 제거 — 개발자별/머신별로 다름.
+        # KMP framework 출력 디렉터리는 link task 별로 다름 (debugFramework / releaseFramework).
+        # base 는 debug 디폴트, Release config 에서 release 로 override.
+        KOTLIN_FRAMEWORK_BUILD_TYPE: debug
         FRAMEWORK_SEARCH_PATHS:
-          - "$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework"
-          - "$(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework"
+          - "$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework"
+          - "$(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework"
         # destination 별 framework 경로 분기 — Xcode 가 EFFECTIVE_PLATFORM_NAME 을
         # iphonesimulator / iphoneos 로 자동 set, 우리는 그에 맞는 KMP target 디렉터리를 매핑.
         KOTLIN_FRAMEWORK_BUILD_TYPE_DIR: $(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_$(EFFECTIVE_PLATFORM_NAME))
@@ -78,6 +89,9 @@ targets:
           - "-framework"
           - "Shared"
         ENABLE_BITCODE: NO
+      configs:
+        Release:
+          KOTLIN_FRAMEWORK_BUILD_TYPE: release
     preBuildScripts:
       - name: "Verify Auth.xcconfig"
         # Auth.xcconfig (gitignore) 누락 시 build 가 silent 하게 빈 plist 생성하고 런타임에 깨짐.
