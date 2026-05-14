@@ -290,7 +290,7 @@ fun TimelineScreen(
         val saveAnyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
             state.autoDubStatus == AutoJobStatus.RUNNING ||
             state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.separationStatus == AutoJobStatus.RUNNING ||
+            state.processingSeparations.isNotEmpty() ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
             state.sttPreflightStatus == AutoJobStatus.RUNNING
         Row(
@@ -622,25 +622,18 @@ fun TimelineScreen(
         //    directive 위 탭 → 편집 sheet, free interval 위 탭 → 그 구간으로 pendingRange 점프.
         if (state.videoDurationMs > 0) {
             val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
-            // 진행 중인 음원분리 range — PROCESSING 단계 + range 정보 있을 때만. 사용자가 "이 구간 분리 중"
-            // 임을 시각적으로 인지하도록 timeline 위에 accent 컬러 progress overlay 로 표시. 분리 결과
-            // 막대(directiveColor) 와 색을 분리해서 in-progress / committed 를 구별 가능.
-            val processingSep = state.audioSeparation?.takeIf {
-                it.step == AudioSeparationStep.PROCESSING
+            // range 정보 없는 entry (BGM/whole-video) 는 영상 전체로 fallback.
+            val processingOverlays = remember(state.processingSeparations, state.videoDurationMs) {
+                state.processingSeparations
+                    .filter { it.segmentId.isNotBlank() }
+                    .map { p ->
+                        val s = p.rangeStartMs
+                        val e = p.rangeEndMs
+                        val (start, end) = if (s != null && e != null && e > s) s to e
+                        else 0L to state.videoDurationMs
+                        ProcessingSeparationOverlay(start, end, p.progress)
+                    }
             }
-            // range 정보가 있으면 그 부분, 없으면 영상 전체 (whole-video 분리). segmentId="" 인 BGM 분리는
-            // 영상 timeline 과 무관하므로 overlay 미노출.
-            val (processingRangeStart, processingRangeEnd) = when {
-                processingSep == null -> null to null
-                processingSep.segmentId.isBlank() -> null to null  // BGM 분리 → timeline overlay 안 함
-                else -> {
-                    val s = processingSep.rangeStartMs
-                    val e = processingSep.rangeEndMs
-                    if (s != null && e != null && e > s) s to e
-                    else 0L to state.videoDurationMs
-                }
-            }
-            val processingProgress = processingSep?.progress
             // 영상 timeline + BGM lane 을 단일 시각 컨테이너로 묶어 두 영역이 별개 "재생바"로 인식되지 않게.
             // 외부 background + clip(RoundedCornerShape) 이 두 트랙을 하나의 줄로 통합하고,
             // BgmTimelineLane 내부의 자체 배경은 alpha 낮춰 외곽과 합쳐지게.
@@ -669,9 +662,7 @@ fun TimelineScreen(
                 segmentColor = tokens.timelineBarSegment,
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
                 directiveColor = tokens.timelineBarDirective,
-                processingSeparationStartMs = processingRangeStart,
-                processingSeparationEndMs = processingRangeEnd,
-                processingSeparationProgress = processingProgress,
+                processingSeparations = processingOverlays,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
                 onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
@@ -743,7 +734,7 @@ fun TimelineScreen(
         val anyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
             state.autoDubStatus == AutoJobStatus.RUNNING ||
             state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.separationStatus == AutoJobStatus.RUNNING ||
+            state.processingSeparations.isNotEmpty() ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
             state.sttPreflightStatus == AutoJobStatus.RUNNING
         // segment edit 모드 (isSegmentEditMode=true) 일 때는 isRangeSelecting 도 true 가 되지만
@@ -752,8 +743,9 @@ fun TimelineScreen(
         if ((!state.isRangeSelecting || state.isSegmentEditMode) && !state.localizationOpen) {
             // 음원 단계 — 음원분리/음원삽입/편집 세 버튼을 가로 양쪽 끝까지 채워 weight(1f) 로 균등 분배.
             if (state.currentStep == TimelineStep.EditAudio) {
+                // 진행 상태는 timeline accent overlay 가 표시 — 버튼 라벨은 새 분리 진입점으로 고정.
+                // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
                 val sepLabel = when (state.separationStatus) {
-                    AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
                     AutoJobStatus.FAILED -> "❌ 다시 시도"
                     else -> "음원 분리"
                 }
@@ -786,9 +778,8 @@ fun TimelineScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedButton(
-                        enabled = firstSegId != null &&
-                            state.separationStatus != AutoJobStatus.RUNNING &&
-                            !state.isSegmentEditMode,
+                        // RUNNING 시에도 enable — 사용자가 진행 중 잡 외에 다른 구간 분리를 동시에 시작할 수 있어야 함.
+                        enabled = firstSegId != null && !state.isSegmentEditMode,
                         modifier = Modifier.weight(1f).height(42.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                         onClick = {
@@ -1643,6 +1634,16 @@ private object TimelineBarSpec {
     const val MinRangeGapMs = 100L
 }
 
+/**
+ * UnifiedTimelineBar 에 전달되는 in-flight 음원분리 overlay 1건. ViewModel 의
+ * [com.vibi.shared.ui.timeline.ProcessingSeparation] 가 UI 좌표로 펴진 형태.
+ */
+data class ProcessingSeparationOverlay(
+    val startMs: Long,
+    val endMs: Long,
+    val progress: Int,
+)
+
 @Composable
 private fun UnifiedTimelineBar(
     segments: List<com.vibi.shared.domain.model.Segment>,
@@ -1661,11 +1662,8 @@ private fun UnifiedTimelineBar(
     segmentColor: Color,
     segmentEditedColor: Color,
     directiveColor: Color,
-    /** 진행 중인 음원분리 range 시작/끝 ms. null = 진행 중 아님 → overlay 미노출. */
-    processingSeparationStartMs: Long? = null,
-    processingSeparationEndMs: Long? = null,
-    /** 진행률 0..100. null/0 이어도 overlay 자체는 표시 (사용자가 분리 시작했음을 즉시 인지). */
-    processingSeparationProgress: Int? = null,
+    /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
+    processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
     onSegmentTap: (String) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
@@ -1691,8 +1689,12 @@ private fun UnifiedTimelineBar(
     // onSelectSegmentInEdit 토글 로직이 처리.
     val currentStartForTap by rememberUpdatedState(rangeStartMs)
     val currentEndForTap by rememberUpdatedState(rangeEndMs)
+    // pointerInput key — progress 변경 (1~2초 폴링) 마다 processingSeparations ref 가 새로 생성되지만
+    // tap 검출은 start/end 만 보므로 그 둘만 추출. equals 가 stable 이라 polling tick 동안 gesture
+    // detector 가 재등록되지 않음.
+    val processingRangesKey = processingSeparations.map { it.startMs to it.endMs }
     val rangeTapModifier = if (showRange && totalMs > 0L) {
-        Modifier.pointerInput(showSegments, segments, directives, totalMs) {
+        Modifier.pointerInput(showSegments, segments, directives, processingRangesKey, totalMs) {
             detectTapGestures(onTap = { offset ->
                 val w = size.width.toFloat()
                 if (w <= 0f) return@detectTapGestures
@@ -1715,10 +1717,16 @@ private fun UnifiedTimelineBar(
                     return@detectTapGestures
                 }
 
-                // 음원분리: directive 위 ignore, 선택 영역 재탭 → toggle, 그 외 free interval → snap.
-                val sortedDir = directives.sortedBy { it.rangeStartMs }
-                val onDirective = sortedDir.any { ms in it.rangeStartMs..it.rangeEndMs }
-                if (onDirective) return@detectTapGestures
+                // 음원분리: directive / 진행 중 분리 위 ignore, 선택 영역 재탭 → toggle, 그 외 free interval → snap.
+                // committed directive + 진행 중 잡 (processingSeparations) 모두 동일하게 점유로 취급해
+                // 사용자가 분리 중인 구간을 탭/range 로 다시 잡지 못한다.
+                data class OccupiedRange(val start: Long, val end: Long)
+                val occupied = (
+                    directives.map { OccupiedRange(it.rangeStartMs, it.rangeEndMs) } +
+                        processingSeparations.map { OccupiedRange(it.startMs, it.endMs) }
+                    ).sortedBy { it.start }
+                val onOccupied = occupied.any { ms in it.start..it.end }
+                if (onOccupied) return@detectTapGestures
                 val hasSelection = currentEndForTap > currentStartForTap
                 if (hasSelection && ms in currentStartForTap..currentEndForTap) {
                     onRangeTapToggle()
@@ -1726,12 +1734,12 @@ private fun UnifiedTimelineBar(
                 }
                 var freeStart = 0L
                 var freeEnd = totalMs
-                for (d in sortedDir) {
-                    if (ms < d.rangeStartMs) {
-                        freeEnd = d.rangeStartMs
+                for (d in occupied) {
+                    if (ms < d.start) {
+                        freeEnd = d.start
                         break
                     }
-                    freeStart = maxOf(freeStart, d.rangeEndMs)
+                    freeStart = maxOf(freeStart, d.end)
                 }
                 onFreeIntervalTap(freeStart, freeEnd)
             })
@@ -1810,33 +1818,32 @@ private fun UnifiedTimelineBar(
             }
         }
 
-        // 진행 중인 음원분리 overlay — committed directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
-        // showRange / showSegments 와 무관하게 PROCESSING 인 한 노출 — 사용자가 어느 모드에서든 어떤
-        // 구간이 처리 중인지 인지 가능. 클릭 비활성 (정보용). progress 가 있으면 채움 fraction 으로 표시.
-        if (processingSeparationStartMs != null && processingSeparationEndMs != null &&
-            processingSeparationEndMs > processingSeparationStartMs && totalMs > 0L
-        ) {
-            val pStart = (processingSeparationStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val pEnd = (processingSeparationEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val pStartDp = totalWidthDp * pStart
-            val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
-            Box(
-                modifier = Modifier
-                    .offset(x = pStartDp)
-                    .width(pWidthDp)
-                    .height(contentHeight)
-                    .align(Alignment.CenterStart)
-                    .background(accent.copy(alpha = 0.25f))
-            ) {
-                // 진행률 채움 — 0..100. null/0 이어도 base overlay 는 보이고 fill 만 0% 폭.
-                val fill = ((processingSeparationProgress ?: 0).coerceIn(0, 100)) / 100f
-                if (fill > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(fill)
-                            .background(accent.copy(alpha = 0.6f))
-                    )
+        // 진행 중인 음원분리 overlay — directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
+        // showRange / showSegments 와 무관하게 노출 — 어느 모드에서든 처리 중 구간 인지 가능. 클릭 비활성.
+        if (totalMs > 0L) {
+            processingSeparations.forEach { p ->
+                if (p.endMs <= p.startMs) return@forEach
+                val pStart = (p.startMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                val pEnd = (p.endMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                val pStartDp = totalWidthDp * pStart
+                val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
+                Box(
+                    modifier = Modifier
+                        .offset(x = pStartDp)
+                        .width(pWidthDp)
+                        .height(contentHeight)
+                        .align(Alignment.CenterStart)
+                        .background(accent.copy(alpha = 0.25f))
+                ) {
+                    val fill = (p.progress.coerceIn(0, 100)) / 100f
+                    if (fill > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(fill)
+                                .background(accent.copy(alpha = 0.6f))
+                        )
+                    }
                 }
             }
         }

@@ -15,7 +15,10 @@ import com.vibi.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
+import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.SeparationDirective
+import com.vibi.shared.domain.model.addProcessingSeparation
+import com.vibi.shared.domain.model.removeProcessingSeparation
 import com.vibi.shared.domain.model.SubtitleClip
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.domain.model.SubtitlePosition
@@ -147,6 +150,32 @@ sealed class ExportVariantPickerState {
  */
 enum class TimelineStep { EditAudio, SubtitleDub }
 
+/**
+ * 백그라운드 폴링 중인 음원분리 1건. 동시에 여러 구간을 분리할 수 있도록
+ * [TimelineUiState.processingSeparations] 리스트로 보관한다.
+ *
+ * - [clientToken]: jobId 가 BFF 응답 전까지는 null 이므로, 시작 시점 식별자로 별도 token 부여.
+ * - [jobId]: BFF 응답 후 채워짐. 폴링 / EditProject 영속화 / "다시 시도" 분기에 사용.
+ * - [rangeStartMs] / [rangeEndMs]: timeline 상 점유 범위 — free-interval 계산·중복 방지·overlay 렌더.
+ *
+ * sheet UI 의 stem toggle / volume slider 는 PICK_STEMS 단계에서만 활성이므로 entry 가 Ready 가
+ * 되면 곧바로 directive 로 commit 후 리스트에서 제거된다. PICK_STEMS UI 가 필요한 케이스(직접 편집)
+ * 는 [TimelineUiState.audioSeparation] (단일) 가 담당.
+ */
+data class ProcessingSeparation(
+    val clientToken: String,
+    val jobId: String? = null,
+    val segmentId: String,
+    val rangeStartMs: Long?,
+    val rangeEndMs: Long?,
+    val numberOfSpeakers: Int,
+    val muteOriginalSegmentAudio: Boolean,
+    val progress: Int = 0,
+    val progressReason: String? = null,
+    /** 사용자가 직접 stem 편집 모드로 진입한 경우 기존 directive id — 새 commit 시 같은 id 로 upsert. */
+    val editingDirectiveId: String? = null,
+)
+
 data class TimelineUiState(
     val projectId: String = "",
     val segments: List<Segment> = emptyList(),
@@ -231,6 +260,13 @@ data class TimelineUiState(
     val audioSeparation: AudioSeparationUiState? = null,
     /** AudioSeparationSheet 표시 여부 — audioSeparation (데이터) 과 분리해 자동 팝업 회피. */
     val showAudioSeparationSheet: Boolean = false,
+    /**
+     * 백그라운드에서 폴링 중인 음원분리 잡들. 동시에 여러 구간을 분리할 수 있도록 리스트.
+     * - timeline 의 progress overlay 는 이 리스트를 순회해 각각 그린다.
+     * - free-interval / range slider 가 새 분리 시작 시 이 리스트의 range 도 occupied 로 취급.
+     * - 잡이 Ready/Failed/Consumed 가 되면 해당 entry 는 즉시 리스트에서 제거.
+     */
+    val processingSeparations: List<ProcessingSeparation> = emptyList(),
     /** Phase 1 commit 후 timeline 재생 시 stem mixer 가 사용. */
     val separationDirectives: List<SeparationDirective> = emptyList(),
     /** EditProject.separationStatus 미러 — 백그라운드 진행/완료 상태 표면화. */
@@ -602,7 +638,10 @@ class TimelineViewModel constructor(
         val cur = _uiState.value
         if (target == cur.currentStep) return
         if (cur.isLocalizationBusy()) return
+        // 음원분리 진행 중에는 단계 이동 차단. 단일 sheet (audioSeparation PROCESSING — 거의 발생하지 않지만
+        // FAILED reopen 직전 한 순간) 와 다중 백그라운드 잡 (processingSeparations) 둘 다 가드.
         if (cur.audioSeparation?.step == AudioSeparationStep.PROCESSING) return
+        if (cur.processingSeparations.isNotEmpty()) return
         if (target.ordinal > cur.currentStep.ordinal && cur.segments.isEmpty()) return
 
         // 사용자 경고 단계 — don't-ask-again 안 켜져 있으면 한 번 확인. 본 함수는 경고 state 만 set
@@ -851,9 +890,10 @@ class TimelineViewModel constructor(
             project.autoSubtitleStatus == AutoJobStatus.READY
 
     private fun shouldResumeSeparation(project: EditProject): Boolean =
-        separationGate == TriggerGate.ARMED &&
-            project.separationStatus == AutoJobStatus.RUNNING &&
-            !project.separationJobId.isNullOrBlank()
+        separationGate == TriggerGate.ARMED && (
+            project.processingSeparations.isNotEmpty() ||
+                (project.separationStatus == AutoJobStatus.RUNNING && !project.separationJobId.isNullOrBlank())
+            )
 
     private fun shouldRefreshSeparation(project: EditProject): Boolean =
         separationRefreshGate == TriggerGate.ARMED &&
@@ -861,28 +901,48 @@ class TimelineViewModel constructor(
             !project.separationJobId.isNullOrBlank()
 
     /**
-     * 화면 재진입 또는 앱 재실행 시 영속화된 separationJobId 로 폴링 재개. sheet 는 hidden 으로
-     * 두고, 사용자가 "음성 분리" 버튼(상태별 라벨 변경) 으로 결과 확인하러 들어올 수 있게 함.
+     * 화면 재진입 또는 앱 재실행 시 영속화된 잡들로 폴링 재개. EditProject.processingSeparations 리스트의
+     * 모든 entry 를 in-memory 로 복원하고 각각 독립 폴링 launch. legacy 단일 슬롯
+     * (separationJobId, etc.) 는 리스트가 비어 있을 때만 fallback 으로 사용 (구 데이터 호환).
+     * sheet 는 hidden — 사용자가 timeline overlay 와 버튼으로 진행 상태 인지.
      */
     private fun resumeSeparationPolling(project: EditProject) {
-        val jobId = project.separationJobId ?: return
-        val segmentId = project.separationSegmentId ?: return
-        // sheet 가 닫혀 있으면 상단 chip spinner 만 — 사용자가 버튼 누르면 hydrate.
-        // audioSeparation 이 아직 null 이면 PROCESSING step 으로만 임시 hydrate (UI 표면화는
-        // onResumeSeparationSheet 에서).
-        if (_uiState.value.audioSeparation == null) {
-            _uiState.value = _uiState.value.copy(
-                audioSeparation = AudioSeparationUiState(
+        project.processingSeparations.forEach { startResumePoll(it) }
+        // legacy 단일 슬롯 fallback — DB v2 데이터 호환 path.
+        if (project.processingSeparations.isEmpty()) {
+            val jobId = project.separationJobId ?: return
+            val segmentId = project.separationSegmentId ?: return
+            startResumePoll(
+                PersistedSeparationJob(
+                    jobId = jobId,
                     segmentId = segmentId,
-                    step = AudioSeparationStep.PROCESSING,
+                    rangeStartMs = null,
+                    rangeEndMs = null,
                     numberOfSpeakers = project.separationNumberOfSpeakers,
                     muteOriginalSegmentAudio = project.separationMuteOriginal,
-                    jobId = jobId,
                 )
             )
         }
-        separationJob?.cancel()
-        separationJob = viewModelScope.launch { pollSeparationFlow(jobId) }
+    }
+
+    private fun startResumePoll(persisted: PersistedSeparationJob) {
+        if (_uiState.value.processingSeparations.any { it.jobId == persisted.jobId }) return
+        val clientToken = Uuid.random().toString()
+        addProcessingSeparationEntry(
+            ProcessingSeparation(
+                clientToken = clientToken,
+                jobId = persisted.jobId,
+                segmentId = persisted.segmentId,
+                rangeStartMs = persisted.rangeStartMs,
+                rangeEndMs = persisted.rangeEndMs,
+                numberOfSpeakers = persisted.numberOfSpeakers,
+                muteOriginalSegmentAudio = persisted.muteOriginalSegmentAudio,
+            )
+        )
+        separationJobs[clientToken]?.cancel()
+        separationJobs[clientToken] = viewModelScope.launch {
+            pollSeparationFlow(clientToken, persisted.jobId)
+        }
     }
 
     /**
@@ -2058,12 +2118,22 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 분리 directive 와 겹치지 않는 자유 구간들 — segment 영역 [segStart, segEnd] 안에서.
-     * 빈 리스트면 segment 전체가 이미 분리됨 (range 진입 X).
+     * 분리 directive 또는 진행 중인 분리 잡 (processingSeparations) 과 겹치지 않는 자유 구간들 —
+     * segment 영역 [segStart, segEnd] 안에서. 빈 리스트면 segment 전체가 이미 점유됨 (range 진입 X).
+     *
+     * 진행 중 잡도 occupied 로 취급해야 사용자가 같은 구간을 중복 분리 요청하거나 진행 중 구간 위로
+     * range 슬라이더를 겹쳐 잡지 못한다.
      */
     private fun freeIntervalsInSegment(segStart: Long, segEnd: Long): List<LongRange> {
-        val occupied = _uiState.value.separationDirectives
-            .map { it.rangeStartMs..it.rangeEndMs }
+        val state = _uiState.value
+        val committed = state.separationDirectives.map { it.rangeStartMs..it.rangeEndMs }
+        // rangeStart/End 가 null 이면 전체 영상 분리 — segStart..segEnd 전체를 점유.
+        val processing = state.processingSeparations.map { p ->
+            val s = p.rangeStartMs ?: segStart
+            val e = p.rangeEndMs ?: segEnd
+            s..e
+        }
+        val occupied = (committed + processing)
             .filter { it.last > segStart && it.first < segEnd }
             .sortedBy { it.first }
         val free = mutableListOf<LongRange>()
@@ -2262,8 +2332,11 @@ class TimelineViewModel constructor(
         _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
         _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
             .forEach { updateSegmentVolume(it.id, 1f) }
-        separationJob?.cancel()
-        separationJob = null
+        // 진행 중 잡 전부 취소 — segment 자체가 바뀌므로 결과가 stale.
+        separationJobs.values.forEach { it.cancel() }
+        separationJobs.clear()
+        bgmSeparationJob?.cancel()
+        bgmSeparationJob = null
         separationGate = TriggerGate.ARMED
 
         subtitleClipRepository.deleteAllClips(projectId)
@@ -2274,7 +2347,10 @@ class TimelineViewModel constructor(
         renderStaleMarked = true
 
         editProjectRepository.getProject(projectId)?.let { p ->
-            editProjectRepository.updateProject(p.clearAutoSubtitleDub().clearSeparation())
+            // 영상편집 commit — 동시 분리 list 전체 비움 + legacy 단일 슬롯 클리어.
+            editProjectRepository.updateProject(
+                p.clearAutoSubtitleDub().clearSeparation().copy(processingSeparations = emptyList())
+            )
         }
 
         _uiState.update { s ->
@@ -2282,6 +2358,7 @@ class TimelineViewModel constructor(
                 audioSeparation = null,
                 showAudioSeparationSheet = false,
                 separationDirectives = emptyList(),
+                processingSeparations = emptyList(),
                 separationStatus = AutoJobStatus.IDLE,
             ).clearAutoSubtitleDubUiState().copy(
                 showDetailEdit = false,
@@ -2794,8 +2871,8 @@ class TimelineViewModel constructor(
             val bgm = _uiState.value.bgmClips.firstOrNull { it.id == bgmClipId }
                 ?: throw IllegalArgumentException("bgmClipId 가 projectContext.bgmClips 에 없습니다")
             onStartBgmSeparation(bgm.id)
-            watchSeparationForChat()
-            awaitSeparationCompleteForChat()
+            watchBgmSeparationForChat()
+            awaitBgmSeparationCompleteForChat()
             return
         }
         val segId = segmentId
@@ -2808,6 +2885,10 @@ class TimelineViewModel constructor(
         val rs = trimStartMs
         val re = trimEndMs
         val (rangeStart, rangeEnd) = if (rs != null && re != null && re > rs) rs to re else null to null
+        // 동시 분리 모델에서 video 분리 결과는 directive 로 자동 commit + processingSeparations 에서 사라짐.
+        // 시작 직전 directive id snapshot 으로 새로 추가된 directive 를 식별한다.
+        val priorDirectiveIds = _uiState.value.separationDirectives.map { it.id }.toSet()
+        val priorProcessingTokens = _uiState.value.processingSeparations.map { it.clientToken }.toSet()
         // numberOfSpeakers 는 Perso audio-separation 전용 endpoint 가 받지 않는 dead 인자
         // (BFF SeparationSpec 에 남아있긴 하나 PersoClient.submitAudioSeparation 에 미전달).
         // chat 경로는 default 1 로 채움 — UI sheet 경로의 호환성 위해 필드 자체는 유지.
@@ -2823,50 +2904,82 @@ class TimelineViewModel constructor(
             isPlaying = false,
         )
         onStartSeparation()
-        watchSeparationForChat()
-        awaitSeparationCompleteForChat()
+        // onStartSeparation 이 audioSeparation 을 null 로 비우고 processingSeparations 에 entry 를 추가했다.
+        // priorProcessingTokens 와 비교해 새로 추가된 token 을 찾는다 — 그 잡의 완료/실패를 추적.
+        val newToken = _uiState.value.processingSeparations
+            .firstOrNull { it.clientToken !in priorProcessingTokens }
+            ?.clientToken
+            ?: return  // 시작이 즉시 실패해 entry 가 안 만들어진 케이스 — handleSeparationFailure 가 audioSeparation FAILED 로 마킹.
+        watchVideoSeparationForChat(newToken, priorDirectiveIds)
+        awaitVideoSeparationCompleteForChat(newToken, priorDirectiveIds)
     }
 
     /**
-     * dispatcher 가 다음 step (예: update_stem_volume) 으로 넘어가기 전 음원분리가 directive 까지
-     * 영속화됐는지 확인. PICK_STEMS 도달 + onConfirmStemMix 가 separationDirectiveRepository.add
-     * 까지 마쳐 _uiState.separationDirectives 에 새 stemId 들이 반영돼야 stem 조회가 성공.
-     *
-     * FAILED 면 throw — dispatcher 가 DispatchResult.Failure 로 가시화.
-     *
-     * map+distinctUntilChanged 로 audioSeparation/separationDirectives 외 필드 (playbackPositionMs
-     * 200ms tick 등) 의 emit 은 무시 — 분리 진행 중 수백 번 평가되던 predicate 호출 제거.
+     * Video 분리 (chat 경로) 의 terminal 상태 대기 — token 이 processingSeparations 에서 사라질 때까지.
+     * 종료 시점의 audioSeparation 을 반환 (FAILED 면 non-null, 성공이면 null 또는 직전 상태). 호출자가 분기.
      */
-    private suspend fun awaitSeparationCompleteForChat() {
-        val terminal = _uiState
-            .map { it.audioSeparation to it.separationDirectives }
+    private suspend fun awaitVideoSeparationTerminal(
+        clientToken: String,
+        priorDirectiveIds: Set<String>,
+    ): AudioSeparationUiState? {
+        return _uiState
+            .map { Triple(it.processingSeparations, it.separationDirectives, it.audioSeparation) }
             .distinctUntilChanged()
-            .first { (sep, dirs) ->
-                if (sep == null) false
-                else when (sep.step) {
-                    AudioSeparationStep.FAILED -> true
-                    // onConfirmStemMix 의 launch 가 directive 를 추가하면 selections.stemId 가
-                    // 새 sep.stems 와 일치 — upsert 시 size 변화 없을 수도 있어 stem id 매칭으로 검사.
-                    AudioSeparationStep.PICK_STEMS -> dirs.any { d ->
-                        d.selections.any { sel -> sep.stems.any { it.stemId == sel.stemId } }
-                    }
-                    else -> false
-                }
+            .first { (processing, dirs, sep) ->
+                val stillRunning = processing.any { it.clientToken == clientToken }
+                if (stillRunning) return@first false
+                val hasNewDirective = dirs.any { it.id !in priorDirectiveIds }
+                val failedSheet = sep?.step == AudioSeparationStep.FAILED
+                hasNewDirective || failedSheet
             }
-        val sep = terminal.first
+            .third
+    }
+
+    private suspend fun awaitVideoSeparationCompleteForChat(
+        clientToken: String,
+        priorDirectiveIds: Set<String>,
+    ) {
+        val sep = awaitVideoSeparationTerminal(clientToken, priorDirectiveIds)
         if (sep?.step == AudioSeparationStep.FAILED) {
             throw IllegalStateException(sep.errorMessage ?: "음원 분리 실패")
         }
     }
 
+    private fun watchVideoSeparationForChat(clientToken: String, priorDirectiveIds: Set<String>) {
+        viewModelScope.launch {
+            val sep = awaitVideoSeparationTerminal(clientToken, priorDirectiveIds)
+            if (sep?.step == AudioSeparationStep.FAILED) {
+                val err = sep.errorMessage ?: "알 수 없는 오류"
+                _chatAssistantEvents.emit("⚠ 음원 분리에 실패했습니다: $err")
+            } else {
+                _chatAssistantEvents.emit("음원 분리가 완료됐습니다 — timeline 의 stem 막대를 확인하세요.")
+            }
+        }
+    }
+
     /**
-     * 채팅 dispatcher 가 [applySeparateRangeFromChat] 으로 분리를 시작했을 때, 결과(PICK_STEMS/FAILED)
-     * 를 채팅 thread 로 push 하기 위한 1회성 watcher. UI sheet 흐름에는 영향 없음 (sheet 호출자는
-     * 본 메서드를 호출하지 않음).
-     *
-     * `audioSeparation.step` 의 PROCESSING → PICK_STEMS / FAILED 전이를 first() 로 한 번만 잡는다.
+     * BGM 분리 (chat 경로) 의 완료/실패 대기. audioSeparation 싱글 state 기반 — 기존 video 흐름이
+     * 사용하던 로직 그대로 (video 흐름은 processingSeparations 로 분리됐다).
      */
-    private fun watchSeparationForChat() {
+    private suspend fun awaitBgmSeparationCompleteForChat() {
+        val terminal = _uiState
+            .map { it.audioSeparation }
+            .distinctUntilChanged()
+            .first { sep ->
+                // BGM 흐름: PICK_STEMS 에서 onConfirmBgmStemMix 가 audioSeparation=null 로 만들고 BGM 클립을 교체.
+                // 그래서 "audioSeparation 가 null 로 변함 + 직전엔 PICK_STEMS/PROCESSING 였음" = 성공.
+                // FAILED 단계 도달 = 실패.
+                sep?.step == AudioSeparationStep.FAILED || sep == null
+            }
+        if (terminal?.step == AudioSeparationStep.FAILED) {
+            throw IllegalStateException(terminal.errorMessage ?: "음원 분리 실패")
+        }
+    }
+
+    /**
+     * BGM 분리 (chat 경로) 결과를 채팅 thread 로 push.
+     */
+    private fun watchBgmSeparationForChat() {
         viewModelScope.launch {
             val terminal = _uiState
                 .mapNotNull { it.audioSeparation?.step }
@@ -3687,12 +3800,11 @@ class TimelineViewModel constructor(
     // --- Audio separation (per-segment voice/background split) ---
 
     /**
-     * 영속화된 음성분리 잡을 클리어 (FAILED 후 "다시 시도" / 사용자 취소). 폴링 중지 + EditProject
-     * separation* 초기화 + audioSeparation 도 SETUP 으로 리셋.
+     * 영속화된 음성분리 잡을 클리어 (FAILED 후 "다시 시도" / 사용자 취소). EditProject separation* 초기화 +
+     * audioSeparation 리셋. 진행 중인 [processingSeparations] entry 들은 취소하지 않음 — "다시 시도"는
+     * 실패 상태를 비울 뿐, 정상 진행 중인 다른 잡들은 보존해야 한다.
      */
     fun onClearSeparation() {
-        separationJob?.cancel()
-        separationJob = null
         viewModelScope.launch {
             editProjectRepository.getProject(projectId)?.let { p ->
                 editProjectRepository.updateProject(p.clearSeparation())
@@ -3775,8 +3887,8 @@ class TimelineViewModel constructor(
             showAudioSeparationSheet = true,
             isPlaying = false,
         )
-        separationJob?.cancel()
-        separationJob = viewModelScope.launch {
+        bgmSeparationJob?.cancel()
+        bgmSeparationJob = viewModelScope.launch {
             val result = startAudioSeparation(
                 sourceUri = bgm.sourceUri,
                 mediaType = SeparationMediaType.AUDIO,
@@ -3787,7 +3899,60 @@ class TimelineViewModel constructor(
                 return@launch
             }
             updateSeparation { it.copy(jobId = jobId) }
-            pollSeparationFlow(jobId)
+            pollBgmSeparationFlow(jobId)
+        }
+    }
+
+    /**
+     * BGM 분리 polling — audioSeparation singular state 갱신 (sheet 가 진행 중 노출되어야 하므로).
+     * Ready 시 [onConfirmStemMix] → [onConfirmBgmStemMix] 분기로 BGM 클립 교체. video segment
+     * 동시 분리 잡과 무관 — [pollSeparationFlow] 는 별도 token 기반 path.
+     */
+    private suspend fun pollBgmSeparationFlow(jobId: String) {
+        try {
+            pollSeparation(jobId).collect { status ->
+                when (status) {
+                    is SeparationStatus.Processing -> updateSeparation {
+                        it.copy(progress = status.progress, progressReason = status.progressReason)
+                    }
+                    is SeparationStatus.Ready -> {
+                        val baseTrim = bffBaseUrl.trimEnd('/')
+                        val absStems = status.stems.map { stem ->
+                            if (stem.url.startsWith("http")) stem
+                            else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
+                        }
+                        updateSeparation {
+                            // BGM 분리: 배경음 stem 만 제외하고 나머지(보컬/speaker) default 선택.
+                            val defaults = absStems.associate { stem ->
+                                stem.stemId to StemSelectionUi(
+                                    stem.stemId,
+                                    selected = stem.stemId != Stem.STEM_ID_BACKGROUND,
+                                    volume = 1.0f,
+                                )
+                            }
+                            it.copy(
+                                step = AudioSeparationStep.PICK_STEMS,
+                                progress = 100,
+                                progressReason = null,
+                                stems = absStems,
+                                selections = defaults,
+                            )
+                        }
+                        onConfirmStemMix()
+                    }
+                    is SeparationStatus.Failed -> updateSeparation {
+                        it.copy(
+                            step = AudioSeparationStep.FAILED,
+                            errorMessage = status.progressReason ?: ERROR_SEPARATION_GENERIC,
+                        )
+                    }
+                    is SeparationStatus.Consumed -> updateSeparation {
+                        it.copy(step = AudioSeparationStep.FAILED, errorMessage = ERROR_SEPARATION_CONSUMED)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = e.message) }
         }
     }
 
@@ -3798,25 +3963,16 @@ class TimelineViewModel constructor(
         // range mode 에서 진입한 케이스 — pendingRangeStartMs/EndMs 를 audioSeparation 에 반영.
         val rangeStart = state.pendingRangeStartMs.takeIf { state.pendingRangeEndMs > it }
         val rangeEnd = state.pendingRangeEndMs.takeIf { it > state.pendingRangeStartMs }
-        val current = state.audioSeparation
-        // 진행 중(PROCESSING) polling 만 보존 — 사용자가 sheet 만 다시 펼친 케이스.
-        // Why: PICK_STEMS/DONE/FAILED 가 남아 있는 상태(기존 directive 편집 후 dismiss / 빈 selection
-        // early return 등)에서 새 분리 요청이 들어오면 stale stems·jobId·빈 segmentId 가 그대로 sheet 에
-        // 노출돼 "기존 분리 탭이 뜨고" onStartSeparation 은 segmentId mismatch 로 silent return → 실제
-        // 분리가 안 일어남.
-        // How to apply: 새 분리 시작 시 editingDirectiveId / bgmSeparationTargetId 도 함께 클리어.
-        val preserveCurrent = current != null &&
-            current.step == AudioSeparationStep.PROCESSING &&
-            bgmSeparationTargetId == null
-        val next = if (preserveCurrent) {
-            current!!.copy(rangeStartMs = rangeStart, rangeEndMs = rangeEnd)
-        } else {
-            editingDirectiveId = null
-            bgmSeparationTargetId = null
-            AudioSeparationUiState(segmentId = segmentId, rangeStartMs = rangeStart, rangeEndMs = rangeEnd)
-        }
+        // 새 SETUP sheet 는 항상 신선한 audioSeparation 으로 시작 — 이전 PROCESSING/PICK_STEMS/FAILED
+        // 잔재가 sheet 에 노출되는 사고 방지. editingDirectiveId / bgmSeparationTargetId 도 함께 클리어.
+        editingDirectiveId = null
+        bgmSeparationTargetId = null
         _uiState.value = state.copy(
-            audioSeparation = next,
+            audioSeparation = AudioSeparationUiState(
+                segmentId = segmentId,
+                rangeStartMs = rangeStart,
+                rangeEndMs = rangeEnd,
+            ),
             showAudioSeparationSheet = true,
             isPlaying = false,
         )
@@ -3832,8 +3988,8 @@ class TimelineViewModel constructor(
             // BGM 분리 진행/대기 중 취소 — sheet 닫고 target 만 클리어 (BGM clip 자체는 보존).
             if (bgmSeparationTargetId != null) {
                 bgmSeparationTargetId = null
-                separationJob?.cancel()
-                separationJob = null
+                bgmSeparationJob?.cancel()
+                bgmSeparationJob = null
                 _uiState.value = _uiState.value.copy(
                     audioSeparation = null,
                     showAudioSeparationSheet = false,
@@ -4112,7 +4268,39 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(previewLangCode = code)
     }
 
-    private var separationJob: kotlinx.coroutines.Job? = null
+    /**
+     * BGM 분리 polling Job — 단일 잡 (BGM 한 번에 1개만). video segment 분리 다중 잡과 분리.
+     */
+    private var bgmSeparationJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * 진행 중인 video segment 음원분리 polling Job 들. clientToken 으로 식별.
+     * processingSeparations 리스트의 각 entry 가 자기 Job 을 갖고 동시 진행.
+     */
+    private val separationJobs: MutableMap<String, kotlinx.coroutines.Job> = mutableMapOf()
+
+    private fun addProcessingSeparationEntry(entry: ProcessingSeparation) {
+        _uiState.update { it.copy(processingSeparations = it.processingSeparations + entry) }
+    }
+
+    private fun removeProcessingSeparationEntry(clientToken: String) {
+        _uiState.update {
+            it.copy(processingSeparations = it.processingSeparations.filter { p -> p.clientToken != clientToken })
+        }
+        separationJobs.remove(clientToken)
+    }
+
+    private fun updateProcessingSeparationEntry(
+        clientToken: String,
+        transform: (ProcessingSeparation) -> ProcessingSeparation,
+    ) {
+        _uiState.update { state ->
+            val updated = state.processingSeparations.map { p ->
+                if (p.clientToken == clientToken) transform(p) else p
+            }
+            state.copy(processingSeparations = updated)
+        }
+    }
 
     fun onStartSeparation() {
         val state = _uiState.value
@@ -4127,12 +4315,26 @@ class TimelineViewModel constructor(
                 segment.trimStartMs to segment.effectiveTrimEndMs
             else -> null to null
         }
-        separationJob?.cancel()
-        // 분리 시작 즉시 sheet 닫음 — 진행은 백그라운드, 사용자가 다른 작업 가능.
-        // 결과는 directive 막대로 알림.
-        _uiState.value = _uiState.value.copy(showAudioSeparationSheet = false)
-        separationJob = viewModelScope.launch {
-            updateSeparation { it.copy(step = AudioSeparationStep.PROCESSING, errorMessage = null) }
+        val clientToken = Uuid.random().toString()
+        val processingEntry = ProcessingSeparation(
+            clientToken = clientToken,
+            jobId = null,
+            segmentId = sep.segmentId,
+            rangeStartMs = effStart,
+            rangeEndMs = effEnd,
+            numberOfSpeakers = sep.numberOfSpeakers,
+            muteOriginalSegmentAudio = sep.muteOriginalSegmentAudio,
+            editingDirectiveId = editingDirectiveId,
+        )
+        // 분리 시작 즉시 sheet 닫음 — 결과는 timeline directive 막대로 알림.
+        _uiState.value = _uiState.value.copy(
+            showAudioSeparationSheet = false,
+            audioSeparation = null,
+            processingSeparations = _uiState.value.processingSeparations + processingEntry,
+        )
+        // entry 에 보존했으므로 ViewModel-level 변수 초기화 — 다음 분리 흐름과 충돌 방지.
+        editingDirectiveId = null
+        val job = viewModelScope.launch {
             // 편집 영상이 필요한 경우 BFF 에 audio-only render 잡 1개 보내고 jobId 회수 — multipart
             // `file` 업로드 절약. 분리는 audio 만 필요하므로 AUDIO kind (5–10x 빠름).
             val editedRenderJobId = ensureLatestRender(
@@ -4143,12 +4345,7 @@ class TimelineViewModel constructor(
                 },
             ).getOrElse { err ->
                 setRenderProgress(null)
-                updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message) }
-                editProjectRepository.getProject(projectId)?.let {
-                    editProjectRepository.updateProject(
-                        it.copy(separationStatus = AutoJobStatus.FAILED, separationError = err.message)
-                    )
-                }
+                handleSeparationFailure(clientToken, err.message ?: ERROR_SEPARATION_GENERIC)
                 return@launch
             }
             setRenderProgress(null)
@@ -4161,21 +4358,23 @@ class TimelineViewModel constructor(
                 editedRenderJobId = editedRenderJobId,
             )
             val jobId = startResult.getOrElse { err ->
-                updateSeparation {
-                    it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message)
-                }
-                editProjectRepository.getProject(projectId)?.let {
-                    editProjectRepository.updateProject(
-                        it.copy(separationStatus = AutoJobStatus.FAILED, separationError = err.message)
-                    )
-                }
+                handleSeparationFailure(clientToken, err.message ?: ERROR_SEPARATION_GENERIC)
                 return@launch
             }
-            updateSeparation { it.copy(jobId = jobId) }
-            // 잡 ID 받자마자 EditProject 에 영속화 — 화면 떠나거나 앱 재실행 후 재진입해도 폴링 재개.
-            editProjectRepository.getProject(projectId)?.let {
+            updateProcessingSeparationEntry(clientToken) { it.copy(jobId = jobId) }
+            // 잡 ID 받자마자 EditProject 에 영속화 — 화면 떠나거나 앱 재실행 후 재진입해도 모든 잡 재개.
+            // processingSeparations 리스트가 SSOT. legacy 단일 슬롯은 FAILED 상태 propagate 용도로만 유지.
+            editProjectRepository.getProject(projectId)?.let { p ->
+                val persistedJob = PersistedSeparationJob(
+                    jobId = jobId,
+                    segmentId = sep.segmentId,
+                    rangeStartMs = effStart,
+                    rangeEndMs = effEnd,
+                    numberOfSpeakers = sep.numberOfSpeakers,
+                    muteOriginalSegmentAudio = sep.muteOriginalSegmentAudio,
+                )
                 editProjectRepository.updateProject(
-                    it.copy(
+                    p.addProcessingSeparation(persistedJob).copy(
                         separationJobId = jobId,
                         separationSegmentId = sep.segmentId,
                         separationNumberOfSpeakers = sep.numberOfSpeakers,
@@ -4186,15 +4385,51 @@ class TimelineViewModel constructor(
                 )
             }
             separationGate = TriggerGate.FIRED
-            pollSeparationFlow(jobId)
+            pollSeparationFlow(clientToken, jobId)
+        }
+        separationJobs[clientToken] = job
+    }
+
+    /**
+     * 분리 잡 실패 처리 — entry 제거 + EditProject FAILED 마킹 + audioSeparation 으로 sheet reopen.
+     * 사용자에게 에러 노출 위해 reopen 강제 (entry-level userDismissed 미지원).
+     */
+    private suspend fun handleSeparationFailure(clientToken: String, reason: String) {
+        val entry = _uiState.value.processingSeparations.firstOrNull { it.clientToken == clientToken }
+        removeProcessingSeparationEntry(clientToken)
+        _uiState.update { state ->
+            state.copy(
+                audioSeparation = AudioSeparationUiState(
+                    segmentId = entry?.segmentId ?: "",
+                    step = AudioSeparationStep.FAILED,
+                    numberOfSpeakers = entry?.numberOfSpeakers ?: 2,
+                    muteOriginalSegmentAudio = entry?.muteOriginalSegmentAudio ?: true,
+                    rangeStartMs = entry?.rangeStartMs,
+                    rangeEndMs = entry?.rangeEndMs,
+                    jobId = entry?.jobId,
+                    errorMessage = reason,
+                ),
+                showAudioSeparationSheet = true,
+            )
+        }
+        editProjectRepository.getProject(projectId)?.let { p ->
+            val cleaned = entry?.jobId?.let { p.removeProcessingSeparation(it) } ?: p
+            editProjectRepository.updateProject(
+                cleaned.copy(separationStatus = AutoJobStatus.FAILED, separationError = reason)
+            )
         }
     }
 
-    private suspend fun pollSeparationFlow(jobId: String) {
+    /**
+     * Video segment 분리 폴링 — [processingSeparations] 의 entry 를 token 으로 식별해 진행률/완료 반영.
+     * Ready 시 자동 directive commit 후 entry 제거. Failed/Consumed 는 [handleSeparationFailure] 로.
+     * BGM 분리 폴링은 [pollBgmSeparationFlow] 가 audioSeparation singular state 를 갱신.
+     */
+    private suspend fun pollSeparationFlow(clientToken: String, jobId: String) {
         try {
             pollSeparation(jobId).collect { status ->
                 when (status) {
-                    is SeparationStatus.Processing -> updateSeparation {
+                    is SeparationStatus.Processing -> updateProcessingSeparationEntry(clientToken) {
                         it.copy(progress = status.progress, progressReason = status.progressReason)
                     }
                     is SeparationStatus.Ready -> {
@@ -4205,68 +4440,97 @@ class TimelineViewModel constructor(
                             if (stem.url.startsWith("http")) stem
                             else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
                         }
-                        // BGM 분리 (= 사용자가 BgmActionSheet 의 "배경음 제거" 버튼) 는 결과적으로
-                        // 배경음 stem 만 제외하고 나머지 (보컬/speaker) 만 남겨야 함. video segment
-                        // 분리는 사용자가 sheet 에서 직접 stem 을 토글하므로 default 는 전체 선택.
-                        val isBgmBackgroundRemove = bgmSeparationTargetId != null
-                        updateSeparation {
-                            // mock 흐름과 일치 — Ready 즉시 directive 자동 생성 위해 default 로 stem 선택.
-                            // BGM 모드: background 만 false. 사용자가 sheet 재진입 후 토글 시 새 directive 로 교체됨.
-                            val defaults = absStems.associate { stem ->
-                                val selected = if (isBgmBackgroundRemove) {
-                                    stem.stemId != Stem.STEM_ID_BACKGROUND
-                                } else true
-                                stem.stemId to StemSelectionUi(stem.stemId, selected = selected, volume = 1.0f)
-                            }
-                            it.copy(
-                                step = AudioSeparationStep.PICK_STEMS,
-                                progress = 100,
-                                progressReason = null,
-                                stems = absStems,
-                                selections = defaults
-                            )
+                        // 모든 stem default 선택 — 사용자가 directive 막대 탭으로 사후 편집 가능.
+                        // EditProject 의 separationStatus=READY 중간 write 는 곧바로 clearSeparation 으로
+                        // 덮이므로 생략 — commit 이 단일 write 로 처리.
+                        val defaults = absStems.associate { stem ->
+                            stem.stemId to StemSelectionUi(stem.stemId, selected = true, volume = 1.0f)
                         }
-                        editProjectRepository.getProject(projectId)?.let {
-                            editProjectRepository.updateProject(
-                                it.copy(separationStatus = AutoJobStatus.READY)
-                            )
-                        }
-                        // segment 분리는 자동 directive 생성 → timeline 즉시 막대 표시.
-                        // BGM 분리 (bgmSeparationTargetId 설정됨) 는 onConfirmBgmStemMix 로 분기 — 자동 fire 가
-                        // mock 흐름과 동일하게 BGM 클립 교체까지 진행.
-                        onConfirmStemMix()
+                        commitProcessingSeparationToDirective(clientToken, absStems, defaults)
                     }
-                    is SeparationStatus.Failed -> {
-                        val reason = status.progressReason ?: "분리에 실패했습니다"
-                        updateSeparation {
-                            it.copy(step = AudioSeparationStep.FAILED, errorMessage = reason)
-                        }
-                        editProjectRepository.getProject(projectId)?.let {
-                            editProjectRepository.updateProject(
-                                it.copy(separationStatus = AutoJobStatus.FAILED, separationError = reason)
-                            )
-                        }
-                    }
-                    is SeparationStatus.Consumed -> {
-                        val reason = "이 작업은 이미 합성에 사용되어 더 이상 사용할 수 없습니다"
-                        updateSeparation {
-                            it.copy(step = AudioSeparationStep.FAILED, errorMessage = reason)
-                        }
-                        editProjectRepository.getProject(projectId)?.let {
-                            editProjectRepository.updateProject(
-                                it.copy(separationStatus = AutoJobStatus.FAILED, separationError = reason)
-                            )
-                        }
-                    }
+                    is SeparationStatus.Failed ->
+                        handleSeparationFailure(clientToken, status.progressReason ?: ERROR_SEPARATION_GENERIC)
+                    is SeparationStatus.Consumed ->
+                        handleSeparationFailure(clientToken, ERROR_SEPARATION_CONSUMED)
                 }
             }
         } catch (e: Exception) {
-            updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = e.message) }
-            editProjectRepository.getProject(projectId)?.let {
-                editProjectRepository.updateProject(
-                    it.copy(separationStatus = AutoJobStatus.FAILED, separationError = e.message)
+            handleSeparationFailure(clientToken, e.message ?: ERROR_SEPARATION_GENERIC)
+        }
+    }
+
+    /**
+     * Processing entry → SeparationDirective 영속화. polling Ready 시 자동 호출.
+     * entry 의 range / numberOfSpeakers / editingDirectiveId 그대로 사용. 기존 directive 의 좌표나
+     * editingDirectiveId 가 일치하면 upsert (id 보존) — TimelineScreen 의 stemMixer group 끊김 방지.
+     */
+    private suspend fun commitProcessingSeparationToDirective(
+        clientToken: String,
+        stems: List<Stem>,
+        selections: Map<String, StemSelectionUi>,
+    ) {
+        val entry = _uiState.value.processingSeparations.firstOrNull { it.clientToken == clientToken }
+            ?: return
+        try {
+            val state = _uiState.value
+            val segment = state.segments.firstOrNull { it.id == entry.segmentId }
+            val urlByStemId = stems.associate { it.stemId to it.url }
+            val selectionList = selections.values
+                .map { StemSelection(it.stemId, it.volume, urlByStemId[it.stemId], it.selected) }
+            if (selectionList.none { it.selected }) {
+                removeProcessingSeparationEntry(clientToken)
+                // 영속화에서도 제거.
+                editProjectRepository.getProject(projectId)?.let { p ->
+                    entry.jobId?.let {
+                        editProjectRepository.updateProject(p.removeProcessingSeparation(it))
+                    }
+                }
+                return
+            }
+            val isWholeVideo = segment == null
+            val segStart = segment?.let { s -> segmentStartOffsetMs(state.segments, s.id) } ?: 0L
+            val directiveStart = when {
+                entry.rangeStartMs != null -> entry.rangeStartMs
+                isWholeVideo -> 0L
+                else -> segStart + segment.trimStartMs
+            }
+            val directiveEnd = when {
+                entry.rangeEndMs != null -> entry.rangeEndMs
+                isWholeVideo -> state.videoDurationMs.coerceAtLeast(1L)
+                else -> directiveStart + (
+                    if (segment.trimEndMs > 0L) segment.trimEndMs - segment.trimStartMs else segment.durationMs
                 )
             }
+            val existing = entry.editingDirectiveId?.let { id ->
+                _uiState.value.separationDirectives.firstOrNull { it.id == id }
+            } ?: _uiState.value.separationDirectives.firstOrNull {
+                it.rangeStartMs == directiveStart && it.rangeEndMs == directiveEnd
+            }
+            val effectiveStart = existing?.rangeStartMs ?: directiveStart
+            val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
+            separationDirectiveRepository.add(
+                SeparationDirective(
+                    id = existing?.id ?: Uuid.random().toString(),
+                    projectId = projectId,
+                    rangeStartMs = effectiveStart,
+                    rangeEndMs = effectiveEnd,
+                    numberOfSpeakers = entry.numberOfSpeakers,
+                    muteOriginalSegmentAudio = true,
+                    selections = selectionList,
+                    createdAt = existing?.createdAt ?: currentTimeMillis()
+                )
+            )
+            removeProcessingSeparationEntry(clientToken)
+            // 영속화 리스트에서도 해당 entry 제거 + legacy 단일 슬롯 클리어.
+            editProjectRepository.getProject(projectId)?.let { p ->
+                val cleaned = entry.jobId?.let { p.removeProcessingSeparation(it) } ?: p
+                editProjectRepository.updateProject(cleaned.clearSeparation())
+            }
+            separationGate = TriggerGate.ARMED
+            mainUndoManagerForCurrent().clear()
+            pushUndoState()
+        } catch (e: Exception) {
+            handleSeparationFailure(clientToken, e.message ?: ERROR_SEPARATION_GENERIC)
         }
     }
 
@@ -4468,6 +4732,9 @@ class TimelineViewModel constructor(
         const val MAX_FRAME_DIMENSION = 7680
         const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
         private const val HTTP_NOT_FOUND = 404
+        private const val ERROR_SEPARATION_GENERIC = "분리에 실패했습니다"
+        private const val ERROR_SEPARATION_CONSUMED =
+            "이 작업은 이미 합성에 사용되어 더 이상 사용할 수 없습니다"
     }
 
     fun onOpenExportOptionsSheet() {
