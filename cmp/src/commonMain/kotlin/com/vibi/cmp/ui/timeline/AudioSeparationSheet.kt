@@ -256,17 +256,14 @@ fun AudioSeparationSheet(
                                 )
                             }
                             if (volumeExpanded) {
-                                // 인라인 가로 볼륨 슬라이더 — 회전 popup 보다 직관적. 라벨/% 동일 row.
+                                // 인라인 가로 볼륨 슬라이더 — 부모 stem row 의 가시 너비와 맞추기 위해
+                                // leading padding 제거. "볼륨" 라벨도 생략 — 위 토글 버튼이 맥락 제공,
+                                // 슬라이더 트랙이 row 의 끝까지 확장돼 thumb 의 움직임 범위가 배경과 일치.
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth().padding(start = 44.dp, end = 8.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Text(
-                                        "볼륨",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
                                     Slider(
                                         value = volume,
                                         valueRange = 0f..2f,

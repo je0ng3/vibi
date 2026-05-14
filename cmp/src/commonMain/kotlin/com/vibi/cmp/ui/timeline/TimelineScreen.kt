@@ -47,10 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
@@ -2268,26 +2265,27 @@ private fun BgmActionSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // 볼륨 — 회전된 세로 슬라이더 Popup 대신 인라인 가로 슬라이더로 토글. 속도와 동일 패턴.
-                RoundIconButton(
-                    icon = Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = "볼륨",
+                // 네 액션 모두 동일 라벨 버튼 패턴 — 볼륨/속도는 expand 토글 (selected 표시),
+                // 배경음분리는 강조(accent), 삭제는 destructive. 이전 round-icon + text 혼용은
+                // 사용자에게 시각 위계가 비일관적이라 모두 outline 라벨 버튼으로 통일.
+                LabeledActionButton(
+                    label = "볼륨",
                     selected = expanded == "volume",
                     onClick = { expanded = if (expanded == "volume") null else "volume" },
                 )
-                RoundIconButton(
-                    icon = Icons.Filled.Speed,
-                    contentDescription = "속도",
+                LabeledActionButton(
+                    label = "속도",
                     selected = expanded == "speed",
                     onClick = { expanded = if (expanded == "speed") null else "speed" },
                 )
-                // 배경음 분리 — 다른 액션과 달리 텍스트 라벨 버튼으로 노출 (별개의 강조 액션).
-                TextButton(onClick = onSeparate) {
-                    Text("배경음분리", fontSize = 13.sp, color = tokens.accent)
-                }
-                RoundIconButton(
-                    icon = Icons.Filled.Delete,
-                    contentDescription = "삭제",
+                LabeledActionButton(
+                    label = "배경음분리",
+                    accent = true,
+                    onClick = onSeparate,
+                )
+                LabeledActionButton(
+                    label = "삭제",
+                    accent = true,
                     onClick = {
                         if (isPreviewing) {
                             previewer.stop()
@@ -2357,6 +2355,51 @@ private fun InlineSliderRow(
             style = MaterialTheme.typography.labelSmall,
             color = tokens.onBackgroundPrimary,
             modifier = Modifier.width(44.dp),
+        )
+    }
+}
+
+/**
+ * BgmActionSheet 액션 row 의 라벨 버튼. RoundIconButton 의 outline + selected 패턴을
+ * 그대로 가져오되 아이콘 대신 텍스트 라벨로 노출 — 네 액션(볼륨/속도/배경음분리/삭제)을
+ * 일관된 outline pill 로 통일.
+ *
+ * - selected=true: accent 테두리 + 살짝 채움 (볼륨/속도 expand 상태)
+ * - accent=true:  accent 색 텍스트/테두리 (배경음분리·삭제 같은 강조 액션)
+ */
+@Composable
+private fun LabeledActionButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    accent: Boolean = false,
+) {
+    val tokens = LocalVibiColors.current
+    val borderColor = when {
+        selected -> tokens.accent
+        accent -> tokens.accent.copy(alpha = 0.6f)
+        else -> tokens.onBackgroundPrimary.copy(alpha = 0.25f)
+    }
+    val bgColor = if (selected) tokens.accent.copy(alpha = 0.12f) else Color.Transparent
+    val textColor = when {
+        selected || accent -> tokens.accent
+        else -> tokens.onBackgroundPrimary
+    }
+    Box(
+        modifier = modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            color = textColor,
         )
     }
 }
