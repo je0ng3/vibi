@@ -207,12 +207,16 @@ fun TimelineScreen(
     }
     // selection / volume 변경 시 setVolume 만. load 와 분리해 끊김 방지.
     // previewMode == ORIGINAL 이면 모든 stem 강제 mute — 영상 원본 audio 만 들리도록.
+    // VOICE_ALL ("모든 화자") 은 SoundDeck UI 에서 숨겼으므로 mixer 에서도 강제 mute — 기존 프로젝트가
+    // selected=true 로 저장된 경우 화자별 stem 과 중복 재생되는 것 방지 (안전망).
     LaunchedEffect(activeDirective?.id, activeDirective?.selections, state.previewMode) {
         val dir = activeDirective ?: return@LaunchedEffect
         val forceMute = state.previewMode == com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL
         dir.selections.forEach { sel ->
+            val isVoiceAll = sel.stemId == com.vibi.shared.domain.model.Stem.STEM_ID_VOICE_ALL
             val v = when {
                 forceMute -> 0f
+                isVoiceAll -> 0f
                 sel.selected -> sel.volume
                 else -> 0f
             }
@@ -597,7 +601,7 @@ fun TimelineScreen(
                 }
             }
 
-            // 영상편집 진입은 우상단 연필이 아닌 음원분리/음원삽입 행의 "편집" 버튼으로 이동.
+            // 영상편집 진입은 SoundDeck 의 "영상 다듬기" 카드(EditEntryCard)로 일원화.
         }
 
         // Transport row: play/pause + 시간 표시
@@ -767,7 +771,7 @@ fun TimelineScreen(
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
                     }
                 }
-                // SegmentEditActionPanel 은 음원분리/음원삽입/편집 행 아래로 이동 — 사용자 요청.
+                // SegmentEditActionPanel 은 음원분리/음원삽입 행 아래로 이동 — 사용자 요청.
             }
         }
 
@@ -785,11 +789,11 @@ fun TimelineScreen(
             state.processingSeparations.isNotEmpty() ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
             state.sttPreflightStatus == AutoJobStatus.RUNNING
-        // segment edit 모드 (isSegmentEditMode=true) 일 때는 isRangeSelecting 도 true 가 되지만
-        // 음원분리·음원삽입·편집(닫기) 행을 유지해야 사용자가 "닫기" 로 빠져나올 수 있다.
-        // 음원분리 단독 range mode (isRangeSelecting=true, isSegmentEditMode=false) 일 때만 숨김.
+        // segment edit 모드 (isSegmentEditMode=true) 일 때도 isRangeSelecting 이 true 라
+        // 음원분리 단독 range mode (isSegmentEditMode=false) 일 때만 숨김.
+        // 영상편집 진입은 SoundDeck 의 "영상 다듬기" 카드, 종료는 SegmentEditActionPanel cancel.
         if ((!state.isRangeSelecting || state.isSegmentEditMode) && !state.localizationOpen) {
-            // 음원 단계 — 음원분리/음원삽입/편집 세 버튼을 가로 양쪽 끝까지 채워 weight(1f) 로 균등 분배.
+            // 음원 단계 — 음원분리/음원삽입 두 버튼을 weight(1f) 로 균등 분배.
             // 진행 상태는 timeline accent overlay 가 표시 — 버튼 라벨은 새 분리 진입점으로 고정.
             // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
             if (showAudioSourcesContent) {
@@ -815,12 +819,6 @@ fun TimelineScreen(
                     micLevel = 0f
                 }
                 var audioMenuOpen by remember { mutableStateOf(false) }
-                // 영상편집 토글 — 첫 video segment 기준 진입/이탈. segment edit 모드 일 때
-                // 음원분리·음원삽입은 disable 되고 본 버튼만 "닫기" 로 바뀌어 빠져나오는 동선.
-                val firstVideoSegId = state.segments.firstOrNull {
-                    it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
-                }?.id
-                val editEnabled = firstVideoSegId != null && state.videoUri.isNotEmpty()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
@@ -902,24 +900,6 @@ fun TimelineScreen(
                             )
                         }
                     }
-                    OutlinedButton(
-                        enabled = editEnabled,
-                        modifier = Modifier.weight(1f).height(42.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        onClick = {
-                            if (state.isSegmentEditMode) {
-                                viewModel.onFinishSegmentEdit()
-                            } else {
-                                val id = firstVideoSegId ?: return@OutlinedButton
-                                viewModel.onEnterSegmentEditMode(id)
-                            }
-                        },
-                    ) {
-                        Text(
-                            if (state.isSegmentEditMode) "닫기" else "편집",
-                            fontSize = 14.sp,
-                        )
-                    }
                 }
                 // 편집 토글 — 버튼 행 바로 아래. range slider 로 구간이 실제 선택된 뒤에만 노출.
                 if (state.isSegmentEditMode &&
@@ -940,8 +920,8 @@ fun TimelineScreen(
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
                 // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
                 if (com.vibi.cmp.platform.RuntimeFlags.soundDeckEnabled) {
-                    val deckCards = remember(state.separationDirectives, state.bgmClips) {
-                        com.vibi.cmp.ui.timeline.sounddeck.buildSoundDeck(
+                    val deckGroups = remember(state.separationDirectives, state.bgmClips) {
+                        com.vibi.cmp.ui.timeline.sounddeck.buildSoundDeckGroups(
                             separations = state.separationDirectives,
                             bgmClips = state.bgmClips,
                         )
@@ -951,7 +931,7 @@ fun TimelineScreen(
                         state.isLocalizationBusy()
                     Spacer(Modifier.height(VibiSpacing.xs))
                     com.vibi.cmp.ui.timeline.sounddeck.SoundDeck(
-                        cards = deckCards,
+                        groups = deckGroups,
                         disabled = deckDisabled,
                         onToggleStem = { directiveId, stemId, selected ->
                             viewModel.onSetStemSelectionForDirective(directiveId, stemId, selected)

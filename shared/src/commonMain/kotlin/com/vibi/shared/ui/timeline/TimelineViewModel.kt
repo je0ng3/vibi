@@ -4008,11 +4008,13 @@ class TimelineViewModel constructor(
                             else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
                         }
                         updateSeparation {
-                            // BGM 분리: 배경음 stem 만 제외하고 나머지(보컬/speaker) default 선택.
+                            // BGM 분리: 배경음 stem + VOICE_ALL ("모든 화자") 제외하고 화자별 SPEAKER stem 만 default 선택.
+                            // VOICE_ALL 은 화자별 stem 으로 중복이라 mix 에 포함되면 보컬이 두 번 들림.
                             val defaults = absStems.associate { stem ->
                                 stem.stemId to StemSelectionUi(
                                     stem.stemId,
-                                    selected = stem.stemId != Stem.STEM_ID_BACKGROUND,
+                                    selected = stem.stemId != Stem.STEM_ID_BACKGROUND &&
+                                        stem.stemId != Stem.STEM_ID_VOICE_ALL,
                                     volume = 1.0f,
                                 )
                             }
@@ -4521,11 +4523,13 @@ class TimelineViewModel constructor(
                             if (stem.url.startsWith("http")) stem
                             else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
                         }
-                        // 모든 stem default 선택 — 사용자가 directive 막대 탭으로 사후 편집 가능.
+                        // 모든 stem default 선택 — 단, VOICE_ALL ("모든 화자") 은 화자별 SPEAKER stem 으로
+                        // 분리되므로 중복 → default 비선택. 사용자가 directive 막대 탭으로 사후 편집 가능.
                         // EditProject 의 separationStatus=READY 중간 write 는 곧바로 clearSeparation 으로
                         // 덮이므로 생략 — commit 이 단일 write 로 처리.
                         val defaults = absStems.associate { stem ->
-                            stem.stemId to StemSelectionUi(stem.stemId, selected = true, volume = 1.0f)
+                            val isVoiceAll = stem.stemId == Stem.STEM_ID_VOICE_ALL
+                            stem.stemId to StemSelectionUi(stem.stemId, selected = !isVoiceAll, volume = 1.0f)
                         }
                         commitProcessingSeparationToDirective(clientToken, absStems, defaults)
                     }

@@ -1,8 +1,9 @@
 package com.vibi.cmp.ui.timeline.sounddeck
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.theme.LocalVibiColors
@@ -48,7 +48,12 @@ import com.vibi.cmp.ui.components.VibiPanelCard
  *
  * DESIGN.md `panel-card` 베이스 — [VibiPanelCard]. tap/longPress 제스처는 modifier 합성으로
  * VibiPanelCard 의 onClick 슬롯 대신 outer 에서 부착.
+ *
+ * `combinedClickable` 사용 이유 — `pointerInput` 의 block 은 key 가 안 바뀌면 코루틴이 유지돼
+ * onTap 람다가 첫 컴포지션의 [onToggle] 캡처를 영구 보존, [model.selected] 변경이 반영 안 돼
+ * 토글 켜기가 영원히 안 됨. clickable 계열은 매 컴포지션 람다 갱신.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SoundCard(
     model: SoundCardModel,
@@ -71,12 +76,11 @@ fun SoundCard(
         else -> 1f
     }
 
-    val gestureModifier = if (disabled) modifier else modifier.pointerInput(model.key) {
-        detectTapGestures(
-            onTap = { onToggle() },
-            onLongPress = { expanded = !expanded },
-        )
-    }
+    val gestureModifier = modifier.combinedClickable(
+        enabled = !disabled,
+        onClick = onToggle,
+        onLongClick = { expanded = !expanded },
+    )
 
     VibiPanelCard(modifier = gestureModifier) {
         Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
