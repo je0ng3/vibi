@@ -13,7 +13,9 @@ final class AppleSignInBridgeImpl: NSObject, AppleSignInBridge,
 
     private var pendingCallback: ((String?, String?, String?) -> Void)?
 
-    func signIn(callback: @escaping (String?, String?, String?) -> Void) {
+    // KMP / Kotlin 2.x 가 Swift export 시 첫 param 의 외부 라벨을 `callback_` 으로 mangling —
+    // Xcode 26+ 의 strict 매칭에서 `callback:` 로는 protocol conformance 실패.
+    func signIn(callback_ callback: @escaping (String?, String?, String?) -> Void) {
         // 시트 modal 이라 사용자 경로로는 도달 불가하지만, 프로그래매틱 더블 호출 시
         // 이전 callback 이 silent overwrite 되면 영원히 완료 안 됨 — 즉시 에러 콜백.
         if pendingCallback != nil {

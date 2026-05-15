@@ -10,7 +10,7 @@ import UIKit
 /// 자동이지만 반대 방향은 wrapper 필요) callback 패턴으로 단순화.
 final class GoogleSignInBridgeImpl: NSObject, GoogleSignInBridge {
 
-    func signIn(callback: @escaping (String?, String?) -> Void) {
+    func signIn(callback_ callback: @escaping (String?, String?) -> Void) {
         guard let presenter = topViewController() else {
             callback(nil, "no_presenting_view_controller")
             return
