@@ -153,9 +153,10 @@ fun VibiTheme(
             onSurface = tokens.onBackgroundPrimary
         )
     }
+    val typography = rememberVibiTypography()
     CompositionLocalProvider(
         LocalVibiColors provides tokens,
-        LocalVibiTypography provides DefaultVibiTypography,
+        LocalVibiTypography provides typography,
     ) {
         MaterialTheme(colorScheme = colorScheme, content = content)
     }
