@@ -67,8 +67,7 @@ final class AppleSignInBridgeImpl: NSObject, AppleSignInBridge,
         case .failed: code = "apple_sign_in_failed"
         case .invalidResponse: code = "invalid_response"
         case .notHandled: code = "not_handled"
-        case .unknown, .none: code = "unknown_error"
-        @unknown default: code = "unknown_error"
+        default: code = "unknown_error"
         }
         pendingCallback?(nil, nil, "\(code): \(error.localizedDescription)")
     }
