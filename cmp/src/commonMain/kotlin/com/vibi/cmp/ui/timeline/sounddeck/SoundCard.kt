@@ -12,16 +12,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -120,30 +117,19 @@ fun SoundCard(
                         )
                     }
                 }
-                // stem 카드는 별도 헤더 액션이 없어 재생 indicator 가 필요하지만, BGM 카드는
-                // 우측 재생/정지 IconButton 의 Pause 아이콘이 같은 상태를 더 명확히 표현하므로 생략.
-                if (isPreviewing && model.kind != SoundCardKind.BGM) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(VibiSpacing.base),
-                        strokeWidth = 2.dp,
-                        color = tokens.accent,
+                // 재생/정지 버튼 — stem · BGM 공통. IconButton 의 자체 클릭이 카드의 combinedClickable
+                // (onClick=onToggle) 보다 우선 소비. 다듬기/볼륨 진입은 long-press (expanded) 로 분리.
+                IconButton(
+                    onClick = onTogglePreview,
+                    enabled = !disabled && !model.audioUrl.isNullOrBlank(),
+                    modifier = Modifier.size(VibiSpacing.xl),
+                ) {
+                    Icon(
+                        imageVector = if (isPreviewing) Icons.Filled.Pause
+                                      else Icons.Filled.PlayArrow,
+                        contentDescription = if (isPreviewing) "정지" else "재생",
+                        tint = tokens.onBackgroundPrimary,
                     )
-                }
-                // BGM 카드 헤더의 재생/정지 버튼 — IconButton 의 자체 클릭이 카드의 combinedClickable
-                // (onClick=onToggle) 보다 우선 소비. 다듬기 진입은 long-press (onEdit) 로 분리.
-                if (model.kind == SoundCardKind.BGM) {
-                    IconButton(
-                        onClick = onTogglePreview,
-                        enabled = !disabled && !model.audioUrl.isNullOrBlank(),
-                        modifier = Modifier.size(VibiSpacing.xl),
-                    ) {
-                        Icon(
-                            imageVector = if (isPreviewing) Icons.Filled.Pause
-                                          else Icons.Filled.PlayArrow,
-                            contentDescription = if (isPreviewing) "정지" else "재생",
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                    }
                 }
             }
 
@@ -176,39 +162,8 @@ fun SoundCard(
                             onCancel = null,
                         )
                     } else {
-                        // stem 카드 — 기존 부가 액션 row (미리듣기 + 삭제) + 볼륨 슬라이더.
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(
-                                onClick = onTogglePreview,
-                                enabled = !disabled && !model.audioUrl.isNullOrBlank(),
-                            ) {
-                                Icon(
-                                    imageVector = if (isPreviewing) Icons.Filled.Pause
-                                                  else Icons.Filled.PlayArrow,
-                                    contentDescription = if (isPreviewing) "정지" else "미리듣기",
-                                    tint = tokens.onBackgroundPrimary,
-                                )
-                                Spacer(Modifier.width(VibiSpacing.xxs))
-                                Text(
-                                    if (isPreviewing) "정지" else "이 소리만 듣기",
-                                    color = tokens.onBackgroundPrimary,
-                                    style = typo.bodySm,
-                                )
-                            }
-                            Spacer(Modifier.weight(1f))
-                            if (onDelete != null) {
-                                IconButton(
-                                    onClick = onDelete,
-                                    enabled = !disabled,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Delete,
-                                        contentDescription = "삭제",
-                                        tint = tokens.mutedText,
-                                    )
-                                }
-                            }
-                        }
+                        // stem 카드 — 재생은 헤더 IconButton 으로 노출되므로, 펼친 패널엔 볼륨 슬라이더만.
+                        // 삭제는 stem 자체엔 없음 (분리 결과는 구간 단위로만 wipe).
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 "볼륨",

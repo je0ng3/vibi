@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -33,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.rememberAudioPreviewer
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
-import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.ui.components.VibiPanelCard
 
@@ -159,7 +157,6 @@ fun SoundDeck(
                     is SoundDeckGroup.Bgm -> Column(
                         verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
                     ) {
-                        SoundDeckSectionHeader(title = "삽입한 음원", rangeText = null)
                         group.cards.forEach { card ->
                             key(card.key) {
                                 SoundCardRow(
@@ -167,7 +164,6 @@ fun SoundDeck(
                                     disabled = disabled,
                                     isPreviewing = previewingKey == card.key,
                                     callbacks = cardCallbacks(card),
-                                    indent = true,
                                 )
                             }
                         }
@@ -178,7 +174,7 @@ fun SoundDeck(
 
         if (onAddSeparation != null) {
             AddSourceCard(
-                label = "+ 음원 분리",
+                label = "음원 분리",
                 description = "원하는 구간을 골라 화자·배경음으로 나눠요",
                 enabled = !disabled,
                 onClick = onAddSeparation,
@@ -186,7 +182,7 @@ fun SoundDeck(
         }
         if (onAddBgm != null) {
             AddSourceCard(
-                label = "+ 음원 삽입",
+                label = "음원 삽입",
                 description = "BGM 파일 업로드 또는 즉시 녹음",
                 enabled = !disabled,
                 onClick = onAddBgm,
@@ -210,7 +206,6 @@ private fun SoundCardRow(
     disabled: Boolean,
     isPreviewing: Boolean,
     callbacks: SoundCardCallbacks,
-    indent: Boolean,
 ) {
     SoundCard(
         model = card,
@@ -222,7 +217,6 @@ private fun SoundCardRow(
         onDelete = callbacks.onDelete,
         onApplySpeed = callbacks.onApplySpeed,
         onSecondaryAction = callbacks.onSecondaryAction,
-        modifier = if (indent) Modifier.padding(start = VibiSpacing.sm) else Modifier,
     )
 }
 
@@ -265,18 +259,22 @@ private fun CollapsibleSeparationCard(
                     )
                 }
                 Spacer(Modifier.width(VibiSpacing.sm))
-                Text(
-                    "구간 ${group.index}",
-                    style = typo.bodyStrong,
-                    color = tokens.onBackgroundPrimary,
-                )
-                if (rangeText != null) {
-                    Spacer(Modifier.width(VibiSpacing.xs))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
+                ) {
                     Text(
-                        rangeText,
-                        style = typo.caption,
-                        color = tokens.mutedText,
+                        "구간 ${group.index}",
+                        style = typo.bodyStrong,
+                        color = tokens.onBackgroundPrimary,
                     )
+                    if (rangeText != null) {
+                        Text(
+                            rangeText,
+                            style = typo.bodySm,
+                            color = tokens.mutedText,
+                        )
+                    }
                 }
             }
             AnimatedVisibility(visible = expanded) {
@@ -288,33 +286,11 @@ private fun CollapsibleSeparationCard(
                                 disabled = disabled,
                                 isPreviewing = previewingKey == card.key,
                                 callbacks = callbacksFor(card),
-                                indent = false,
                             )
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun SoundDeckSectionHeader(title: String, rangeText: String?) {
-    val tokens = LocalVibiColors.current
-    val typo = LocalVibiTypography.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            title,
-            style = typo.bodyStrong,
-            color = tokens.onBackgroundPrimary,
-        )
-        if (rangeText != null) {
-            Spacer(Modifier.width(VibiSpacing.xs))
-            Text(
-                rangeText,
-                style = typo.caption,
-                color = tokens.mutedText,
-            )
         }
     }
 }

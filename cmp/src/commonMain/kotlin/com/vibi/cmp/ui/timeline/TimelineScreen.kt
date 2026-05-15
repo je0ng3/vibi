@@ -262,8 +262,11 @@ fun TimelineScreen(
             !key.isPlaying -> stemMixer.pause()
             key.inRange -> {
                 // 진입 — group 전환 + offset seek + play + video mute.
+                // sourceOffsetMs = directive 가 split 된 경우 stem audio 의 중간부터 재생하기 위한 누적 offset.
+                // 신규 directive 는 0 이라 기존 동작 동일. split piece 는 0 보다 큰 값.
                 stemMixer.setActiveGroup(dir.id)
-                val offset = (state.playbackPositionMs - dir.rangeStartMs).coerceAtLeast(0L)
+                val offset = ((state.playbackPositionMs - dir.rangeStartMs) + dir.sourceOffsetMs)
+                    .coerceAtLeast(0L)
                 stemMixer.seekTo(offset)
                 stemMixer.play()
                 viewModel.muteVideoSegmentsForDirective(true)
@@ -686,17 +689,9 @@ fun TimelineScreen(
                         ProcessingSeparationOverlay(start, end, p.progress)
                     }
             }
-            // 영상 timeline + BGM lane 을 단일 시각 컨테이너로 묶어 두 영역이 별개 "재생바"로 인식되지 않게.
-            // 외부 background + clip(RoundedCornerShape) 이 두 트랙을 하나의 줄로 통합하고,
-            // BgmTimelineLane 내부의 자체 배경은 alpha 낮춰 외곽과 합쳐지게.
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(tokens.timelineBarTrack.copy(alpha = 0.45f)),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-            // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive 시각 모두 한 위치에.
+            // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive + BGM lane 까지 한 컴포넌트.
+            // AudioSources 단계 + 음원분리 진행 가능 상태(=비 segment edit) 에서만 BGM region 노출.
+            // SubtitleDub 단계에서는 BFF render 가 BGM 포함해 합치므로 별도 시각 불필요 — 데이터는 보존.
             UnifiedTimelineBar(
                 segments = state.segments,
                 directives = sortedDirectives,
@@ -723,30 +718,16 @@ fun TimelineScreen(
                 onTranslateRange = { viewModel.onTranslateRange(it) },
                 onFreeIntervalTap = { s, e -> viewModel.onSelectFreeRange(s, e) },
                 onRangeTapToggle = { viewModel.onClearRangeSelection() },
+                bgmClips = state.bgmClips,
+                bgmLaneCount = state.bgmLaneCount,
+                selectedBgmClipId = state.selectedBgmClipId,
+                bgmTapEnabled = !state.isRangeSelecting,
+                onBgmSelectClip = viewModel::onSelectBgmClip,
+                onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
+                onBgmUpdateLane = viewModel::onUpdateBgmLane,
+                onBgmSetLaneCount = viewModel::onSetBgmLaneCount,
+                showBgm = showAudioSourcesContent && !state.isSegmentEditMode,
             )
-            // 재생바 밑 BGM 트랙 — 각 클립을 startMs 위치 시간 비율로 시각화.
-            // 막대 horizontal drag → startMs 갱신, vertical drag → lane 변경, tap → 액션 시트.
-            // AudioSources 단계 전용. SubtitleDub 단계에서는 어차피 BFF render 시 BGM 이 포함되어
-            // 단일 영상으로 합쳐지므로 별도 표시 불필요. 클립 데이터는 보존되므로 AudioSources 로
-            // 돌아오면 즉시 다시 보임. 음원분리 range 선택 모드에서는 클립 탭 무시 (range 만 선택 가능).
-            if (showAudioSourcesContent &&
-                !state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
-                BgmTimelineLane(
-                    clips = state.bgmClips,
-                    totalMs = state.videoDurationMs,
-                    accent = tokens.accent,
-                    markerColor = tokens.onBackgroundPrimary,
-                    playbackPositionMs = state.playbackPositionMs,
-                    selectedClipId = state.selectedBgmClipId,
-                    tapEnabled = !state.isRangeSelecting,
-                    laneCount = state.bgmLaneCount,
-                    onSelectClip = viewModel::onSelectBgmClip,
-                    onUpdateStart = viewModel::onUpdateBgmStartMs,
-                    onUpdateLane = viewModel::onUpdateBgmLane,
-                    onSetLaneCount = viewModel::onSetBgmLaneCount,
-                )
-            }
-            }  // 재생바 + BGM 묶음 Column 닫음
             if (state.isRangeSelecting) {
                 Text(
                     "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
@@ -826,7 +807,7 @@ fun TimelineScreen(
                     OutlinedButton(
                         // RUNNING 시에도 enable — 사용자가 진행 중 잡 외에 다른 구간 분리를 동시에 시작할 수 있어야 함.
                         enabled = firstSegId != null && !state.isSegmentEditMode,
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f).height(56.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
                         onClick = {
                             val segId = firstSegId ?: return@OutlinedButton
@@ -844,7 +825,7 @@ fun TimelineScreen(
                     Box(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             enabled = !state.isAddingBgm && !state.isSegmentEditMode,
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
                             onClick = {
                                 if (recording) recorder.stop()
@@ -1468,16 +1449,6 @@ private fun TimelineStepperRow(
 }
 
 /**
- * 한 클립을 트랙 위에 그릴 데이터.
- */
-data class ClipBar(
-    val id: String,
-    val startMs: Long,
-    val endMs: Long,
-    val selected: Boolean
-)
-
-/**
  * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) lang 은 호출부에서 `selected=true, enabled=false`
  * 로 넘겨 selected 색칠 + 클릭 비활성. blocked 인 동안 onClick 비활성 (FilterChip enabled=false).
  */
@@ -1497,78 +1468,18 @@ private fun LangFilterChip(
 }
 
 /**
- * 라벨 + 가로 트랙 + 클립 막대들 — 시간축에 비례해서 배치.
+ * 통합 타임라인 바 — segment/directive content strip + BGM lane 까지 한 컴포넌트로 묶음.
  *
- * [durationMs] 가 0 이면 클립을 그릴 수 없으므로 라벨만 노출.
- * 막대 탭 → [onClipClick] 호출 (id 또는 null=선택해제).
- */
-@Composable
-private fun ClipTrack(
-    label: String,
-    color: Color,
-    durationMs: Long,
-    clips: List<ClipBar>,
-    onClipClick: (String?) -> Unit
-) {
-    val tokens = LocalVibiColors.current
-    val typo = LocalVibiTypography.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
-    ) {
-        Box(
-            modifier = Modifier
-                .width(56.dp)
-                .height(VibiSpacing.xl)
-                .clip(VibiShape.pill)
-                .background(color.copy(alpha = 0.18f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(label, color = color, style = typo.bodySm)
-        }
-        // 트랙 바 (탭 시 선택 해제)
-        androidx.compose.foundation.layout.BoxWithConstraints(
-            modifier = Modifier
-                .weight(1f)
-                .height(VibiSpacing.xl)
-                .clip(VibiShape.pill)
-                .background(color.copy(alpha = 0.10f))
-                .clickable { onClipClick(null) }
-        ) {
-            val totalWidth = maxWidth
-            if (durationMs > 0L) {
-                clips.forEach { clip ->
-                    val startFrac = (clip.startMs.toFloat() / durationMs).coerceIn(0f, 1f)
-                    val endFrac = (clip.endMs.toFloat() / durationMs).coerceIn(0f, 1f)
-                    val widthFrac = (endFrac - startFrac).coerceAtLeast(0.01f)
-                    Box(
-                        modifier = Modifier
-                            .padding(start = totalWidth * startFrac)
-                            .width(totalWidth * widthFrac)
-                            .height(28.dp)
-                            .padding(vertical = 2.dp)
-                            .clip(VibiShape.pill)
-                            .background(if (clip.selected) color else color.copy(alpha = 0.6f))
-                            .border(
-                                width = if (clip.selected) 2.dp else 0.dp,
-                                color = tokens.onBackgroundPrimary,
-                                shape = VibiShape.pill
-                            )
-                            .clickable {
-                                // 토글: 같은 막대 다시 누르면 선택 해제
-                                onClipClick(if (clip.selected) null else clip.id)
-                            }
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 통합 타임라인 바 — 28dp 전체 높이, 가운데 6dp 만 segment/directive content strip (얇은 띠).
- * 양쪽 끝 핸들은 full height 의 grippable 바 형태 (8dp wide visual + 28dp hit area).
- * 색 분리: bg = 검정 strip, segment bg/edited = 중성 회색 톤, range fill = accent (주황/파랑 등 distinct).
+ * 두 단으로 구성:
+ *  - 상단 playback region (56dp 고정) : segment/directive 띠, range overlay+핸들, 재생 헤드 drag hit zone.
+ *  - 하단 BGM region (가변) : `showBgm && bgmClips 비지 않음` 일 때만 렌더. lane 행마다 막대, 그 아래 lane
+ *    수 조절 drag pill. BGM 막대 drag/tap 은 막대 자체에서 처리.
+ *
+ * 두 region 은 같은 x 좌표계(totalMs ↔ 컨테이너 width)를 공유. 재생 헤드 시각 line 은 상·하단을 관통하고,
+ * range 핸들/재생 헤드 drag hit zone 은 충돌 회피를 위해 상단 playback region 안쪽에서만 잡힌다.
+ *
+ * 색 분리: 외곽 bg = trackColor.alpha(0.45) 단일 면, segment bg/edited = 중성 회색 톤,
+ * range fill = accent, BGM 막대 = accent (선택 시 진하게).
  *
  * 제스처:
  *  - segment 탭 (영상편집) → onSegmentTap (그 segment 전체로 range 스냅)
@@ -1576,7 +1487,10 @@ private fun ClipTrack(
  *  - 빈 영역 탭 → onScrub
  *  - range fill 드래그 → onTranslateRange (양쪽 끝 동시 이동)
  *  - 좌/우 핸들 드래그 → onRangeStartChange/EndChange
- *  - 재생 마커 = playbackPositionMs 위치 흰선 (얇은 strip 위에 떠 있음)
+ *  - 재생 마커 = playbackPositionMs 위치 흰선 (BGM region 까지 관통, drag 은 상단 hit zone 에서)
+ *  - BGM 막대 drag → onBgmUpdateStart / onBgmUpdateLane
+ *  - BGM 막대 탭 (bgmTapEnabled) → onBgmSelectClip
+ *  - 하단 pill drag → onBgmSetLaneCount
  */
 /**
  * 통합 타임라인 바의 시각/제스처 spec — 사이즈/간격/clamp 등 매직 넘버 한 곳에 모음.
@@ -1600,6 +1514,8 @@ private object TimelineBarSpec {
     val RangeBorderThickness = 2.dp
     /** range 핸들 사이 최소 간격 — VM 의 MIN_RANGE_MS 와 동일 의미. */
     const val MinRangeGapMs = 100L
+    /** BGM lane 수 상한 — drag pill 로 늘릴 수 있는 lane 개수 max. */
+    const val MaxBgmLaneCount = 8
 }
 
 /**
@@ -1642,19 +1558,45 @@ private fun UnifiedTimelineBar(
     onFreeIntervalTap: (startMs: Long, endMs: Long) -> Unit = { _, _ -> },
     /** 음원분리 range 모드에서 현재 선택된 구간 내부를 재탭 시 호출 — 선택 해제. */
     onRangeTapToggle: () -> Unit = {},
+    /** BGM lane 통합 슬롯 — clips 가 있고 [showBgm]=true 일 때만 하단에 lane region 렌더. */
+    bgmClips: List<com.vibi.shared.domain.model.BgmClip> = emptyList(),
+    bgmLaneCount: Int = 1,
+    selectedBgmClipId: String? = null,
+    bgmTapEnabled: Boolean = true,
+    onBgmSelectClip: (String) -> Unit = {},
+    onBgmUpdateStart: (String, Long) -> Unit = { _, _ -> },
+    onBgmUpdateLane: (String, Int) -> Unit = { _, _ -> },
+    onBgmSetLaneCount: (Int) -> Unit = {},
+    showBgm: Boolean = false,
 ) {
     val density = LocalDensity.current
     val currentRangeStart by rememberUpdatedState(rangeStartMs)
     val currentRangeEnd by rememberUpdatedState(rangeEndMs)
 
-    val barHeight = TimelineBarSpec.BarHeight
+    val playbackRegionHeight = TimelineBarSpec.BarHeight
     val contentHeight = TimelineBarSpec.ContentHeight
     val handleHitWidth = TimelineBarSpec.HandleHitWidth
     val handleVisualWidth = TimelineBarSpec.HandleVisualWidth
 
+    // BGM region metric — clips 가 있을 때만 렌더. 없으면 전체 높이 = playbackRegionHeight (기존과 동일).
+    val showBgmRegion = showBgm && bgmClips.isNotEmpty() && totalMs > 0L
+    val bgmRowHeight = 10.dp
+    val bgmRowGap = 2.dp
+    val bgmRowCount = bgmLaneCount.coerceAtLeast(1)
+    val bgmRegionHeight = if (showBgmRegion) {
+        bgmRowHeight * bgmRowCount + bgmRowGap * (bgmRowCount - 1).coerceAtLeast(0)
+    } else 0.dp
+    val bgmRowStrideDp = bgmRowHeight + bgmRowGap
+    val bgmRowStridePx = with(density) { bgmRowStrideDp.toPx() }
+    val laneHandleHitHeight = if (showBgmRegion) 22.dp else 0.dp
+    val laneHandleVisualHeight = 6.dp
+    val playheadVisualBottom = playbackRegionHeight + bgmRegionHeight
+    val totalHeight = playheadVisualBottom + laneHandleHitHeight
+
     // range 모드 (영상편집 + 음원분리) 양쪽 다 parent tap detector 단일화. segment 자체에 clickable
     // 두지 않고 ms 좌표로 segment id 를 역검색 → onSegmentTap 호출. 같은 segment 재탭 시 VM 의
-    // onSelectSegmentInEdit 토글 로직이 처리.
+    // onSelectSegmentInEdit 토글 로직이 처리. modifier 는 top playback region 안쪽에 부착해 BGM
+    // lane drag 와 분리 — 빈 영역 탭은 영상 timeline 위에서만 잡힌다.
     val currentStartForTap by rememberUpdatedState(rangeStartMs)
     val currentEndForTap by rememberUpdatedState(rangeEndMs)
     // pointerInput key — progress 변경 (1~2초 폴링) 마다 processingSeparations ref 가 새로 생성되지만
@@ -1717,436 +1659,401 @@ private fun UnifiedTimelineBar(
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(barHeight)
-            .then(rangeTapModifier)
+            .height(totalHeight)
+            .clip(RoundedCornerShape(6.dp))
+            .background(trackColor.copy(alpha = 0.45f))
     ) {
         val totalWidthDp = maxWidth
         val totalWidthPx = with(density) { totalWidthDp.toPx() }
 
-        // Layer 1 — 가운데 얇은 배경 strip + segment/directive content.
+        // === 상단 playback region — 기존 단일 바 56dp 의 모든 시각/제스처가 여기 안에서 동작 ===
         Box(
             modifier = Modifier
-                .align(Alignment.Center)
+                .align(Alignment.TopStart)
                 .fillMaxWidth()
-                .height(contentHeight)
-                .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
-                .background(trackColor)
-        )
-        if (showSegments) {
-            Row(
+                .height(playbackRegionHeight)
+                .then(rangeTapModifier),
+        ) {
+            // Layer 1 — 가운데 얇은 배경 strip + segment/directive content.
+            Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .fillMaxWidth()
-                    .height(contentHeight),
-                horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
-            ) {
-                segments.forEach { seg ->
-                    // 시각 "편집됨" = 사용자가 실제로 의도해 적용한 변경 — volume/speed/복제.
-                    // trim 은 onApplyRangeVolume/Speed 가 segment 를 left/middle/right 로 split 하면서
-                    // 세 조각 모두에 부여하므로 trim 까지 포함하면 사용자가 편집한 middle 뿐 아니라
-                    // 자르고 남은 left/right 까지 색이 바뀜. trim 은 시각 표시에서 제외한다.
-                    // (hasNonTrivialEdits 는 render-필요 판단용으로 별도 — 그쪽은 trim 포함 유지.)
-                    val edited = seg.volumeScale != 1.0f ||
-                        seg.speedScale != 1.0f ||
-                        seg.duplicatedFromId != null
-                    // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
+                    .height(contentHeight)
+                    .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
+                    .background(trackColor)
+            )
+            if (showSegments) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth()
+                        .height(contentHeight),
+                    horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
+                ) {
+                    segments.forEach { seg ->
+                        // 시각 "편집됨" = 사용자가 실제로 의도해 적용한 변경 — volume/speed/복제.
+                        // trim 은 onApplyRangeVolume/Speed 가 segment 를 left/middle/right 로 split 하면서
+                        // 세 조각 모두에 부여하므로 trim 까지 포함하면 사용자가 편집한 middle 뿐 아니라
+                        // 자르고 남은 left/right 까지 색이 바뀜. trim 은 시각 표시에서 제외한다.
+                        // (hasNonTrivialEdits 는 render-필요 판단용으로 별도 — 그쪽은 trim 포함 유지.)
+                        val edited = seg.volumeScale != 1.0f ||
+                            seg.speedScale != 1.0f ||
+                            seg.duplicatedFromId != null
+                        // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
+                        Box(
+                            modifier = Modifier
+                                .weight(seg.effectiveDurationMs.toFloat().coerceAtLeast(1f))
+                                .fillMaxHeight()
+                                .background(if (edited) segmentEditedColor else segmentColor),
+                        )
+                    }
+                }
+            } else if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth()
+                        .height(contentHeight),
+                ) {
+                    var prevEnd = 0L
+                    directives.forEach { directive ->
+                        val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
+                        if (gap > 0L) Spacer(Modifier.weight(gap.toFloat()))
+                        val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
+                        // range 모드에서는 directive 탭 비활성 — 음원분리 sheet 안 열리도록.
+                        // 색은 edited segment 와 구별되는 짙은 grey — 사용자 가이드.
+                        val directiveModifier = Modifier
+                            .weight(w.toFloat())
+                            .fillMaxHeight()
+                            .background(directiveColor)
+                            .let { if (!showRange) it.clickable { onDirectiveTap(directive.id) } else it }
+                        // 막대 자체만 — 파형은 음원분리 sheet 안에서만 노출 (타임라인은 깔끔하게).
+                        Box(modifier = directiveModifier)
+                        prevEnd = directive.rangeEndMs
+                    }
+                    val tail = (totalMs - prevEnd).coerceAtLeast(0L)
+                    if (tail > 0L) Spacer(Modifier.weight(tail.toFloat()))
+                }
+            }
+
+            // 진행 중인 음원분리 overlay — directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
+            // showRange / showSegments 와 무관하게 노출 — 어느 모드에서든 처리 중 구간 인지 가능. 클릭 비활성.
+            if (totalMs > 0L) {
+                processingSeparations.forEach { p ->
+                    if (p.endMs <= p.startMs) return@forEach
+                    val pStart = (p.startMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val pEnd = (p.endMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val pStartDp = totalWidthDp * pStart
+                    val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
                     Box(
                         modifier = Modifier
-                            .weight(seg.effectiveDurationMs.toFloat().coerceAtLeast(1f))
-                            .fillMaxHeight()
-                            .background(if (edited) segmentEditedColor else segmentColor),
+                            .offset(x = pStartDp)
+                            .width(pWidthDp)
+                            .height(contentHeight)
+                            .align(Alignment.CenterStart)
+                            .background(accent.copy(alpha = 0.25f))
+                    ) {
+                        val fill = (p.progress.coerceIn(0, 100)) / 100f
+                        if (fill > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(fill)
+                                    .background(accent.copy(alpha = 0.6f))
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Layer 2 — 회색 타임라인 strip(=contentHeight 12dp)에 정렬. 트림 핸들도 동일 높이.
+            // tap absorber 없음 → 자식 segment.clickable / parent free-interval tap 모두 살림.
+            // rangeEndMs <= rangeStartMs (zero-width) = "선택 없음" 상태 → range 시각 모두 숨김 (mode 유지).
+            if (showRange && totalMs > 0L && rangeEndMs > rangeStartMs) {
+                val startFrac = (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                val rangeStartDp = totalWidthDp * startFrac
+                val rangeWidthDp = totalWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
+                // 회색 strip 높이 = contentHeight. 위/아래 inset = (playbackRegionHeight - contentHeight) / 2.
+                val rangeStripInsetY = (playbackRegionHeight - contentHeight) / 2
+
+                var fillBaseStartMs by remember { mutableStateOf(0L) }
+                var fillAccumPx by remember { mutableStateOf(0f) }
+                Box(
+                    modifier = Modifier
+                        .offset(x = rangeStartDp)
+                        .width(rangeWidthDp)
+                        .height(contentHeight)
+                        .align(Alignment.CenterStart)
+                        .background(accent.copy(alpha = 0.32f))
+                        .pointerInput(totalWidthPx, totalMs) {
+                            detectHorizontalDragGestures(
+                                onDragStart = {
+                                    fillBaseStartMs = currentRangeStart
+                                    fillAccumPx = 0f
+                                },
+                                onHorizontalDrag = { _, dragAmount ->
+                                    fillAccumPx += dragAmount
+                                    if (totalWidthPx > 0f && totalMs > 0L) {
+                                        val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
+                                        onTranslateRange((fillBaseStartMs + deltaMs).toLong())
+                                    }
+                                }
+                            )
+                        }
+                )
+                // 상단/하단 border — 회색 strip 의 위/아래 모서리에 정렬.
+                Box(
+                    modifier = Modifier
+                        .offset(x = rangeStartDp, y = rangeStripInsetY)
+                        .width(rangeWidthDp)
+                        .height(TimelineBarSpec.RangeBorderThickness)
+                        .align(Alignment.TopStart)
+                        .background(accent)
+                )
+                Box(
+                    modifier = Modifier
+                        .offset(x = rangeStartDp, y = -rangeStripInsetY)
+                        .width(rangeWidthDp)
+                        .height(TimelineBarSpec.RangeBorderThickness)
+                        .align(Alignment.BottomStart)
+                        .background(accent)
+                )
+
+                // 좌/우 bracket 핸들 — playback region 높이만큼 hit zone (BGM lane drag 와 충돌 회피).
+                val minGap = TimelineBarSpec.MinRangeGapMs
+                RangeHandle(
+                    offsetX = rangeStartDp - handleHitWidth / 2,
+                    hitWidth = handleHitWidth,
+                    hitHeight = playbackRegionHeight,
+                    visualWidth = handleVisualWidth,
+                    handleColor = accent,
+                    gripColor = markerColor,
+                    gripHeight = contentHeight,
+                    totalWidthPx = totalWidthPx,
+                    totalMs = totalMs,
+                    baseMsProvider = { currentRangeStart },
+                    clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
+                    onChange = onRangeStartChange,
+                )
+                RangeHandle(
+                    offsetX = rangeStartDp + rangeWidthDp - handleHitWidth / 2,
+                    hitWidth = handleHitWidth,
+                    hitHeight = playbackRegionHeight,
+                    visualWidth = handleVisualWidth,
+                    handleColor = accent,
+                    gripColor = markerColor,
+                    gripHeight = contentHeight,
+                    totalWidthPx = totalWidthPx,
+                    totalMs = totalMs,
+                    baseMsProvider = { currentRangeEnd },
+                    clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
+                    onChange = onRangeEndChange,
+                )
+            }
+
+            // Layer 3 — 재생 헤드 drag hit zone — top playback region 안쪽에만. 시각 line 은 BGM 까지 관통.
+            // 클램프 제거: hit zone 은 frac 위치 정확히 중심에 두고 좌우 끝에서 hit zone 일부가 바 밖으로
+            // overflow 해도 OK (시각 marker line 은 항상 frac 위치 = 영상 길이와 정확히 일치).
+            if (totalMs > 0L) {
+                val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+                val hitWidth = TimelineBarSpec.PlaybackHitWidth
+                val visualX = totalWidthDp * frac - hitWidth / 2
+                val currentPosMs by rememberUpdatedState(playbackPositionMs)
+                var basePosMs by remember { mutableStateOf(0L) }
+                var accumPx by remember { mutableStateOf(0f) }
+                Box(
+                    modifier = Modifier
+                        .offset(x = visualX)
+                        .width(hitWidth)
+                        .fillMaxHeight()
+                        .pointerInput(totalWidthPx, totalMs) {
+                            detectHorizontalDragGestures(
+                                onDragStart = {
+                                    basePosMs = currentPosMs
+                                    accumPx = 0f
+                                },
+                                onHorizontalDrag = { _, dragAmount ->
+                                    accumPx += dragAmount
+                                    if (totalWidthPx > 0f && totalMs > 0L) {
+                                        val deltaMs = (accumPx / totalWidthPx) * totalMs
+                                        val newMs = (basePosMs + deltaMs).toLong().coerceIn(0L, totalMs)
+                                        onScrub(newMs)
+                                    }
+                                }
+                            )
+                        }
+                )
+            }
+        }
+
+        // === BGM region — top playback region 바로 아래. 같은 x 좌표계로 lane 막대 렌더 ===
+        if (showBgmRegion) {
+            val laneWidthDp = totalWidthDp
+            val laneWidthPx = totalWidthPx
+            val currentRowCount by rememberUpdatedState(bgmRowCount)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(y = playbackRegionHeight)
+                    .fillMaxWidth()
+                    .height(bgmRegionHeight),
+            ) {
+                bgmClips.forEach { clip ->
+                    val globalDurMs = ((clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))).toLong()
+                        .coerceAtLeast(1L)
+                    val isSelected = clip.id == selectedBgmClipId
+                    // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
+                    // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
+                    var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
+                    var dragBaseStartMs by remember(clip.id) { mutableStateOf(0L) }
+                    var dragAccumPx by remember(clip.id) { mutableStateOf(0f) }
+                    // lane (vertical) override 도 동일 패턴 — drag 중 시각만, release 시 commit.
+                    var laneOverride by remember(clip.id) { mutableStateOf<Int?>(null) }
+                    var laneBase by remember(clip.id) { mutableStateOf(0) }
+                    var dragAccumPyAbs by remember(clip.id) { mutableStateOf(0f) }
+                    // pointerInput 의 코루틴 closure 가 forEach 의 옛 clip 을 capture 하지 않도록
+                    // 항상 최신 clip 을 참조 — 특히 lane/startMs 가 ViewModel 측 갱신 후 onDragStart
+                    // 의 base 값으로 stale 한 옛 lane 을 잡던 버그 방지.
+                    val currentClip by rememberUpdatedState(clip)
+                    val effectiveStartMs = dragOverrideMs ?: clip.startMs
+                    val effectiveLane = (laneOverride ?: clip.lane).coerceAtLeast(0)
+                    val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
+                    val offsetXDp = laneWidthDp * startFrac
+                    val offsetYDp = bgmRowStrideDp * effectiveLane
+                    val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
+                    Box(
+                        modifier = Modifier
+                            .offset(x = offsetXDp, y = offsetYDp)
+                            .width(widthDp)
+                            .height(bgmRowHeight)
+                            .clip(VibiShape.xs)
+                            .background(if (isSelected) accent else accent.copy(alpha = 0.55f))
+                            .pointerInput(clip.id, totalMs, laneWidthPx, bgmTapEnabled, currentRowCount) {
+                                detectTapGestures(onTap = {
+                                    if (bgmTapEnabled) onBgmSelectClip(clip.id)
+                                })
+                            }
+                            .pointerInput(clip.id, totalMs, laneWidthPx, bgmRowStridePx) {
+                                // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
+                                // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
+                                detectDragGestures(
+                                    onDragStart = {
+                                        dragBaseStartMs = currentClip.startMs
+                                        dragAccumPx = 0f
+                                        dragOverrideMs = currentClip.startMs
+                                        laneBase = currentClip.lane.coerceAtLeast(0)
+                                        dragAccumPyAbs = 0f
+                                        laneOverride = laneBase
+                                    },
+                                    onDrag = { change: PointerInputChange, drag: Offset ->
+                                        change.consume()
+                                        // X axis — startMs.
+                                        dragAccumPx += drag.x
+                                        if (laneWidthPx > 0f && totalMs > 0L) {
+                                            val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
+                                            val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
+                                            dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
+                                                .coerceIn(0L, maxStart)
+                                        }
+                                        // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
+                                        // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
+                                        dragAccumPyAbs += drag.y
+                                        if (bgmRowStridePx > 0f) {
+                                            val laneDelta = (dragAccumPyAbs / bgmRowStridePx).toInt()
+                                            laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        dragOverrideMs?.let { onBgmUpdateStart(currentClip.id, it) }
+                                        laneOverride?.let { newLane ->
+                                            if (newLane != currentClip.lane) onBgmUpdateLane(currentClip.id, newLane)
+                                        }
+                                        dragOverrideMs = null
+                                        laneOverride = null
+                                    },
+                                    onDragCancel = {
+                                        dragOverrideMs = null
+                                        laneOverride = null
+                                    },
+                                )
+                            },
                     )
                 }
             }
-        } else if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .height(contentHeight),
-            ) {
-                var prevEnd = 0L
-                directives.forEach { directive ->
-                    val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
-                    if (gap > 0L) Spacer(Modifier.weight(gap.toFloat()))
-                    val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
-                    // range 모드에서는 directive 탭 비활성 — 음원분리 sheet 안 열리도록.
-                    // 색은 edited segment 와 구별되는 짙은 grey — 사용자 가이드.
-                    val directiveModifier = Modifier
-                        .weight(w.toFloat())
-                        .fillMaxHeight()
-                        .background(directiveColor)
-                        .let { if (!showRange) it.clickable { onDirectiveTap(directive.id) } else it }
-                    // 막대 자체만 — 파형은 음원분리 sheet 안에서만 노출 (타임라인은 깔끔하게).
-                    Box(modifier = directiveModifier)
-                    prevEnd = directive.rangeEndMs
-                }
-                val tail = (totalMs - prevEnd).coerceAtLeast(0L)
-                if (tail > 0L) Spacer(Modifier.weight(tail.toFloat()))
-            }
         }
 
-        // 진행 중인 음원분리 overlay — directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
-        // showRange / showSegments 와 무관하게 노출 — 어느 모드에서든 처리 중 구간 인지 가능. 클릭 비활성.
-        if (totalMs > 0L) {
-            processingSeparations.forEach { p ->
-                if (p.endMs <= p.startMs) return@forEach
-                val pStart = (p.startMs.toFloat() / totalMs).coerceIn(0f, 1f)
-                val pEnd = (p.endMs.toFloat() / totalMs).coerceIn(0f, 1f)
-                val pStartDp = totalWidthDp * pStart
-                val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
-                Box(
-                    modifier = Modifier
-                        .offset(x = pStartDp)
-                        .width(pWidthDp)
-                        .height(contentHeight)
-                        .align(Alignment.CenterStart)
-                        .background(accent.copy(alpha = 0.25f))
-                ) {
-                    val fill = (p.progress.coerceIn(0, 100)) / 100f
-                    if (fill > 0f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(fill)
-                                .background(accent.copy(alpha = 0.6f))
-                        )
-                    }
-                }
-            }
-        }
-
-        // Layer 2 — 회색 타임라인 strip(=contentHeight 12dp)에 정렬. 트림 핸들도 동일 높이.
-        // tap absorber 없음 → 자식 segment.clickable / parent free-interval tap 모두 살림.
-        // rangeEndMs <= rangeStartMs (zero-width) = "선택 없음" 상태 → range 시각 모두 숨김 (mode 유지).
-        if (showRange && totalMs > 0L && rangeEndMs > rangeStartMs) {
-            val startFrac = (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val rangeStartDp = totalWidthDp * startFrac
-            val rangeWidthDp = totalWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
-            // 회색 strip 높이 = contentHeight. 위/아래 inset = (barHeight - contentHeight) / 2.
-            val rangeStripInsetY = (barHeight - contentHeight) / 2
-
-            var fillBaseStartMs by remember { mutableStateOf(0L) }
-            var fillAccumPx by remember { mutableStateOf(0f) }
-            Box(
-                modifier = Modifier
-                    .offset(x = rangeStartDp)
-                    .width(rangeWidthDp)
-                    .height(contentHeight)
-                    .align(Alignment.CenterStart)
-                    .background(accent.copy(alpha = 0.32f))
-                    .pointerInput(totalWidthPx, totalMs) {
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                fillBaseStartMs = currentRangeStart
-                                fillAccumPx = 0f
-                            },
-                            onHorizontalDrag = { _, dragAmount ->
-                                fillAccumPx += dragAmount
-                                if (totalWidthPx > 0f && totalMs > 0L) {
-                                    val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
-                                    onTranslateRange((fillBaseStartMs + deltaMs).toLong())
-                                }
-                            }
-                        )
-                    }
-            )
-            // 상단/하단 border — 회색 strip 의 위/아래 모서리에 정렬.
-            Box(
-                modifier = Modifier
-                    .offset(x = rangeStartDp, y = rangeStripInsetY)
-                    .width(rangeWidthDp)
-                    .height(TimelineBarSpec.RangeBorderThickness)
-                    .align(Alignment.TopStart)
-                    .background(accent)
-            )
-            Box(
-                modifier = Modifier
-                    .offset(x = rangeStartDp, y = -rangeStripInsetY)
-                    .width(rangeWidthDp)
-                    .height(TimelineBarSpec.RangeBorderThickness)
-                    .align(Alignment.BottomStart)
-                    .background(accent)
-            )
-
-            // 좌/우 bracket 핸들 — 회색 strip 높이만큼 grip visual.
-            val minGap = TimelineBarSpec.MinRangeGapMs
-            RangeHandle(
-                offsetX = rangeStartDp - handleHitWidth / 2,
-                hitWidth = handleHitWidth,
-                visualWidth = handleVisualWidth,
-                handleColor = accent,
-                gripColor = markerColor,
-                gripHeight = contentHeight,
-                totalWidthPx = totalWidthPx,
-                totalMs = totalMs,
-                baseMsProvider = { currentRangeStart },
-                clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
-                onChange = onRangeStartChange,
-            )
-            RangeHandle(
-                offsetX = rangeStartDp + rangeWidthDp - handleHitWidth / 2,
-                hitWidth = handleHitWidth,
-                visualWidth = handleVisualWidth,
-                handleColor = accent,
-                gripColor = markerColor,
-                gripHeight = contentHeight,
-                totalWidthPx = totalWidthPx,
-                totalMs = totalMs,
-                baseMsProvider = { currentRangeEnd },
-                clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
-                onChange = onRangeEndChange,
-            )
-        }
-
-        // Layer 3 — 재생 헤드 마커. hit zone 32dp wide drag → scrub.
-        // 클램프 제거: hit zone 은 frac 위치 정확히 중심에 두고 좌우 끝에서 hit zone 일부가 바 밖으로
-        // overflow 해도 OK (시각 marker line 은 항상 frac 위치 = 영상 길이와 정확히 일치).
-        // marker visual 길이는 바 높이 - 16dp (위/아래 inset) — 사용자 요구 "재생바 길이 짧게".
+        // === 재생 헤드 시각 line — top + BGM region 관통. drag 안 받음 ===
+        // marker visual 길이 = (playback + BGM) - 16dp (위/아래 8dp inset). BGM 없을 때는 기존 동작 동일.
         if (totalMs > 0L) {
             val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
-            val hitWidth = TimelineBarSpec.PlaybackHitWidth
-            val visualX = totalWidthDp * frac - hitWidth / 2
-            val markerHeight = barHeight - TimelineBarSpec.PlaybackMarkerVerticalInset
-            val currentPosMs by rememberUpdatedState(playbackPositionMs)
-            var basePosMs by remember { mutableStateOf(0L) }
-            var accumPx by remember { mutableStateOf(0f) }
+            val visualX = totalWidthDp * frac - TimelineBarSpec.GripWidth / 2
+            val topInset = TimelineBarSpec.PlaybackMarkerVerticalInset / 2
+            val markerHeight = (playheadVisualBottom - TimelineBarSpec.PlaybackMarkerVerticalInset)
+                .coerceAtLeast(0.dp)
             Box(
                 modifier = Modifier
-                    .offset(x = visualX)
-                    .width(hitWidth)
-                    .fillMaxHeight()
-                    .pointerInput(totalWidthPx, totalMs) {
-                        detectHorizontalDragGestures(
+                    .align(Alignment.TopStart)
+                    .offset(x = visualX, y = topInset)
+                    .width(TimelineBarSpec.GripWidth)
+                    .height(markerHeight)
+                    .background(markerColor)
+            )
+        }
+
+        // === BGM lane 수 조절 drag pill — 컴포넌트 최하단. dy / rowStride 단위 step ===
+        if (showBgmRegion) {
+            val maxOccupiedLane = bgmClips.maxOfOrNull { it.lane } ?: -1
+            val canShrink = bgmLaneCount > maxOf(1, maxOccupiedLane + 1)
+            val currentLaneCount by rememberUpdatedState(bgmLaneCount)
+            var dragAccumPy by remember { mutableStateOf(0f) }
+            var laneCountBase by remember { mutableStateOf(bgmLaneCount) }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(y = playheadVisualBottom)
+                    .fillMaxWidth()
+                    .height(laneHandleHitHeight)
+                    .pointerInput(bgmRowStridePx) {
+                        detectDragGestures(
                             onDragStart = {
-                                basePosMs = currentPosMs
-                                accumPx = 0f
+                                dragAccumPy = 0f
+                                laneCountBase = currentLaneCount
                             },
-                            onHorizontalDrag = { _, dragAmount ->
-                                accumPx += dragAmount
-                                if (totalWidthPx > 0f && totalMs > 0L) {
-                                    val deltaMs = (accumPx / totalWidthPx) * totalMs
-                                    val newMs = (basePosMs + deltaMs).toLong().coerceIn(0L, totalMs)
-                                    onScrub(newMs)
+                            onDrag = { change: PointerInputChange, drag: Offset ->
+                                change.consume()
+                                dragAccumPy += drag.y
+                                if (bgmRowStridePx > 0f) {
+                                    val laneDelta = (dragAccumPy / bgmRowStridePx).toInt()
+                                    val targetCount = (laneCountBase + laneDelta)
+                                        .coerceIn(1, TimelineBarSpec.MaxBgmLaneCount)
+                                    if (targetCount != currentLaneCount) onBgmSetLaneCount(targetCount)
                                 }
-                            }
+                            },
                         )
                     },
                 contentAlignment = Alignment.Center,
             ) {
+                // 시각 pill — 축소 차단 시 흐리게 표시해 사용자에게 막힘 피드백.
+                val pillAlpha = if (canShrink) 0.6f else 0.3f
+                val pillBgAlpha = if (canShrink) 0.18f else 0.08f
                 Box(
-                    Modifier
-                        .width(TimelineBarSpec.GripWidth)
-                        .height(markerHeight)
-                        .background(markerColor)
+                    modifier = Modifier
+                        .width(48.dp)
+                        .height(laneHandleVisualHeight)
+                        .clip(RoundedCornerShape(laneHandleVisualHeight / 2))
+                        .background(accent.copy(alpha = pillBgAlpha))
+                        .border(
+                            width = 1.dp,
+                            color = accent.copy(alpha = pillAlpha),
+                            shape = RoundedCornerShape(laneHandleVisualHeight / 2),
+                        ),
                 )
             }
         }
     }
-}
-
-/**
- * 재생바 직하 BGM 트랙 — 트랙 배경 없음, 막대만. 시간상 겹치는 BGM 클립을 시각적으로 분리하기
- * 위해 multi-lane (위·아래 행) 렌더 — 각 클립의 `lane` 필드 (0 = top) 가 행을 결정.
- *
- *  - 막대 horizontal drag (= lane 안에서 좌우) → startMs 갱신.
- *  - 막대 vertical drag (= lane 변경) → 위·아래 막대 만큼 이동하면 onUpdateLane 호출.
- *  - 막대 tap → onSelectClip (BottomSheet) — `tapEnabled=false` 면 무시 (음원분리 range mode).
- *
- * Drag 부드러움: 매 frame `onDrag` 의 dx/dy 를 accumulator 로 적분, drag 중엔 local
- * override (offsetMs/laneOverride) 만 갱신해 손가락 따라 즉시 이동. release 시 한 번만 VM commit.
- */
-@Composable
-private fun BgmTimelineLane(
-    clips: List<com.vibi.shared.domain.model.BgmClip>,
-    totalMs: Long,
-    accent: Color,
-    markerColor: Color,
-    playbackPositionMs: Long,
-    selectedClipId: String?,
-    tapEnabled: Boolean,
-    laneCount: Int,
-    onSelectClip: (String) -> Unit,
-    onUpdateStart: (String, Long) -> Unit,
-    onUpdateLane: (String, Int) -> Unit,
-    onSetLaneCount: (Int) -> Unit,
-) {
-    if (totalMs <= 0L) return
-    val rowHeight = 10.dp
-    val rowGap = 2.dp
-    val rowCount = laneCount.coerceAtLeast(1)
-    val totalHeight = rowHeight * rowCount + rowGap * (rowCount - 1).coerceAtLeast(0)
-    val density = LocalDensity.current
-    val rowStrideDp = rowHeight + rowGap
-    val rowStridePx = with(density) { rowStrideDp.toPx() }
-    val handleVisualHeight = 6.dp
-    val handleHitHeight = 22.dp  // touch target 44pt/48dp 충족하기 위한 transparent 확장 영역.
-    // 축소 차단 — 마지막 lane 에 clip 점유 시 - 방향 drag 가 막힘. 사용자 시각 피드백.
-    val maxOccupiedLane = clips.maxOfOrNull { it.lane } ?: -1
-    val canShrink = laneCount > maxOf(1, maxOccupiedLane + 1)
-    Column(modifier = Modifier.fillMaxWidth()) {
-    // rowCount 가 drag 도중 변경되어도 inner pointerInput closure 가 stale 한 옛 값을 잡지 않게.
-    val currentRowCount by rememberUpdatedState(rowCount)
-    androidx.compose.foundation.layout.BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(totalHeight),
-    ) {
-        val laneWidthDp = maxWidth
-        val laneWidthPx = with(density) { laneWidthDp.toPx() }
-        // BGM 영역 단일 배경 — lane 칸 칸을 줄줄이 보이지 않게 하나의 영역으로 인식되게.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(VibiShape.xs)
-                .background(accent.copy(alpha = 0.06f)),
-        )
-        clips.forEach { clip ->
-            val globalDurMs = ((clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))).toLong()
-                .coerceAtLeast(1L)
-            val isSelected = clip.id == selectedClipId
-            // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
-            // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
-            var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
-            var dragBaseStartMs by remember(clip.id) { mutableStateOf(0L) }
-            var dragAccumPx by remember(clip.id) { mutableStateOf(0f) }
-            // lane (vertical) override 도 동일 패턴 — drag 중 시각만, release 시 commit.
-            var laneOverride by remember(clip.id) { mutableStateOf<Int?>(null) }
-            var laneBase by remember(clip.id) { mutableStateOf(0) }
-            var dragAccumPyAbs by remember(clip.id) { mutableStateOf(0f) }
-            // pointerInput 의 코루틴 closure 가 forEach 의 옛 clip 을 capture 하지 않도록
-            // 항상 최신 clip 을 참조 — 특히 lane/startMs 가 ViewModel 측 갱신 후 onDragStart
-            // 의 base 값으로 stale 한 옛 lane 을 잡던 버그 방지.
-            val currentClip by rememberUpdatedState(clip)
-            val effectiveStartMs = dragOverrideMs ?: clip.startMs
-            val effectiveLane = (laneOverride ?: clip.lane).coerceAtLeast(0)
-            val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
-            val offsetXDp = laneWidthDp * startFrac
-            val offsetYDp = rowStrideDp * effectiveLane
-            val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
-            Box(
-                modifier = Modifier
-                    .offset(x = offsetXDp, y = offsetYDp)
-                    .width(widthDp)
-                    .height(rowHeight)
-                    .clip(VibiShape.xs)
-                    .background(if (isSelected) accent else accent.copy(alpha = 0.55f))
-                    .pointerInput(clip.id, totalMs, laneWidthPx, tapEnabled, currentRowCount) {
-                        detectTapGestures(onTap = {
-                            if (tapEnabled) onSelectClip(clip.id)
-                        })
-                    }
-                    .pointerInput(clip.id, totalMs, laneWidthPx, rowStridePx) {
-                        // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
-                        // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
-                        detectDragGestures(
-                            onDragStart = {
-                                dragBaseStartMs = currentClip.startMs
-                                dragAccumPx = 0f
-                                dragOverrideMs = currentClip.startMs
-                                laneBase = currentClip.lane.coerceAtLeast(0)
-                                dragAccumPyAbs = 0f
-                                laneOverride = laneBase
-                            },
-                            onDrag = { change: PointerInputChange, drag: Offset ->
-                                change.consume()
-                                // X axis — startMs.
-                                dragAccumPx += drag.x
-                                if (laneWidthPx > 0f && totalMs > 0L) {
-                                    val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
-                                    val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
-                                    dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
-                                        .coerceIn(0L, maxStart)
-                                }
-                                // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
-                                // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
-                                // currentRowCount (rememberUpdatedState) 로 drag 도중 lane 수 확장
-                                // 시에도 즉시 반영 — 새 lane 으로 곧바로 drop 가능.
-                                dragAccumPyAbs += drag.y
-                                if (rowStridePx > 0f) {
-                                    val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
-                                    laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
-                                }
-                            },
-                            onDragEnd = {
-                                dragOverrideMs?.let { onUpdateStart(currentClip.id, it) }
-                                laneOverride?.let { newLane ->
-                                    if (newLane != currentClip.lane) onUpdateLane(currentClip.id, newLane)
-                                }
-                                dragOverrideMs = null
-                                laneOverride = null
-                            },
-                            onDragCancel = {
-                                dragOverrideMs = null
-                                laneOverride = null
-                            },
-                        )
-                    },
-            )
-            // 파형 캔버스 제거 — 타임라인은 깔끔하게. 파형은 BgmActionSheet 안에서만 노출.
-        }
-        // 영상 timeline 의 playhead 와 같은 시점을 BGM 트랙에도 세로선으로 그려 두 트랙을 시각적으로
-        // 연결. UnifiedTimelineBar 의 playhead 와 같은 좌표(playbackPositionMs / totalMs * width).
-        if (totalMs > 0L) {
-            val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
-            val markerWidth = 2.dp
-            val markerXDp = laneWidthDp * frac - markerWidth / 2
-            Box(
-                modifier = Modifier
-                    .offset(x = markerXDp)
-                    .width(markerWidth)
-                    .fillMaxHeight()
-                    .background(markerColor.copy(alpha = 0.6f))
-            )
-        }
-    }  // BoxWithConstraints 닫음
-    // BGM 영역 하단 drag handle — 끌어서 lane 수 직접 조절. dy / rowStridePx 단위 step.
-    // base 는 drag start 시점의 laneCount, 매 tick onSetLaneCount 직접 호출 (부드러움).
-    val currentLaneCount by rememberUpdatedState(laneCount)
-    var dragAccumPy by remember { mutableStateOf(0f) }
-    var laneCountBase by remember { mutableStateOf(laneCount) }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(handleHitHeight)  // 확장된 transparent hit area — Material/HIG touch target 충족.
-            .pointerInput(rowStridePx) {
-                detectDragGestures(
-                    onDragStart = {
-                        dragAccumPy = 0f
-                        laneCountBase = currentLaneCount
-                    },
-                    onDrag = { change: PointerInputChange, drag: Offset ->
-                        change.consume()
-                        dragAccumPy += drag.y
-                        if (rowStridePx > 0f) {
-                            val laneDelta = (dragAccumPy / rowStridePx).toInt()
-                            val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
-                            if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
-                        }
-                    },
-                )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        // 시각 pill 만 6dp — 축소 차단 시 흐리게 표시해 사용자에게 막힘 피드백.
-        val pillAlpha = if (canShrink) 0.6f else 0.3f
-        val pillBgAlpha = if (canShrink) 0.18f else 0.08f
-        Box(
-            modifier = Modifier
-                .width(48.dp)
-                .height(handleVisualHeight)
-                .clip(RoundedCornerShape(handleVisualHeight / 2))
-                .background(accent.copy(alpha = pillBgAlpha))
-                .border(
-                    width = 1.dp,
-                    color = accent.copy(alpha = pillAlpha),
-                    shape = RoundedCornerShape(handleVisualHeight / 2),
-                ),
-        )
-    }
-    }  // 외부 Column 닫음
 }
 
 /**
@@ -2427,6 +2334,7 @@ private fun RoundIconButton(
 private fun RangeHandle(
     offsetX: androidx.compose.ui.unit.Dp,
     hitWidth: androidx.compose.ui.unit.Dp,
+    hitHeight: androidx.compose.ui.unit.Dp,
     visualWidth: androidx.compose.ui.unit.Dp,
     handleColor: Color,
     gripColor: Color,
@@ -2437,13 +2345,15 @@ private fun RangeHandle(
     clamp: (Long) -> Long,
     onChange: (Long) -> Unit,
 ) {
+    // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
+    // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
     var baseMs by remember { mutableStateOf(0L) }
     var accumPx by remember { mutableStateOf(0f) }
     Box(
         modifier = Modifier
             .offset(x = offsetX)
             .width(hitWidth)
-            .fillMaxHeight()
+            .height(hitHeight)
             .pointerInput(totalWidthPx, totalMs) {
                 detectHorizontalDragGestures(
                     onDragStart = {

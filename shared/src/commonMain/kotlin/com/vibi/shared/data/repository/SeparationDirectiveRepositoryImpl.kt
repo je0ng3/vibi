@@ -18,6 +18,11 @@ class SeparationDirectiveRepositoryImpl(
         dao.upsert(directive.toEntity())
     }
 
+    override suspend fun addAll(directives: List<SeparationDirective>) {
+        if (directives.isEmpty()) return
+        dao.upsertAll(directives.map { it.toEntity() })
+    }
+
     override fun observe(projectId: String): Flow<List<SeparationDirective>> =
         dao.observeByProject(projectId).map { rows -> rows.map { it.toDomain() } }
 
@@ -43,7 +48,8 @@ class SeparationDirectiveRepositoryImpl(
             kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
             selections.map { StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected) }
         ),
-        createdAt = createdAt
+        createdAt = createdAt,
+        sourceOffsetMs = sourceOffsetMs,
     )
 
     private fun SeparationDirectiveEntity.toDomain(): SeparationDirective {
@@ -61,7 +67,8 @@ class SeparationDirectiveRepositoryImpl(
             numberOfSpeakers = numberOfSpeakers,
             muteOriginalSegmentAudio = muteOriginalSegmentAudio,
             selections = selections,
-            createdAt = createdAt
+            createdAt = createdAt,
+            sourceOffsetMs = sourceOffsetMs,
         )
     }
 

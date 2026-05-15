@@ -35,7 +35,16 @@ data class RenderSeparationDirective(
     val numberOfSpeakers: Int,
     val muteOriginalSegmentAudio: Boolean,
     /** stem 별 (URL + 볼륨) 들 — BFF render 가 다운로드 후 amix 로 합성. */
-    val selections: List<RenderSeparationStem> = emptyList()
+    val selections: List<RenderSeparationStem> = emptyList(),
+    /**
+     * Stem audio 파일 안의 시작 offset (ms). 영상 range delete 로 split 된 directive 의
+     * 뒤쪽 piece 가 stem audio 의 중간부터 재생해야 할 때 사용. 기본 0 = 신규 분리 결과.
+     *
+     * **BFF 측 미구현 (TODO)**: 현재 BFF `/api/v2/render` 핸들러는 본 필드를 무시하고
+     * 항상 stem audio 의 0 위치부터 재생 — split piece 의 audio 가 잘못 출력됨. BFF DTO/ffmpeg
+     * 파이프라인을 본 필드 인지하도록 업데이트 필요 (mobile preview 는 이미 반영됨).
+     */
+    val sourceOffsetMs: Long = 0L,
 )
 
 @Serializable

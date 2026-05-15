@@ -82,27 +82,7 @@ class ExportWithDubbingUseCase constructor(
             )
         }
 
-        // audioUrl 이 비어 있거나 사용자가 선택 해제(selected=false)한 stem 은 mix 제외. 모든
-        // stem 이 빠진 directive 자체는 skip.
-        val separationInputs = separationDirectives.mapNotNull { d ->
-            val stems = d.selections.mapNotNull { sel ->
-                if (!sel.selected) return@mapNotNull null
-                val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                SeparationStemInput(
-                    stemId = sel.stemId,
-                    audioUrl = url,
-                    volume = sel.volume
-                )
-            }
-            if (stems.isEmpty()) null else SeparationDirectiveInput(
-                id = d.id,
-                rangeStartMs = d.rangeStartMs,
-                rangeEndMs = d.rangeEndMs,
-                numberOfSpeakers = d.numberOfSpeakers,
-                muteOriginalSegmentAudio = d.muteOriginalSegmentAudio,
-                selections = stems
-            )
-        }
+        val separationInputs = separationDirectives.mapNotNull { it.toExportInput() }
 
         return ffmpegExecutor.renderProject(
             segments = segments,

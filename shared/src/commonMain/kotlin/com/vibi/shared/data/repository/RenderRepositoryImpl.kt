@@ -12,8 +12,7 @@ import com.vibi.shared.domain.usecase.export.BgmClipMixInput
 import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.ImageClipMixInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
-import com.vibi.shared.domain.usecase.export.SeparationDirectiveInput
-import com.vibi.shared.domain.usecase.export.SeparationStemInput
+import com.vibi.shared.domain.usecase.export.toExportInput
 
 /**
  * `RenderRepository` 의 commonMain 구현. 자막/더빙/분리 가 source 로 쓸 "편집 영상" 1개만 만든다.
@@ -111,25 +110,7 @@ class RenderRepositoryImpl(
             )
         }
 
-        val separationInputs = separationDirectives.mapNotNull { d ->
-            val stems = d.selections.mapNotNull { sel ->
-                if (!sel.selected) return@mapNotNull null
-                val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                SeparationStemInput(
-                    stemId = sel.stemId,
-                    audioUrl = url,
-                    volume = sel.volume,
-                )
-            }
-            if (stems.isEmpty()) null else SeparationDirectiveInput(
-                id = d.id,
-                rangeStartMs = d.rangeStartMs,
-                rangeEndMs = d.rangeEndMs,
-                numberOfSpeakers = d.numberOfSpeakers,
-                muteOriginalSegmentAudio = d.muteOriginalSegmentAudio,
-                selections = stems,
-            )
-        }
+        val separationInputs = separationDirectives.mapNotNull { it.toExportInput() }
 
         return executor.submitAndAwaitJobId(
             segments = segmentInputs,

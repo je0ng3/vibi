@@ -21,7 +21,17 @@ data class SeparationDirective(
     val numberOfSpeakers: Int,
     val muteOriginalSegmentAudio: Boolean,
     val selections: List<StemSelection>,
-    val createdAt: Long
+    val createdAt: Long,
+    /**
+     * Stem audio 파일 안에서 본 directive piece 가 시작하는 offset (ms).
+     *
+     * 기본 0 = 신규 분리 결과 (stem audio 전체가 이 directive 의 [rangeStartMs..rangeEndMs] 와 1:1 매핑).
+     * 영상 range delete 로 directive 가 분할되면, 뒤쪽 piece 는 stem audio 의 중간부터 재생해야 하므로
+     * `sourceOffsetMs = (deletedRangeEnd - originalRangeStart) + parent.sourceOffsetMs` 로 누적.
+     *
+     * Stem mixer 의 seek offset: `(playback - rangeStartMs) + sourceOffsetMs`.
+     */
+    val sourceOffsetMs: Long = 0L,
 ) {
     val durationMs: Long get() = (rangeEndMs - rangeStartMs).coerceAtLeast(0L)
 }

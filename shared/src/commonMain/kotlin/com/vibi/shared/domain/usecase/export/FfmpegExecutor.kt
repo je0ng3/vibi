@@ -1,6 +1,7 @@
 package com.vibi.shared.domain.usecase.export
 
 import com.vibi.shared.domain.model.SegmentType
+import com.vibi.shared.domain.model.SeparationDirective
 
 data class DubClipMixInput(
     val audioFilePath: String,
@@ -68,7 +69,9 @@ data class SeparationDirectiveInput(
     val rangeEndMs: Long,
     val numberOfSpeakers: Int,
     val muteOriginalSegmentAudio: Boolean,
-    val selections: List<SeparationStemInput>
+    val selections: List<SeparationStemInput>,
+    /** Stem audio 파일 안 시작 offset. split directive 의 뒤쪽 piece 가 stem 중간부터 재생. */
+    val sourceOffsetMs: Long = 0L,
 )
 
 data class SeparationStemInput(
@@ -76,6 +79,28 @@ data class SeparationStemInput(
     val audioUrl: String,
     val volume: Float = 1.0f
 )
+
+/**
+ * `selected=true` 이고 audioUrl 이 있는 stem 만 모아 export input 으로 변환.
+ * 사용 가능한 stem 이 없으면 null — render 단계에서 directive 자체 skip.
+ */
+fun SeparationDirective.toExportInput(): SeparationDirectiveInput? {
+    val stems = selections.mapNotNull { sel ->
+        if (!sel.selected) return@mapNotNull null
+        val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        SeparationStemInput(stemId = sel.stemId, audioUrl = url, volume = sel.volume)
+    }
+    if (stems.isEmpty()) return null
+    return SeparationDirectiveInput(
+        id = id,
+        rangeStartMs = rangeStartMs,
+        rangeEndMs = rangeEndMs,
+        numberOfSpeakers = numberOfSpeakers,
+        muteOriginalSegmentAudio = muteOriginalSegmentAudio,
+        selections = stems,
+        sourceOffsetMs = sourceOffsetMs,
+    )
+}
 
 interface FfmpegExecutor {
     /**

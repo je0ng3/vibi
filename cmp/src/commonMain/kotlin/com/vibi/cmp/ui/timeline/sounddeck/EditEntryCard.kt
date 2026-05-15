@@ -11,6 +11,8 @@ import com.vibi.cmp.theme.LocalVibiColors
 
 /**
  * Stepper 가 사라진 unified 모드에서 segment edit mode 진입의 유일한 명시 경로.
+ *
+ * leading 은 16dp Edit 아이콘만 전달 — [IconLabelCard] 가 24dp 원형 컨테이너로 wrap.
  */
 @Composable
 fun EditEntryCard(
@@ -29,8 +31,8 @@ fun EditEntryCard(
         Icon(
             imageVector = Icons.Outlined.Edit,
             contentDescription = null,
-            tint = tokens.accent,
-            modifier = Modifier.size(20.dp),
+            tint = tokens.onBackgroundPrimary,
+            modifier = Modifier.size(16.dp),
         )
     }
 }

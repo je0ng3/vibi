@@ -2620,6 +2620,9 @@ class TimelineViewModel constructor(
                 lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
             }
             applyBgmRangeDuplicate(start, end)
+            // directive ripple — 구간 뒤 directive 만 width 만큼 우측 shift. 구간 안 directive 복제는
+            // 미지원 (TODO): 동일 stem audio 를 두 위치에서 동시 재생하면 stem mixer activeGroup 충돌.
+            applyDirectiveShiftAfter(after = end, deltaMs = end - start)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastDuplicated?.id?.let { selectSegmentInEditInternal(it) }
@@ -2639,6 +2642,9 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             slices.forEach { s -> removeSegmentRange(s.segmentId, s.localStart, s.localEnd) }
             applyBgmRippleDelete(start, end)
+            // directive ripple — 구간을 관통하는 directive 는 두 조각으로 split (사용자: "구간1-1, 구간1-2"),
+            // 완전 포함은 삭제, 부분 겹침은 truncate, 구간 뒤는 width 만큼 left shift.
+            applyDirectiveRippleDelete(start, end)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
@@ -2664,6 +2670,7 @@ class TimelineViewModel constructor(
                 lastMiddleId = r.middle.id
             }
             applyBgmRangeVolume(start, end, value)
+            // volume 은 timeline 길이를 바꾸지 않아 directive ripple 필요 없음.
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
@@ -2680,6 +2687,16 @@ class TimelineViewModel constructor(
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
         val wasSegmentEdit = state.isSegmentEditMode
         val newSpeed = if (value > 0f) value else 1f
+        // directive ripple delta = (새 effective 합 - 옛 effective 합). 각 slice 의 source 구간 길이는
+        // speed 변경 전·후 글로벌 길이 차이가 곧 timeline 이동량.
+        val segById = state.segments.associateBy { it.id }
+        val rippleDelta = slices.sumOf { s ->
+            val oldSpeed = segById[s.segmentId]?.speedScale?.takeIf { it > 0f } ?: 1f
+            val sourceDur = (s.localEnd - s.localStart).coerceAtLeast(0L)
+            val oldGlobal = (sourceDur.toFloat() / oldSpeed).toLong()
+            val newGlobal = (sourceDur.toFloat() / newSpeed).toLong()
+            newGlobal - oldGlobal
+        }
         resetRangeMode()
         viewModelScope.launch {
             var lastMiddleId: String? = null
@@ -2693,6 +2710,9 @@ class TimelineViewModel constructor(
                 lastMiddleId = r.middle.id
             }
             applyBgmRangeSpeed(start, end, newSpeed)
+            // 구간 뒤 directive shift. 구간 안 directive 의 effective duration 재계산은 미지원 (TODO):
+            // stem audio 는 원본 속도로 고정이라 timeline 만 압축/확장하면 음성·영상 sync 어긋남.
+            applyDirectiveShiftAfter(after = end, deltaMs = rippleDelta)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
@@ -2869,6 +2889,70 @@ class TimelineViewModel constructor(
                 )
             }
         }
+    }
+
+    /**
+     * 영상 range delete [start, end] 를 separation directive 들에 ripple — split/truncate/shift 로
+     * directive 가 video edit 으로 stale 되지 않게 유지. 같은 stem audio URL 을 공유한 채
+     * `sourceOffsetMs` 만 누적해, 잘려나간 뒤쪽 piece 가 stem audio 의 중간부터 재생되게 한다.
+     *
+     * BFF render 는 아직 sourceOffsetMs 를 무시 — export 시 split 뒤쪽 piece 가 stem 처음부터 재생됨.
+     * 본 변경은 mobile preview (stem mixer) 에만 즉시 반영. BFF 업데이트는 follow-up.
+     */
+    private suspend fun applyDirectiveRippleDelete(start: Long, end: Long) {
+        val width = end - start
+        if (width <= 0L) return
+        val upserts = mutableListOf<SeparationDirective>()
+        val deletes = mutableListOf<String>()
+        // 관통(case 4) 의 앞 piece 와 부분-겹침(case 5) 가 둘 다 `dir.copy(rangeEndMs = start)` 형태로
+        // 동일한 의미(=뒤쪽 잘림)라 같은 분기로 통합. 마찬가지로 관통 뒤 piece 와 case 6 (앞쪽 잘림)
+        // 모두 `dir.copy(rangeStartMs=start, rangeEndMs=de-width, sourceOffsetMs += (end-ds))`.
+        for (dir in _uiState.value.separationDirectives) {
+            val ds = dir.rangeStartMs
+            val de = dir.rangeEndMs
+            when {
+                de <= start -> {}
+                ds >= end -> upserts += dir.copy(
+                    rangeStartMs = (ds - width).coerceAtLeast(0L),
+                    rangeEndMs = (de - width).coerceAtLeast(0L),
+                )
+                ds >= start && de <= end -> deletes += dir.id
+                ds < start && de > end -> {
+                    upserts += dir.copy(rangeEndMs = start)
+                    upserts += dir.copy(
+                        id = generateId(),
+                        rangeStartMs = start,
+                        rangeEndMs = de - width,
+                        sourceOffsetMs = dir.sourceOffsetMs + (end - ds),
+                    )
+                }
+                ds < start && de <= end -> upserts += dir.copy(rangeEndMs = start)
+                ds >= start && de > end -> upserts += dir.copy(
+                    rangeStartMs = start,
+                    rangeEndMs = de - width,
+                    sourceOffsetMs = dir.sourceOffsetMs + (end - ds),
+                )
+            }
+        }
+        deletes.forEach { separationDirectiveRepository.delete(it) }
+        separationDirectiveRepository.addAll(upserts)
+    }
+
+    /**
+     * `after` 시점 이후에 시작하는 directive 들의 rangeStart/End 를 +deltaMs 평행 이동.
+     * duplicate (delta = +width) / speed (delta = newEffDur - oldEffDur) downstream ripple 공용.
+     * `after` 안에 걸친 directive 는 본 함수에선 손대지 않음 — duplicate/speed 의 inside-directive
+     * 처리는 별도 정책 (TODO: speed change 시 inside directive 의 effective duration 재계산).
+     */
+    private suspend fun applyDirectiveShiftAfter(after: Long, deltaMs: Long) {
+        if (deltaMs == 0L) return
+        val shifted = _uiState.value.separationDirectives
+            .filter { it.rangeStartMs >= after }
+            .map { it.copy(
+                rangeStartMs = (it.rangeStartMs + deltaMs).coerceAtLeast(0L),
+                rangeEndMs = (it.rangeEndMs + deltaMs).coerceAtLeast(0L),
+            ) }
+        separationDirectiveRepository.addAll(shifted)
     }
 
     // ── 채팅 dispatcher 전용 code-path ────────────────────────────────────────────

@@ -333,7 +333,8 @@ class RemoteRenderExecutor(
                         audioUrl = s.audioUrl,
                         volume = s.volume
                     )
-                }
+                },
+                sourceOffsetMs = d.sourceOffsetMs,
             )
         }
 

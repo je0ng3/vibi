@@ -13,5 +13,7 @@ data class SeparationDirectiveEntity(
     val muteOriginalSegmentAudio: Boolean,
     /** JSON encoded `List<{stemId, volume, audioUrl?}>`. */
     val selectionsJson: String,
-    val createdAt: Long
+    val createdAt: Long,
+    /** Stem audio 파일 안의 시작 offset (ms). split piece 가 stem 의 중간부터 재생할 때 사용. */
+    val sourceOffsetMs: Long = 0L,
 )
