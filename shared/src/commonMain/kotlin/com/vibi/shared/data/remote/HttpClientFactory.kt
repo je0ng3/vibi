@@ -23,7 +23,9 @@ expect fun createPlatformHttpClient(block: HttpClientConfig<*>.() -> Unit): Http
  */
 fun createBffHttpClient(
     baseUrl: String,
-    enableLogging: Boolean = true,
+    // Ktor INFO 가 매 요청마다 [Ktor] METHOD URL 한 줄 + 헤더 다수 → 시뮬레이터 콘솔 도배.
+    // dev 시 트래픽 검증 필요한 호출자만 명시적으로 true.
+    enableLogging: Boolean = false,
     tokenProvider: () -> String? = { null },
 ): HttpClient =
     createPlatformHttpClient {

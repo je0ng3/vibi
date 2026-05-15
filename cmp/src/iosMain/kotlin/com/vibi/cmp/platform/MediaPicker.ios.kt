@@ -91,17 +91,19 @@ private fun presentPhPicker(
             val first = didFinishPicking.firstOrNull() as? PHPickerResult ?: return
             val provider: NSItemProvider = first.itemProvider
 
-            println("[Picker] loadFileRepresentation requested")
             provider.loadFileRepresentationForTypeIdentifier(
                 typeIdentifier = UTTypeMovie.identifier
             ) { tempUrl, error ->
-                println("[Picker] callback tempUrl=$tempUrl error=$error")
-                val temp = tempUrl as? NSURL ?: return@loadFileRepresentationForTypeIdentifier
+                val temp = tempUrl as? NSURL ?: run {
+                    if (error != null) println("[Picker] loadFileRepresentation error=$error")
+                    return@loadFileRepresentationForTypeIdentifier
+                }
                 // PHPicker file URL 은 콜백 종료 후 삭제됨 — 동기 복사 필수.
                 val permanentPath = copyToDocumentsRelative(temp, relDir = "picker_media", fallbackExt = "mov")
-                println("[Picker] copied to=$permanentPath")
                 if (permanentPath != null) {
                     scope.launch { onPicked(permanentPath) }
+                } else {
+                    println("[Picker] copy to documents failed for ${temp.path}")
                 }
             }
         }

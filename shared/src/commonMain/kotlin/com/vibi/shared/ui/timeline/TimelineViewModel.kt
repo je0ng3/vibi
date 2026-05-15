@@ -2849,7 +2849,6 @@ class TimelineViewModel constructor(
         if (targets.isEmpty()) {
             throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
         }
-        println("[Chat] applyTranscribeForSubtitlesFromChat targets=$targets source=$source")
         val r = generateOriginalScript(
             projectId = projectId,
             sourceUri = source,
@@ -2892,8 +2891,6 @@ class TimelineViewModel constructor(
         if (targets.isEmpty()) {
             throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
         }
-        println("[Chat] applyApplySubtitlesWithScriptFromChat srtProvided=${srt != null} targets=$targets")
-
         // 1) srt 인자가 있으면 lang="" 클립 교체. 없으면 1단계 결과 그대로 사용.
         if (!srt.isNullOrBlank()) {
             val cues = runCatching { SrtParser.parse(srt) }.getOrElse {
@@ -2985,7 +2982,6 @@ class TimelineViewModel constructor(
         if (langs.isEmpty()) {
             throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
         }
-        println("[Chat] applyGenerateSubtitlesFromChat langs=$langs source=$source")
         editProjectRepository.getProject(projectId)?.let { p ->
             val merged = (p.targetLanguageCodes + langs).distinct()
             if (merged != p.targetLanguageCodes) {
@@ -3003,7 +2999,6 @@ class TimelineViewModel constructor(
             includeOriginalLanguage = false,
         )
         setRenderProgress(null)
-        println("[Chat] subtitle result isSuccess=${r.isSuccess} err=${r.exceptionOrNull()?.message}")
         if (r.isSuccess) {
             val current = _uiState.value.previewLangCode
             if (current == null || current !in _uiState.value.targetLanguageCodes) {
@@ -3028,7 +3023,6 @@ class TimelineViewModel constructor(
         }
         val lang = targetLanguageCode.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("targetLanguageCode 가 비었습니다")
-        println("[Chat] applyGenerateDubFromChat lang=$lang source=$source")
         editProjectRepository.getProject(projectId)?.let { p ->
             val merged = (p.targetLanguageCodes + lang).distinct()
             if (merged != p.targetLanguageCodes) {
@@ -3050,7 +3044,6 @@ class TimelineViewModel constructor(
         result.onSuccess {
             _chatAssistantEvents.emit("더빙이 준비됐습니다 — [$lang]")
         }.onFailure {
-            println("[Chat] dub failed lang=$lang err=${it.message}")
             val err = it.message ?: "알 수 없는 오류"
             _chatAssistantEvents.emit("⚠ 더빙 생성에 실패했습니다: $err")
             throw IllegalStateException(err)
@@ -3914,7 +3907,6 @@ class TimelineViewModel constructor(
         if (translationLangs.isEmpty() && !isSubtitleOriginalOnly) return
         val langs = translationLangs
         viewModelScope.launch {
-            println("[Localization] launching mode=$mode langs=$langs source=$source")
             // 사용자가 패널에서 고른 langs 를 project 에 persist — observeProject flow 가 다시 emit 하면서
             // dropdown chip 에 추가됨. (in-memory copy 만 하면 다음 project emit 에 덮어써짐.)
             editProjectRepository.getProject(projectId)?.let { p ->
@@ -3926,7 +3918,6 @@ class TimelineViewModel constructor(
             when (mode) {
                 "subtitle" -> if (s.reviewScriptBeforeGenerate) {
                     // 검토 모드: STT only → review sheet → 사용자 수정 → regenerate.
-                    println("[Localization] -> review-mode STT only targets=$langs")
                     _uiState.value = _uiState.value.copy(
                         sttPreflightStatus = AutoJobStatus.RUNNING,
                         sttPreflightError = null,
@@ -3964,7 +3955,6 @@ class TimelineViewModel constructor(
                 } else {
                     // 1회 호출로 N langs 모두 처리 — 영상 업로드 / STT 1번만, Gemini 번역 N번.
                     // sourceLanguageCode="auto" — Perso STT 가 자동 감지.
-                    println("[Localization] -> generateAutoSubtitles source=auto targets=$langs")
                     val r = generateAutoSubtitles(
                         projectId = projectId,
                         sourceUri = source,
@@ -3979,7 +3969,6 @@ class TimelineViewModel constructor(
                     )
                     // render 진행 표시 reset — STT/번역 단계로 넘어갔거나 실패.
                     setRenderProgress(null)
-                    println("[Localization] subtitle result isSuccess=${r.isSuccess} cues=${r.getOrNull()} err=${r.exceptionOrNull()?.message}")
                     // 미리보기 chip 자동 전환 — source=auto 이므로 originalSrt 는 저장 안 됨.
                     // 현재 미리보기가 null("기본") 이거나 새로 추가된 langs 와 무관할 때만 첫 lang 으로 전환
                     // (사용자가 일부러 다른 lang 을 보고 있으면 유지).
@@ -3991,7 +3980,6 @@ class TimelineViewModel constructor(
                     }
                 }
                 "dub" -> langs.forEach { lang ->
-                    println("[Localization] -> generateAutoDub source=auto lang=$lang")
                     runCatching {
                         generateAutoDub(
                             projectId = projectId,
@@ -4004,11 +3992,11 @@ class TimelineViewModel constructor(
                                 setRenderProgress(p)
                             },
                         )
-                    }.onFailure { println("[Localization] dub failed lang=$lang err=${it.message}") }
+                    }
                     // 첫 dub 성공 후 cache hit 으로 render skip 되는 langs 도 있음 — 매 lang 끝에 reset.
                     setRenderProgress(null)
                 }
-                else -> println("[Localization] unknown mode=$mode")
+                else -> Unit
             }
         }
         // 호출 직후 panel 닫음 + 선택 chip 비움 — 사용자가 다시 열었을 때 stale selection 으로 이미

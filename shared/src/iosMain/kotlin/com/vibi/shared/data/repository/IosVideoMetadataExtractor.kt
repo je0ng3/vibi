@@ -24,18 +24,15 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
 
     @OptIn(ExperimentalForeignApi::class)
     override suspend fun extract(uri: String): VideoInfo? {
-        println("[Extractor] enter uri=$uri")
         // resolver: 상대 / 절대 / file:// / 옛 UUID remap. 모든 분기 fileURLWithPath.
         val url = resolveStoredUriToFileUrl(uri) ?: run {
-            println("[Extractor] resolver returned null")
+            println("[Extractor] resolver returned null for uri=$uri")
             return null
         }
-        println("[Extractor] url path=${url.path} isFileURL=${url.fileURL}")
         val asset = AVURLAsset(
             uRL = url,
             options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to true)
         )
-        println("[Extractor] asset created")
 
         // 안전망: async load 도 시도하되 1초 timeout
         withTimeoutOrNull(2000) {
@@ -49,9 +46,8 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
         }
 
         val tracks = asset.tracksWithMediaType(AVMediaTypeVideo)
-        println("[Extractor] tracks=${tracks.size}")
         val videoTrack = tracks.firstOrNull() as? AVAssetTrack ?: run {
-            println("[Extractor] no video track")
+            println("[Extractor] no video track in $uri")
             return null
         }
 
@@ -60,16 +56,14 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
         if (durationSec.isNaN() || durationSec <= 0.0) {
             val end = CMTimeRangeGetEnd(videoTrack.timeRange)
             durationSec = CMTimeGetSeconds(end)
-            println("[Extractor] fallback duration from track timeRange=$durationSec")
         }
         if (durationSec.isNaN() || durationSec <= 0.0) {
-            println("[Extractor] duration still invalid")
+            println("[Extractor] duration invalid for $uri")
             return null
         }
         val durationMs = (durationSec * 1000.0).toLong()
 
         val (width, height) = videoTrack.naturalSize.useContents { Pair(width.toInt(), height.toInt()) }
-        println("[Extractor] size ${width}x${height} duration=${durationMs}ms")
 
         val fileName = (url.lastPathComponent ?: "video.mp4")
         val fileSize = runCatching {

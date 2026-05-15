@@ -37,10 +37,8 @@ class GenerateAutoSubtitlesUseCase(
         onRenderProgress: (percent: Int) -> Unit = {},
         includeOriginalLanguage: Boolean = false,
     ): Result<Int> = runCatching {
-        println("[GenerateAutoSubtitles] enter projectId=$projectId targets=$targetLanguageCodes")
         var project = editProjectRepository.getProject(projectId)
             ?: throw IllegalStateException("Project not found: $projectId")
-        println("[GenerateAutoSubtitles] project loaded — submitting to BFF (1 upload + 1 STT + ${targetLanguageCodes.size} translations)")
 
         project = project.copy(
             autoSubtitleStatus = AutoJobStatus.RUNNING,
@@ -56,7 +54,6 @@ class GenerateAutoSubtitlesUseCase(
             kind = RenderKind.AUDIO,
             onProgress = onRenderProgress,
         ).getOrElse { e ->
-            println("[GenerateAutoSubtitles] ensureLatestRender failed: ${e.message}")
             markFailed(project, "편집 영상 준비 실패")
             throw e
         }
@@ -76,11 +73,9 @@ class GenerateAutoSubtitlesUseCase(
             numberOfSpeakers = numberOfSpeakers,
             editedRenderJobId = editedRenderJobId,
         ).getOrElse { e ->
-            println("[GenerateAutoSubtitles] submit failed: ${e.message}")
             markFailed(project, "자막 요청 실패")
             throw e
         }
-        println("[GenerateAutoSubtitles] BFF accepted jobId=$jobId")
 
         project = project.copy(autoSubtitleJobId = jobId)
         editProjectRepository.updateProject(project)
