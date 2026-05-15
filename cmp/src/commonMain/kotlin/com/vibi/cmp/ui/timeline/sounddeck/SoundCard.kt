@@ -8,16 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,8 +33,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiSpacing
+import com.vibi.cmp.ui.components.VibiPanelCard
 
 /**
  * 분리된 stem 또는 BGM 한 장. 카드 외형 자체가 켜기/끄기 상태 — 별도 토글 위젯 없음.
@@ -47,6 +45,9 @@ import com.vibi.cmp.theme.LocalVibiColors
  *  - long-press = 펼치기 (볼륨 / 미리듣기 / 삭제 등 부가 액션)
  *
  * 진행 중인 잡(분리/생성) 일 때 [disabled] — 더 흐리고 input ignore.
+ *
+ * DESIGN.md `panel-card` 베이스 — [VibiPanelCard]. tap/longPress 제스처는 modifier 합성으로
+ * VibiPanelCard 의 onClick 슬롯 대신 outer 에서 부착.
  */
 @Composable
 fun SoundCard(
@@ -60,129 +61,123 @@ fun SoundCard(
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
     var expanded by remember { mutableStateOf(false) }
     // 세 가지 시각 상태: 진행 중(가장 흐림) > 꺼짐(중간) > 켜짐(불투명).
-    // 꺼짐은 여전히 인터랙티브하므로 alpha 만 변경, clickable 은 disabled 만 차단.
+    // 꺼짐은 여전히 인터랙티브하므로 alpha 만 변경, 제스처는 disabled 만 차단.
     val contentAlpha = when {
         disabled -> 0.4f
         !model.selected -> 0.45f
         else -> 1f
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(tokens.panelBg, RoundedCornerShape(12.dp))
-            .then(
-                if (disabled) Modifier
-                else Modifier.pointerInput(model.key) {
-                    detectTapGestures(
-                        onTap = { onToggle() },
-                        onLongPress = { expanded = !expanded },
-                    )
-                }
-            )
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
-            modifier = Modifier.alpha(contentAlpha),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val chipColor = when (model.kind) {
-                SoundCardKind.SPEAKER -> tokens.accent
-                SoundCardKind.VOICE_ALL -> tokens.accent
-                SoundCardKind.BACKGROUND -> tokens.mutedText
-                SoundCardKind.BGM -> tokens.accent.copy(alpha = 0.7f)
-                SoundCardKind.OTHER_STEM -> tokens.chipBg
-            }
-            Box(
-                modifier = Modifier.size(10.dp).clip(CircleShape).background(chipColor),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    model.label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = tokens.onBackgroundPrimary,
-                    textDecoration = if (model.selected) TextDecoration.None else TextDecoration.LineThrough,
-                )
-                val rangeStr = formatRange(model.rangeStartMs, model.rangeEndMs)
-                if (rangeStr != null) {
-                    Text(
-                        rangeStr,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = tokens.mutedText,
-                        fontSize = 11.sp,
-                    )
-                }
-            }
-            if (isPreviewing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = tokens.accent,
-                )
-            }
-        }
+    val gestureModifier = if (disabled) modifier else modifier.pointerInput(model.key) {
+        detectTapGestures(
+            onTap = { onToggle() },
+            onLongPress = { expanded = !expanded },
+        )
+    }
 
-        AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier.alpha(if (disabled) 0.4f else 1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+    VibiPanelCard(modifier = gestureModifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
+            Row(
+                modifier = Modifier.alpha(contentAlpha),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(
-                        onClick = onTogglePreview,
-                        enabled = !disabled && !model.audioUrl.isNullOrBlank(),
-                    ) {
-                        Icon(
-                            imageVector = if (isPreviewing) Icons.Filled.Pause
-                                          else Icons.Filled.PlayArrow,
-                            contentDescription = if (isPreviewing) "정지" else "미리듣기",
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                        Spacer(Modifier.width(4.dp))
+                val chipColor = when (model.kind) {
+                    SoundCardKind.SPEAKER -> tokens.accent
+                    SoundCardKind.VOICE_ALL -> tokens.accent
+                    SoundCardKind.BACKGROUND -> tokens.mutedText
+                    SoundCardKind.BGM -> tokens.accent.copy(alpha = 0.7f)
+                    SoundCardKind.OTHER_STEM -> tokens.chipBg
+                }
+                Box(
+                    modifier = Modifier.size(VibiSpacing.sm).clip(CircleShape).background(chipColor),
+                )
+                Spacer(Modifier.width(VibiSpacing.sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        model.label,
+                        style = typo.bodyStrong,
+                        color = tokens.onBackgroundPrimary,
+                        textDecoration = if (model.selected) TextDecoration.None else TextDecoration.LineThrough,
+                    )
+                    val rangeStr = formatRange(model.rangeStartMs, model.rangeEndMs)
+                    if (rangeStr != null) {
                         Text(
-                            if (isPreviewing) "정지" else "이 소리만 듣기",
-                            color = tokens.onBackgroundPrimary,
-                            fontSize = 13.sp,
+                            rangeStr,
+                            style = typo.caption,
+                            color = tokens.mutedText,
                         )
                     }
-                    Spacer(Modifier.weight(1f))
-                    if (onDelete != null) {
-                        IconButton(
-                            onClick = onDelete,
-                            enabled = !disabled,
+                }
+                if (isPreviewing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(VibiSpacing.base),
+                        strokeWidth = 2.dp,
+                        color = tokens.accent,
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.alpha(if (disabled) 0.4f else 1f),
+                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = onTogglePreview,
+                            enabled = !disabled && !model.audioUrl.isNullOrBlank(),
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Delete,
-                                contentDescription = "삭제",
-                                tint = tokens.mutedText,
+                                imageVector = if (isPreviewing) Icons.Filled.Pause
+                                              else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPreviewing) "정지" else "미리듣기",
+                                tint = tokens.onBackgroundPrimary,
+                            )
+                            Spacer(Modifier.width(VibiSpacing.xxs))
+                            Text(
+                                if (isPreviewing) "정지" else "이 소리만 듣기",
+                                color = tokens.onBackgroundPrimary,
+                                style = typo.bodySm,
                             )
                         }
+                        Spacer(Modifier.weight(1f))
+                        if (onDelete != null) {
+                            IconButton(
+                                onClick = onDelete,
+                                enabled = !disabled,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Delete,
+                                    contentDescription = "삭제",
+                                    tint = tokens.mutedText,
+                                )
+                            }
+                        }
                     }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "볼륨",
-                        modifier = Modifier.width(48.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = tokens.mutedText,
-                    )
-                    Slider(
-                        modifier = Modifier.weight(1f),
-                        value = model.volume.coerceIn(0f, 2f),
-                        onValueChange = { if (!disabled) onUpdateVolume(it) },
-                        valueRange = 0f..2f,
-                        enabled = !disabled && model.selected,
-                    )
-                    Text(
-                        "${(model.volume * 100).toInt()}%",
-                        modifier = Modifier.width(48.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = tokens.mutedText,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "볼륨",
+                            modifier = Modifier.width(VibiSpacing.xxl),
+                            style = typo.bodySm,
+                            color = tokens.mutedText,
+                        )
+                        Slider(
+                            modifier = Modifier.weight(1f),
+                            value = model.volume.coerceIn(0f, 2f),
+                            onValueChange = { if (!disabled) onUpdateVolume(it) },
+                            valueRange = 0f..2f,
+                            enabled = !disabled && model.selected,
+                        )
+                        Text(
+                            "${(model.volume * 100).toInt()}%",
+                            modifier = Modifier.width(VibiSpacing.xxl),
+                            style = typo.bodySm,
+                            color = tokens.mutedText,
+                        )
+                    }
                 }
             }
         }

@@ -5,9 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -18,9 +16,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.rememberAudioPreviewer
 import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiSpacing
 
 /**
  * 분리된 stem + BGM 들을 세로 카드 스택으로 보여주는 컨테이너.
@@ -45,6 +44,7 @@ fun SoundDeck(
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
     val previewer = rememberAudioPreviewer()
     var previewingKey by remember { mutableStateOf<String?>(null) }
     DisposableEffect(Unit) {
@@ -55,19 +55,19 @@ fun SoundDeck(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "소리",
-                style = MaterialTheme.typography.titleSmall,
+                style = typo.titleSm,
                 color = tokens.onBackgroundPrimary,
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(VibiSpacing.xs))
             Text(
                 if (cards.isEmpty()) "분리된 소리·삽입한 음원이 여기 카드로 모입니다"
                 else "탭으로 끄기 · 길게 눌러 볼륨 조절",
-                style = MaterialTheme.typography.labelSmall,
+                style = typo.bodySm,
                 color = tokens.mutedText,
             )
         }

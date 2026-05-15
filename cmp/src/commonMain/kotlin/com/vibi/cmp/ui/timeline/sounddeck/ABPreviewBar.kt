@@ -9,16 +9,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiShape
+import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.shared.ui.timeline.PreviewMode
 
 /**
@@ -27,6 +27,8 @@ import com.vibi.shared.ui.timeline.PreviewMode
  * "결과 예측 어려움" 페르소나 고통의 직접 해결책. directive 가 하나도 없으면 의미 없으므로 상위에서
  * hidden. 토글은 mixer 의 stem 볼륨 + video segment volume 둘 다 영향 — 상위 TimelineScreen 의
  * stemSyncKey LaunchedEffect 가 previewMode 를 보고 일괄 처리.
+ *
+ * pill geometry — DESIGN.md 의 chip 패턴 차용 (rounded.pill, surface-card bg, hairline border).
  */
 @Composable
 fun ABPreviewBar(
@@ -38,17 +40,13 @@ fun ABPreviewBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(24.dp))
+            .padding(horizontal = VibiSpacing.sm, vertical = VibiSpacing.xxs)
+            .clip(VibiShape.pill)
             .background(tokens.panelBg)
-            .border(
-                width = 1.dp,
-                color = tokens.chipBg,
-                shape = RoundedCornerShape(24.dp),
-            )
-            .padding(4.dp),
+            .border(width = 1.dp, color = tokens.hairline, shape = VibiShape.pill)
+            .padding(VibiSpacing.xxs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
     ) {
         SegmentChip(
             label = "원본",
@@ -73,10 +71,11 @@ private fun SegmentChip(
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
     Box(
         modifier = modifier
-            .height(40.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .height(VibiSpacing.xxl)
+            .clip(VibiShape.pill)
             .background(if (selected) tokens.accent else tokens.panelBg)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
@@ -84,8 +83,7 @@ private fun SegmentChip(
         Text(
             label,
             color = if (selected) tokens.backgroundPrimary else tokens.onBackgroundPrimary,
-            style = MaterialTheme.typography.labelLarge,
-            fontSize = 14.sp,
+            style = typo.bodySm,
         )
     }
 }
