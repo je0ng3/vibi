@@ -26,6 +26,8 @@ targets:
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
+    entitlements:
+      path: iosApp/iosApp.entitlements
     info:
       path: iosApp/Info.plist
       properties:

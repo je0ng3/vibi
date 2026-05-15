@@ -19,10 +19,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             preconditionFailure("BFFBaseURL missing in Info.plist — check Configs/Auth.xcconfig")
         }
 
-        let bridge = GoogleSignInBridgeImpl()
+        let googleBridge = GoogleSignInBridgeImpl()
+        let appleBridge = AppleSignInBridgeImpl()
         let composeVC = MainViewControllerKt.MainViewController(
             bffBaseUrl: bffBaseUrl,
-            googleSignInBridge: bridge
+            googleSignInBridge: googleBridge,
+            appleSignInBridge: appleBridge
         )
 
         // safe-area inset 무시하고 화면 전체 차지

@@ -5,30 +5,39 @@ import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.local.extractJwtSubject
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.domain.model.AuthUser
+import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
 
 /**
- * Google OAuth → BFF JWT 교환 + 로컬 토큰 캐시 + 계정별 로컬 데이터 스코핑.
+ * Google / Apple OAuth → BFF JWT 교환 + 로컬 토큰 캐시 + 계정별 로컬 데이터 스코핑.
  *
- * - [signInWithGoogle] — native SDK 로 Google ID Token → BFF /auth/google → JWT 저장 + [UserSession] 갱신.
+ * - [signInWithGoogle] / [signInWithApple] — native SDK 로 ID Token (+ Apple 의 fullName)
+ *   확보 → BFF `/auth/{provider}` → JWT 저장 + [UserSession] 갱신. JWT 의 sub 는 BFF
+ *   internal UUID — Google sub / Apple sub 가 아니라 user 테이블 PK.
  *   row 자체는 userId 컬럼으로 scoped — 다른 계정 row 를 wipe 하지 않고도 UI query
  *   (`observeAllForUser`) 에서 격리되므로 A↔B 왕복 시 각자 작업 누적 유지.
  * - [hasValidSession] — 저장된 JWT 가 만료 안 됐는지 (스플래시에서 라우팅 결정용).
  * - [restoreSession] — 앱 시작 시 저장된 JWT 의 sub 를 [UserSession] 으로 복원.
- * - [signOut] — Google 세션 + 토큰 캐시 정리. 로컬 데이터는 보존.
+ * - [signOut] — Google / Apple native 세션 + 토큰 캐시 정리. 로컬 데이터는 보존.
  */
 class AuthRepository(
-    private val signInClient: GoogleSignInClient,
+    private val googleSignInClient: GoogleSignInClient,
+    private val appleSignInClient: AppleSignInClient,
     private val bffApi: BffApi,
     private val tokenStore: AuthTokenStore,
     private val userSession: UserSession,
 ) {
     suspend fun signInWithGoogle(): Result<AuthUser> = runCatching {
-        val idToken = signInClient.signIn().getOrThrow()
+        val idToken = googleSignInClient.signIn().getOrThrow()
         val resp = bffApi.exchangeGoogleIdToken(idToken)
-        tokenStore.saveToken(resp.accessToken, resp.expiresAt)
-        val newUserId = extractJwtSubject(resp.accessToken) ?: resp.user.sub
-        switchUser(newUserId)
+        finalizeSession(resp)
+        resp.user.toDomain()
+    }
+
+    suspend fun signInWithApple(): Result<AuthUser> = runCatching {
+        val payload = appleSignInClient.signIn().getOrThrow()
+        val resp = bffApi.exchangeAppleIdToken(payload.idToken, payload.fullName)
+        finalizeSession(resp)
         resp.user.toDomain()
     }
 
@@ -47,7 +56,14 @@ class AuthRepository(
         // 토큰 먼저 삭제 — native SDK signOut 이 throw 해도 로컬 세션은 끊긴 상태로 남도록.
         tokenStore.clear()
         userSession.reset()
-        runCatching { signInClient.signOut() }
+        runCatching { googleSignInClient.signOut() }
+        runCatching { appleSignInClient.signOut() }
+    }
+
+    private fun finalizeSession(resp: com.vibi.shared.data.remote.dto.AuthResponseDto) {
+        tokenStore.saveToken(resp.accessToken, resp.expiresAt)
+        val newUserId = extractJwtSubject(resp.accessToken) ?: resp.user.sub
+        switchUser(newUserId)
     }
 
     private fun switchUser(newUserId: String) {

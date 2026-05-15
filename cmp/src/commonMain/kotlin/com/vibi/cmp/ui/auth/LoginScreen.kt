@@ -5,12 +5,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -33,6 +36,7 @@ fun LoginScreen(
     viewModel: LoginViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val loading = state is LoginViewModel.UiState.Loading
 
     LaunchedEffect(viewModel) {
         viewModel.navigateToHome.collect { onSignedIn() }
@@ -58,12 +62,12 @@ fun LoginScreen(
             Spacer(Modifier.height(48.dp))
 
             Button(
-                onClick = viewModel::signIn,
-                enabled = state !is LoginViewModel.UiState.Loading,
+                onClick = viewModel::signInWithGoogle,
+                enabled = !loading,
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
             ) {
-                if (state is LoginViewModel.UiState.Loading) {
+                if (loading) {
                     CircularProgressIndicator(
                         color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp,
@@ -72,6 +76,25 @@ fun LoginScreen(
                 } else {
                     Text("Sign in with Google")
                 }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Apple Human Interface Guidelines — 검정 배경 + 흰색 텍스트, 최소 44pt 높이.
+            // 다크/라이트 테마 무관하게 Apple 표준 외형 유지.
+            Button(
+                onClick = viewModel::signInWithApple,
+                enabled = !loading,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Black,
+                    contentColor = Color.White,
+                    disabledContainerColor = Color.Black.copy(alpha = 0.5f),
+                    disabledContentColor = Color.White.copy(alpha = 0.7f),
+                ),
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
+            ) {
+                Text("Sign in with Apple")
             }
 
             (state as? LoginViewModel.UiState.Error)?.let { err ->

@@ -1,5 +1,6 @@
 package com.vibi.shared.di
 
+import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
 import org.koin.dsl.module
 
@@ -10,13 +11,22 @@ import org.koin.dsl.module
  *
  * @param googleSignInBridge Swift `GoogleSignInBridgeImpl` 인스턴스. Kotlin DI 에 등록되어
  *   `IosGoogleSignInClient` 가 주입받는다.
+ * @param appleSignInBridge Swift `AppleSignInBridgeImpl` 인스턴스. Kotlin DI 에 등록되어
+ *   `IosAppleSignInClient` 가 주입받는다.
  */
-fun initKoinIos(bffBaseUrl: String, googleSignInBridge: GoogleSignInBridge) {
+fun initKoinIos(
+    bffBaseUrl: String,
+    googleSignInBridge: GoogleSignInBridge,
+    appleSignInBridge: AppleSignInBridge,
+) {
     initKoin(
         bffBaseUrl = bffBaseUrl,
         platformModules = listOf(
             iosPlatformModule,
-            module { single<GoogleSignInBridge> { googleSignInBridge } },
+            module {
+                single<GoogleSignInBridge> { googleSignInBridge }
+                single<AppleSignInBridge> { appleSignInBridge }
+            },
         ),
     )
 }

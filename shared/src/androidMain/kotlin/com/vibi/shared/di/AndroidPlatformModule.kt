@@ -6,8 +6,10 @@ import com.vibi.shared.data.repository.AndroidImageMetadataExtractor
 import com.vibi.shared.data.repository.AndroidShareSheetLauncher
 import com.vibi.shared.data.repository.AndroidVideoMetadataExtractor
 import android.content.Context
+import com.vibi.shared.platform.AndroidAppleSignInClient
 import com.vibi.shared.platform.AndroidGoogleSignInClient
 import com.vibi.shared.platform.AndroidVideoThumbnailExtractor
+import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
 import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.russhwolf.settings.Settings
@@ -45,10 +47,11 @@ val androidPlatformModule = module {
     single<AutoDubRepository> { AutoDubRepositoryImpl(api = get(), uploader = get(), context = androidContext()) }
     single<AutoSubtitleRepository> { AutoSubtitleRepositoryImpl(api = get(), uploader = get()) }
 
-    // 인증 — Android Google Sign-In 본 구현은 후속 phase. 현재는 stub.
+    // 인증 — Android 측 본 구현은 후속 phase. 현재는 stub.
     single<Settings> {
         val prefs = androidContext().getSharedPreferences("vibi_auth", Context.MODE_PRIVATE)
         SharedPreferencesSettings(prefs)
     }
     single<GoogleSignInClient> { AndroidGoogleSignInClient() }
+    single<AppleSignInClient> { AndroidAppleSignInClient() }
 }

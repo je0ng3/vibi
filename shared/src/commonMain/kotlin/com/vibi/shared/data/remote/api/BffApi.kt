@@ -1,5 +1,6 @@
 package com.vibi.shared.data.remote.api
 
+import com.vibi.shared.data.remote.dto.AppleAuthRequestDto
 import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.data.remote.dto.ChatRequestDto
 import com.vibi.shared.data.remote.dto.ChatResponseDto
@@ -61,6 +62,18 @@ class BffApi(
         client.post("api/v2/auth/google") {
             contentType(ContentType.Application.Json)
             setBody(GoogleAuthRequestDto(idToken))
+        }.body()
+
+    /**
+     * Apple ID Token → BFF JWT 교환.
+     *
+     * @param fullName Apple 의 최초-1회 fullName. iOS 가 받은 직후 그대로 전달 — 두 번째
+     *   로그인부터는 null. 서버는 신규 가입 시에만 이 값을 user.name 으로 사용.
+     */
+    suspend fun exchangeAppleIdToken(idToken: String, fullName: String?): AuthResponseDto =
+        client.post("api/v2/auth/apple") {
+            contentType(ContentType.Application.Json)
+            setBody(AppleAuthRequestDto(idToken, fullName))
         }.body()
 
     /** 지원 타깃 언어 목록 — Perso 가 지원하는 언어를 BFF 가 프록시. */

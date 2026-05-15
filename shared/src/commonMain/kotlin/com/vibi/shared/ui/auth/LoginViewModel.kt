@@ -30,11 +30,15 @@ class LoginViewModel(
     private val _navigateToHome = MutableSharedFlow<Unit>()
     val navigateToHome: SharedFlow<Unit> = _navigateToHome.asSharedFlow()
 
-    fun signIn() {
+    fun signInWithGoogle() = runProvider { authRepository.signInWithGoogle() }
+
+    fun signInWithApple() = runProvider { authRepository.signInWithApple() }
+
+    private fun runProvider(block: suspend () -> Result<*>) {
         if (_state.value is UiState.Loading) return
         _state.value = UiState.Loading
         viewModelScope.launch {
-            authRepository.signInWithGoogle().fold(
+            block().fold(
                 onSuccess = {
                     _state.value = UiState.Idle
                     _navigateToHome.emit(Unit)

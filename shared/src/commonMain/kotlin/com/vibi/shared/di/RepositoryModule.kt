@@ -69,7 +69,8 @@ val repositoryModule = module {
     single { com.vibi.shared.data.local.UserPreferencesStore(settings = get()) }
     single {
         AuthRepository(
-            signInClient = get(),
+            googleSignInClient = get(),
+            appleSignInClient = get(),
             bffApi = get(),
             tokenStore = get(),
             userSession = get(),

@@ -8,7 +8,9 @@ import com.vibi.shared.data.repository.IosImageMetadataExtractor
 import com.vibi.shared.data.repository.IosMediaJobUploader
 import com.vibi.shared.data.repository.IosShareSheetLauncher
 import com.vibi.shared.data.repository.IosVideoMetadataExtractor
+import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
+import com.vibi.shared.platform.IosAppleSignInClient
 import com.vibi.shared.platform.IosGoogleSignInClient
 import com.vibi.shared.platform.IosVideoThumbnailExtractor
 import com.vibi.shared.platform.VideoThumbnailExtractor
@@ -41,7 +43,9 @@ val iosPlatformModule = module {
     single<AutoDubRepository> { IosAutoDubRepositoryImpl(api = get(), uploader = get()) }
     single<AutoSubtitleRepository> { IosAutoSubtitleRepositoryImpl(api = get(), uploader = get()) }
 
-    // 인증 — GoogleSignInBridge 는 Swift 가 KoinHelper.initKoinIos 호출 시 별도 module 로 주입.
+    // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
+    // 호출 시 별도 module 로 주입.
     single<Settings> { NSUserDefaultsSettings(NSUserDefaults.standardUserDefaults) }
     single<GoogleSignInClient> { IosGoogleSignInClient(bridge = get()) }
+    single<AppleSignInClient> { IosAppleSignInClient(bridge = get()) }
 }

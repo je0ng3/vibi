@@ -2,6 +2,7 @@ package com.vibi.cmp
 
 import androidx.compose.ui.window.ComposeUIViewController
 import com.vibi.shared.di.initKoinIos
+import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
 import kotlinx.cinterop.ExperimentalForeignApi
 import org.koin.compose.KoinContext
@@ -14,9 +15,10 @@ private var koinStarted = false
 fun MainViewController(
     bffBaseUrl: String,
     googleSignInBridge: GoogleSignInBridge,
+    appleSignInBridge: AppleSignInBridge,
 ): UIViewController {
     if (!koinStarted) {
-        initKoinIos(bffBaseUrl, googleSignInBridge)
+        initKoinIos(bffBaseUrl, googleSignInBridge, appleSignInBridge)
         koinStarted = true
     }
     val controller = ComposeUIViewController(configure = {
