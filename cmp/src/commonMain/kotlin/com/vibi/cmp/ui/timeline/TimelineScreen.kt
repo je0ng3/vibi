@@ -101,12 +101,24 @@ import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
 import com.vibi.shared.ui.timeline.StepTransitionWarning
+import com.vibi.shared.ui.timeline.PreviewMode
 import com.vibi.shared.ui.timeline.TimelineStep
 import com.vibi.shared.ui.timeline.TimelineViewModel
 import com.vibi.shared.ui.timeline.isLocalizationBusy
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+
+/**
+ * stem mixer 동기화 key — playback position 매 tick 마다 LaunchedEffect 재발화 회피용.
+ * Triple 을 쓰던 자리에서 [previewMode] 가 추가되며 명명형 데이터 클래스로 승격.
+ */
+private data class StemSyncKey(
+    val directiveId: String?,
+    val inRange: Boolean,
+    val isPlaying: Boolean,
+    val previewMode: PreviewMode,
+)
 
 /**
  * Timeline 화면 — 6 핵심 기능 (업로드·TTS·자막·더빙·음성분리·구간선택) 통합.
@@ -122,6 +134,12 @@ fun TimelineScreen(
 ) {
     val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
     val state by viewModel.uiState.collectAsState()
+
+    // unified mode 게이트 — stepper UI 가 숨겨지면 5~8단계가 한 스크롤에 모두 노출. AudioSources /
+    // SubtitleDub 전용 분기는 본 두 boolean 으로 묶어 stepper-on 경로도 동시에 유지.
+    val unifiedScroll = com.vibi.cmp.platform.RuntimeFlags.stepperHidden
+    val showAudioSourcesContent = unifiedScroll || state.currentStep == TimelineStep.AudioSources
+    val showSubtitleDubContent = unifiedScroll || state.currentStep == TimelineStep.SubtitleDub
 
     // ChatVM — FAB unread badge 와 panel 양쪽이 같은 인스턴스 공유. bindProject / bindTimelineEvents
     // 를 panel 가시성과 무관하게 호출해 panel 닫힌 상태에서도 chatAssistantEvents 수신 → unread 토글.
@@ -178,30 +196,47 @@ fun TimelineScreen(
             d.selections.any { !it.audioUrl.isNullOrBlank() }
     }
     // selection / volume 변경 시 setVolume 만. load 와 분리해 끊김 방지.
-    LaunchedEffect(activeDirective?.id, activeDirective?.selections) {
+    // previewMode == ORIGINAL 이면 모든 stem 강제 mute — 영상 원본 audio 만 들리도록.
+    LaunchedEffect(activeDirective?.id, activeDirective?.selections, state.previewMode) {
         val dir = activeDirective ?: return@LaunchedEffect
+        val forceMute = state.previewMode == com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL
         dir.selections.forEach { sel ->
-            stemMixer.setVolume(sel.stemId, if (sel.selected) sel.volume else 0f)
+            val v = when {
+                forceMute -> 0f
+                sel.selected -> sel.volume
+                else -> 0f
+            }
+            stemMixer.setVolume(sel.stemId, v)
         }
     }
     // playback position 진입/이탈 시 active group + video mute 동시 toggle.
     // playbackPositionMs (200ms tick) 직접 의존하면 매 tick 마다 LaunchedEffect 가 cancel/restart 돼
     // coroutine churn. derivedStateOf 로 (directive id, inRange, isPlaying) Triple 만 추출해 상태
     // 변화 순간만 trigger.
-    val stemSyncKey by remember(activeDirective) {
+    val stemSyncKey by remember(activeDirective, state.previewMode) {
         derivedStateOf {
             val dir = activeDirective
-            if (dir == null) Triple<String?, Boolean, Boolean>(null, false, state.isPlaying)
-            else Triple(
-                dir.id,
-                state.playbackPositionMs in dir.rangeStartMs..dir.rangeEndMs,
-                state.isPlaying,
+            // previewMode 도 키에 포함 — ORIGINAL ↔ MIX 토글이 즉시 반영되도록 4-tuple 로 확장.
+            val mode = state.previewMode
+            if (dir == null) StemSyncKey(null, false, state.isPlaying, mode)
+            else StemSyncKey(
+                directiveId = dir.id,
+                inRange = state.playbackPositionMs in dir.rangeStartMs..dir.rangeEndMs,
+                isPlaying = state.isPlaying,
+                previewMode = mode,
             )
         }
     }
     LaunchedEffect(stemSyncKey) {
-        val (dirId, inRange, isPlaying) = stemSyncKey
-        if (dirId == null) {
+        val key = stemSyncKey
+        // ORIGINAL 모드 — directive 무관하게 mixer pause + video 항상 unmute.
+        if (key.previewMode == com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL) {
+            stemMixer.pause()
+            stemMixer.setActiveGroup(null)
+            viewModel.muteVideoSegmentsForDirective(false)
+            return@LaunchedEffect
+        }
+        if (key.directiveId == null) {
             stemMixer.pause()
             stemMixer.setActiveGroup(null)
             // directive range 밖 (또는 directive 없음) → video unmute.
@@ -210,8 +245,8 @@ fun TimelineScreen(
         }
         val dir = activeDirective ?: return@LaunchedEffect
         when {
-            !isPlaying -> stemMixer.pause()
-            inRange -> {
+            !key.isPlaying -> stemMixer.pause()
+            key.inRange -> {
                 // 진입 — group 전환 + offset seek + play + video mute.
                 stemMixer.setActiveGroup(dir.id)
                 val offset = (state.playbackPositionMs - dir.rangeStartMs).coerceAtLeast(0L)
@@ -230,10 +265,13 @@ fun TimelineScreen(
     // - currentStep == Edit 일 때만
     // - 아직 mode 진입 안 했을 때만 (LaunchedEffect 가드)
     // - firstVideoSegId 확보된 직후
+    // unified 모드(stepper 숨김) 에선 stepper UI 가 없어 currentStep 이 Edit 으로 갈 일이 없고,
+    // 영상편집은 EditEntryCard 의 명시 클릭으로만 진입.
     val firstVideoSegIdForAutoEnter = state.segments.firstOrNull {
         it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
     }?.id
     LaunchedEffect(state.currentStep, firstVideoSegIdForAutoEnter) {
+        if (com.vibi.cmp.platform.RuntimeFlags.stepperHidden) return@LaunchedEffect
         if (state.currentStep == TimelineStep.Edit &&
             !state.isSegmentEditMode &&
             firstVideoSegIdForAutoEnter != null
@@ -244,7 +282,10 @@ fun TimelineScreen(
 
     // 자막/더빙 단계 진입 시 생성 패널 자동 열기. 사용자가 닫으면 같은 단계 안에서 다시 열리지 않고,
     // 다른 단계 갔다 돌아오면 다시 열림 (currentStep 키 변경으로 재발화).
+    // stepper 가 숨겨진 unified 모드(RuntimeFlags.stepperHidden) 에선 명시적 진입(SubtitleDubCard
+    // 버튼)으로만 열림 — 자동 열기 비활성. 상세는 RuntimeFlags 주석 참조.
     LaunchedEffect(state.currentStep) {
+        if (com.vibi.cmp.platform.RuntimeFlags.stepperHidden) return@LaunchedEffect
         if (state.currentStep == TimelineStep.SubtitleDub && !state.localizationOpen) {
             viewModel.onShowLocalization()
         }
@@ -368,16 +409,19 @@ fun TimelineScreen(
         }
 
 
-        // 3단계 stepper — 항상 노출. 클릭 차단은 VM 의 onSelectStep 가 처리 (in-flight job 등).
-        // 추가: 채팅 dispatcher 가 실행 중이면 stepper 이동 차단 — 처리 중 step 이 바뀌면 UI 가
-        // 새 step 의 진입 sheet 를 띄워 dispatch 결과 화면이 가려진다.
-        TimelineStepperRow(
-            currentStep = state.currentStep,
-            onStepClick = { target ->
-                if (chatState.isApplying) return@TimelineStepperRow
-                viewModel.onSelectStep(target)
-            },
-        )
+        // 3단계 stepper — RuntimeFlags.stepperHidden 가 false 일 때만 노출. unified Sound Deck UI
+        // 에서는 5~8단계가 한 스크롤에 모두 보이므로 stepper 가 불필요.
+        // 클릭 차단은 VM 의 onSelectStep 가 처리 (in-flight job 등). 채팅 dispatcher 실행 중이면 stepper
+        // 이동 차단 — 처리 중 step 이 바뀌면 UI 가 새 step 의 진입 sheet 를 띄워 dispatch 결과 화면이 가려진다.
+        if (!com.vibi.cmp.platform.RuntimeFlags.stepperHidden) {
+            TimelineStepperRow(
+                currentStep = state.currentStep,
+                onStepClick = { target ->
+                    if (chatState.isApplying) return@TimelineStepperRow
+                    viewModel.onSelectStep(target)
+                },
+            )
+        }
 
         // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
         // "" sentinel = 원본 자막 (lang="" 클립). review 완료 후에만 chip 노출.
@@ -405,7 +449,10 @@ fun TimelineScreen(
             state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING
         // 변종 선택은 자막/더빙 단계에서만 의미 있음 (Edit·음원 단계에선 "기본" 만 존재).
-        if (state.currentStep == TimelineStep.SubtitleDub) Row(
+        // unified 모드에선 stepper 가 없으므로 실제로 변종이 둘 이상일 때만 노출.
+        val showVersionPicker = if (unifiedScroll) versions.size > 1
+                                else state.currentStep == TimelineStep.SubtitleDub
+        if (showVersionPicker) Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
         ) {
@@ -683,7 +730,7 @@ fun TimelineScreen(
             // AudioSources 단계 전용. SubtitleDub 단계에서는 어차피 BFF render 시 BGM 이 포함되어
             // 단일 영상으로 합쳐지므로 별도 표시 불필요. 클립 데이터는 보존되므로 AudioSources 로
             // 돌아오면 즉시 다시 보임. 음원분리 range 선택 모드에서는 클립 탭 무시 (range 만 선택 가능).
-            if (state.currentStep == TimelineStep.AudioSources &&
+            if (showAudioSourcesContent &&
                 !state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
                 BgmTimelineLane(
                     clips = state.bgmClips,
@@ -760,7 +807,7 @@ fun TimelineScreen(
         if (!state.isRangeSelecting && !state.localizationOpen) {
             // 음원 단계 — 음원분리/음원삽입 두 버튼을 가로 양쪽 끝까지 채워 양쪽 정렬.
             // 좌: 음원분리, 우: 음원삽입. weight(1f) 로 절반씩 균등 분배.
-            if (state.currentStep == TimelineStep.AudioSources) {
+            if (showAudioSourcesContent) {
                 val sepLabel = when (state.separationStatus) {
                     AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
                     AutoJobStatus.FAILED -> "❌ 다시 시도"
@@ -865,6 +912,49 @@ fun TimelineScreen(
                         }
                     }
                 }
+                // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
+                // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
+                if (com.vibi.cmp.platform.RuntimeFlags.soundDeckEnabled) {
+                    val deckCards = remember(state.separationDirectives, state.bgmClips) {
+                        com.vibi.cmp.ui.timeline.sounddeck.buildSoundDeck(
+                            separations = state.separationDirectives,
+                            bgmClips = state.bgmClips,
+                        )
+                    }
+                    val deckDisabled = state.audioSeparation?.step ==
+                        com.vibi.shared.ui.timeline.AudioSeparationStep.PROCESSING ||
+                        state.isLocalizationBusy()
+                    Spacer(Modifier.height(8.dp))
+                    com.vibi.cmp.ui.timeline.sounddeck.SoundDeck(
+                        cards = deckCards,
+                        disabled = deckDisabled,
+                        onToggleStem = { directiveId, stemId, selected ->
+                            viewModel.onSetStemSelectionForDirective(directiveId, stemId, selected)
+                        },
+                        onUpdateStemVolume = { directiveId, stemId, volume ->
+                            viewModel.onSetStemVolumeForDirective(directiveId, stemId, volume)
+                        },
+                        onUpdateBgmVolume = { clipId, v -> viewModel.onUpdateBgmVolume(clipId, v) },
+                        onDeleteBgm = { clipId -> viewModel.onDeleteBgmClip(clipId) },
+                        // 분리/BGM 진입은 위 버튼 row 가 담당 — deck add 슬롯은 사용 안 함.
+                        onAddSeparation = null,
+                        onAddBgm = null,
+                    )
+                    // 영상 다듬기 진입 — stepper 가 사라진 unified 모드에선 본 카드가 유일한 진입점.
+                    // 분리/자막/더빙 진행 중엔 disabled (commit 시 산출물 wipe 위험 방지).
+                    if (unifiedScroll && !state.isSegmentEditMode && !state.isRangeSelecting) {
+                        val firstSegIdForEdit = state.segments.firstOrNull {
+                            it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+                        }?.id
+                        com.vibi.cmp.ui.timeline.sounddeck.EditEntryCard(
+                            enabled = firstSegIdForEdit != null && !deckDisabled,
+                            onClick = {
+                                val segId = firstSegIdForEdit ?: return@EditEntryCard
+                                viewModel.onEnterSegmentEditMode(segId)
+                            },
+                        )
+                    }
+                }
             }
             androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -872,7 +962,7 @@ fun TimelineScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // 자막/더빙 단계 액션 — 자막/더빙 생성 + 자막 편집.
-                if (state.currentStep == TimelineStep.SubtitleDub) {
+                if (showSubtitleDubContent) {
                     val localizationBusy = state.isLocalizationBusy()
                     val localizationLabel = when {
                         state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
@@ -909,7 +999,7 @@ fun TimelineScreen(
 
         // 상세 편집 패널 — lang chip 으로 lang 필터 + cue list + 선택 cue 의 스타일/텍스트 조정.
         // 영상 미리보기 위에 자막 overlay 가 즉시 반영되어 사용자가 보면서 조정 가능.
-        if (state.currentStep == TimelineStep.SubtitleDub &&
+        if (showSubtitleDubContent &&
             state.showDetailEdit && !state.isRangeSelecting && !state.localizationOpen) {
             DetailEditPanel(
                 state = state,
@@ -930,7 +1020,7 @@ fun TimelineScreen(
         }
 
         // 자막/더빙 생성 인라인 패널 — 자막/더빙 단계 + 영상편집 모드 아닐 때.
-        if (state.currentStep == TimelineStep.SubtitleDub &&
+        if (showSubtitleDubContent &&
             state.localizationOpen && !state.isSegmentEditMode) {
             Column(
                 modifier = Modifier
@@ -1102,8 +1192,9 @@ fun TimelineScreen(
     }
 
     // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
-    // 자막/더빙 단계에서는 노출 안 함.
-    val chatFabVisible = state.currentStep != TimelineStep.SubtitleDub &&
+    // 자막/더빙 단계에서는 노출 안 함. unified 모드(stepper 숨김) 에선 단계 구분 없음 — localizationOpen
+    // 같은 다른 가시성 가드가 이미 자막/더빙 패널 열린 시간 동안 FAB 를 가린다.
+    val chatFabVisible = (unifiedScroll || state.currentStep != TimelineStep.SubtitleDub) &&
         !state.isSegmentEditMode &&
         !state.isRangeSelecting &&
         !state.localizationOpen &&
@@ -1141,6 +1232,33 @@ fun TimelineScreen(
             ) {
                 Text("Chat", fontSize = 22.sp)
             }
+        }
+    }
+
+    // 하단 고정 A/B 미리듣기 바 — directive 가 1 개 이상이고 다른 패널 안 떠 있을 때만 노출.
+    // ChatFab 위가 아닌 화면 하단(navigationBarsPadding 영역 위) 고정.
+    val abBarVisible = unifiedScroll &&
+        state.separationDirectives.isNotEmpty() &&
+        !state.isSegmentEditMode &&
+        !state.localizationOpen &&
+        !state.showDetailEdit &&
+        !state.showAudioSeparationSheet &&
+        !state.showSubtitleSheet &&
+        !state.showScriptReviewSheet &&
+        !state.showAppendSheet &&
+        !state.showFrameSheet &&
+        !state.showTextOverlaySheet
+    if (abBarVisible) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding(),
+        ) {
+            com.vibi.cmp.ui.timeline.sounddeck.ABPreviewBar(
+                mode = state.previewMode,
+                onToggle = { viewModel.onTogglePreviewMode() },
+            )
         }
     }
     } // close Box wrapper
@@ -1203,7 +1321,7 @@ fun TimelineScreen(
 
 
     // 자막 sheet — 자막/더빙 단계 + 영상편집 모드 아닐 때만.
-    if (state.currentStep == TimelineStep.SubtitleDub &&
+    if (showSubtitleDubContent &&
         state.showSubtitleSheet && !state.isSegmentEditMode) {
         InsertSubtitleSheet(
             playbackPositionMs = state.playbackPositionMs,
@@ -1225,7 +1343,7 @@ fun TimelineScreen(
     }
 
     // BGM 클립 액션 sheet — 음원 단계에서 lane 의 막대를 탭했을 때 selectedBgmClipId 가 set 되면 표시.
-    if (state.currentStep == TimelineStep.AudioSources) {
+    if (showAudioSourcesContent) {
         state.bgmClips.firstOrNull { it.id == state.selectedBgmClipId }?.let { selectedClip ->
             BgmActionSheet(
                 clip = selectedClip,
@@ -1241,7 +1359,7 @@ fun TimelineScreen(
     // 음성분리 sheet — 음원 단계 + 영상편집 모드 아닐 때만.
     state.audioSeparation
         ?.takeIf {
-            state.currentStep == TimelineStep.AudioSources &&
+            showAudioSourcesContent &&
                 state.showAudioSeparationSheet && !state.isSegmentEditMode
         }
         ?.let { sepState ->

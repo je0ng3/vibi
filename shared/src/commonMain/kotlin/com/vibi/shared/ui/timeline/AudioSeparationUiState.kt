@@ -75,3 +75,13 @@ fun stemDisplayLabel(stem: Stem): String = when {
     stem.speakerIndex != null -> "화자 ${stem.speakerIndex + 1}"
     else -> stem.label.ifBlank { stem.stemId }
 }
+
+/**
+ * [stemDisplayLabel] 의 stemId-only 변종 — directive 의 [com.vibi.shared.domain.repository.StemSelection]
+ * 처럼 Stem 객체가 없는 경로에서 사용. label 폴백이 stemId 본인.
+ */
+fun stemDisplayLabelFromId(stemId: String): String = when {
+    stemId == Stem.STEM_ID_BACKGROUND -> "배경음"
+    stemId == Stem.STEM_ID_VOICE_ALL -> "모든 화자"
+    else -> Stem.speakerIndexFromId(stemId)?.let { "화자 ${it + 1}" } ?: stemId
+}

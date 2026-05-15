@@ -142,6 +142,14 @@ sealed class ExportVariantPickerState {
  */
 enum class TimelineStep { Edit, AudioSources, SubtitleDub }
 
+/**
+ * 미리듣기 모드 — Sound Deck UI 의 A/B 비교용.
+ *  - [MIX]   : 현재 사용자가 만든 mix (분리 stem volume 적용 + directive range 내 video mute).
+ *  - [ORIGINAL]: directive 와 무관하게 영상 원본 audio 만 들림 (분리 stem 전부 mute, video 항상 unmute).
+ * 분리된 directive 가 하나도 없으면 사실상 의미 없음 — UI 에서 바 자체 hidden.
+ */
+enum class PreviewMode { MIX, ORIGINAL }
+
 data class TimelineUiState(
     val projectId: String = "",
     val segments: List<Segment> = emptyList(),
@@ -313,6 +321,8 @@ data class TimelineUiState(
      * 경고 생성을 건너뛰고 즉시 이동한다.
      */
     val pendingStepWarning: StepTransitionWarning? = null,
+    /** Sound Deck A/B 미리듣기 모드. 기본 [PreviewMode.MIX] — 사용자가 만든 mix 들림. */
+    val previewMode: PreviewMode = PreviewMode.MIX,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -4148,6 +4158,47 @@ class TimelineViewModel constructor(
 
     fun onToggleMuteOriginalSegmentAudio() {
         updateSeparation { it.copy(muteOriginalSegmentAudio = !it.muteOriginalSegmentAudio) }
+    }
+
+    /**
+     * SoundDeck 카드용 — directive 를 id 로 직접 지정해 stem 한 개의 selected/volume 갱신.
+     * [onToggleStemSelection] / [onUpdateStemVolume] 는 sheet edit-mode (editingDirectiveId set)
+     * 전제라 카드처럼 sheet 없이 직접 조작하려면 본 helper 가 필요.
+     */
+    private fun updateDirectiveStemSelection(
+        directiveId: String,
+        stemId: String,
+        transform: (StemSelection) -> StemSelection,
+    ) {
+        viewModelScope.launch {
+            val existing = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId }
+                ?: return@launch
+            val updated = existing.selections.map { sel ->
+                if (sel.stemId == stemId) transform(sel) else sel
+            }
+            separationDirectiveRepository.add(existing.copy(selections = updated))
+        }
+    }
+
+    fun onSetStemSelectionForDirective(directiveId: String, stemId: String, selected: Boolean) {
+        updateDirectiveStemSelection(directiveId, stemId) { it.copy(selected = selected) }
+    }
+
+    fun onSetStemVolumeForDirective(directiveId: String, stemId: String, volume: Float) {
+        val clamped = volume.coerceIn(0f, 2f)
+        updateDirectiveStemSelection(directiveId, stemId) { it.copy(volume = clamped) }
+    }
+
+    /**
+     * Sound Deck A/B 미리듣기 토글 — 원본(영상 audio 만) ↔ 내 믹스(분리 stem + directive 적용).
+     * 화면측에서 stem mixer / video segment volume 가 본 필드를 보고 합쳐 적용.
+     */
+    fun onTogglePreviewMode() {
+        val next = when (_uiState.value.previewMode) {
+            PreviewMode.MIX -> PreviewMode.ORIGINAL
+            PreviewMode.ORIGINAL -> PreviewMode.MIX
+        }
+        _uiState.update { it.copy(previewMode = next) }
     }
 
     /**
