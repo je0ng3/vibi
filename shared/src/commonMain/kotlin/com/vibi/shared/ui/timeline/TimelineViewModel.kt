@@ -143,6 +143,23 @@ sealed class ExportVariantPickerState {
 enum class TimelineStep { Edit, AudioSources, SubtitleDub }
 
 /**
+ * 영상 다듬기 모드에서 액션(복제/삭제/볼륨/속도) 이 적용될 트랙.
+ *
+ * 사용자가 같은 구간을 선택한 채 어떤 트랙(영상 자체 / BGM / 분리된 stem) 에 액션을 적용할지
+ * 선택. multi-select 가능 — 모두 선택 시 한번에 동일 액션이 각 트랙에 적용.
+ *
+ * - [Video] : 영상 segment 자체. split/delete/volume/speed 4종 액션 적용 가능.
+ * - [Bgm]   : 그 구간에 시간상 걸친 BGM 클립들. clipId null = 전체, 명시 시 그 한 클립만.
+ * - [Stem]  : 그 구간 안 분리 directive 의 같은 stemId stem. 의미상 볼륨/음소거만 활성 —
+ *             stem 의 복제/삭제는 SoundCard 토글로 분리 노출하므로 본 모드에서 no-op.
+ */
+sealed class EditTarget {
+    object Video : EditTarget()
+    data class Bgm(val clipId: String? = null) : EditTarget()
+    data class Stem(val stemId: String) : EditTarget()
+}
+
+/**
  * 미리듣기 모드 — Sound Deck UI 의 A/B 비교용.
  *  - [MIX]   : 현재 사용자가 만든 mix (분리 stem volume 적용 + directive range 내 video mute).
  *  - [ORIGINAL]: directive 와 무관하게 영상 원본 audio 만 들림 (분리 stem 전부 mute, video 항상 unmute).
@@ -196,6 +213,12 @@ data class TimelineUiState(
      * 띄움. 음성분리 진입과 명확히 분리하기 위한 플래그.
      */
     val isSegmentEditMode: Boolean = false,
+    /**
+     * 다듬기 모드에서 액션이 적용될 트랙. 진입 시 호출자가 default 지정 (영상 다듬기 hero →
+     * `{Video}`, SoundCard 의 다듬기 진입 → 해당 트랙만). UI 칩 row 로 사용자가 변경 가능.
+     * 모드 종료 시 비움.
+     */
+    val editTargets: Set<EditTarget> = setOf(EditTarget.Video),
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
     val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
@@ -2081,7 +2104,10 @@ class TimelineViewModel constructor(
      * 진입 즉시 현 timeline 스냅샷을 [preEditBaseline] 에 저장 — 취소(X) 시 즉시 복원.
      * 영상편집 모드의 undo 스택은 새로 시드되어 메인 timeline 스택과 분리된다.
      */
-    fun onEnterSegmentEditMode(segmentId: String) {
+    fun onEnterSegmentEditMode(
+        segmentId: String,
+        targets: Set<EditTarget> = setOf(EditTarget.Video),
+    ) {
         val state = _uiState.value
         val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
@@ -2093,6 +2119,7 @@ class TimelineViewModel constructor(
         _uiState.value = state.copy(
             isRangeSelecting = true,
             isSegmentEditMode = true,
+            editTargets = targets.ifEmpty { setOf(EditTarget.Video) },
             rangeTargetSegmentId = seg.id,
             selectedSegmentId = seg.id,
             pendingRangeStartMs = segStart,
@@ -2183,12 +2210,37 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             isSegmentEditMode = false,
+            editTargets = setOf(EditTarget.Video),
             rangeTargetSegmentId = null,
             showRangeActionSheet = false,
         )
         editModeUndoRedoManager.clear()
         preEditBaseline = null
         updateUndoRedoState()
+    }
+
+    /**
+     * 다듬기 모드 활성 시 사용자가 칩으로 트랙 multi-select 토글. 빈 set 으로는 못 만듦 —
+     * 사용자가 모두 해제하면 자동으로 Video 다시 추가.
+     */
+    fun onToggleEditTarget(target: EditTarget) {
+        val state = _uiState.value
+        if (!state.isSegmentEditMode) return
+        val next = state.editTargets.toMutableSet().also {
+            if (!it.add(target)) it.remove(target)
+        }
+        _uiState.value = state.copy(
+            editTargets = next.ifEmpty { setOf(EditTarget.Video) },
+        )
+    }
+
+    /** chip row 의 "다 끄고 새로 선택" 같은 강제 set. 빈 set 은 Video 로 폴백. */
+    fun onSetEditTargets(targets: Set<EditTarget>) {
+        val state = _uiState.value
+        if (!state.isSegmentEditMode) return
+        _uiState.value = state.copy(
+            editTargets = targets.ifEmpty { setOf(EditTarget.Video) },
+        )
     }
 
     /**
@@ -2206,15 +2258,20 @@ class TimelineViewModel constructor(
 
     /**
      * commit 본체 — sequential 호출 (onAdvanceStep 의 자동 commit) 가능하도록 suspend 로 분리.
+     *
+     * 정책 변경 (기획: "구간 × 트랙 N:M 편집") — 더 이상 산출물(BGM/분리/자막/더빙) wipe 안 함.
+     * 다듬기 모드의 액션은 [editTargets] 가 지정한 트랙에만 mutate 됐고, 다른 트랙의 산출물은
+     * 그대로 유효. 영상 segment 가 split/delete 되어 글로벌 timeline 길이가 변한 경우의
+     * BGM/stem 시간축 보정은 별도 sync (후속 phase) 로 다룬다.
      */
     private suspend fun commitSegmentEdit() {
-        resetTimelineDerivedResults()
         editModeUndoRedoManager.clear()
         preEditBaseline = null
         mainUndoManagerForCurrent().clear()
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             isSegmentEditMode = false,
+            editTargets = setOf(EditTarget.Video),
             rangeTargetSegmentId = null,
             showRangeActionSheet = false,
             selectedSegmentId = null,
