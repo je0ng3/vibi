@@ -2620,9 +2620,10 @@ class TimelineViewModel constructor(
                 lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
             }
             applyBgmRangeDuplicate(start, end)
-            // directive ripple — 구간 뒤 directive 만 width 만큼 우측 shift. 구간 안 directive 복제는
-            // 미지원 (TODO): 동일 stem audio 를 두 위치에서 동시 재생하면 stem mixer activeGroup 충돌.
+            // directive ripple — 순서 중요: shift 가 inside directive 의 rangeStart 를 안 옮긴 상태에서
+            // duplicate 가 안 directive 를 새 위치(+width)에 복제. 둘이 합쳐져 원본 + 복제 모두 보존.
             applyDirectiveShiftAfter(after = end, deltaMs = end - start)
+            applyDirectiveDuplicateInside(start, end)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastDuplicated?.id?.let { selectSegmentInEditInternal(it) }
@@ -2710,8 +2711,9 @@ class TimelineViewModel constructor(
                 lastMiddleId = r.middle.id
             }
             applyBgmRangeSpeed(start, end, newSpeed)
-            // 구간 뒤 directive shift. 구간 안 directive 의 effective duration 재계산은 미지원 (TODO):
-            // stem audio 는 원본 속도로 고정이라 timeline 만 압축/확장하면 음성·영상 sync 어긋남.
+            // directive 정리 — speed 와 겹치는 directive 는 stem tempo mismatch 로 sync 깨짐 →
+            // 삭제 후 재분리 유도. delete 가 먼저, shift 는 살아남은 downstream directive 만 처리.
+            applyDirectiveDeleteOverlapping(start, end)
             applyDirectiveShiftAfter(after = end, deltaMs = rippleDelta)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
@@ -2941,8 +2943,6 @@ class TimelineViewModel constructor(
     /**
      * `after` 시점 이후에 시작하는 directive 들의 rangeStart/End 를 +deltaMs 평행 이동.
      * duplicate (delta = +width) / speed (delta = newEffDur - oldEffDur) downstream ripple 공용.
-     * `after` 안에 걸친 directive 는 본 함수에선 손대지 않음 — duplicate/speed 의 inside-directive
-     * 처리는 별도 정책 (TODO: speed change 시 inside directive 의 effective duration 재계산).
      */
     private suspend fun applyDirectiveShiftAfter(after: Long, deltaMs: Long) {
         if (deltaMs == 0L) return
@@ -2953,6 +2953,40 @@ class TimelineViewModel constructor(
                 rangeEndMs = (it.rangeEndMs + deltaMs).coerceAtLeast(0L),
             ) }
         separationDirectiveRepository.addAll(shifted)
+    }
+
+    /**
+     * 구간 `[start, end]` 에 완전히 포함된 directive 를 새 id 로 복제해 `[ds+width, de+width]` 에 삽입.
+     * stem audio URL · sourceOffsetMs 보존 — 같은 audio 가 두 위치에서 재생. 각 piece 는 독립 directive
+     * id 라 stem mixer 의 activeGroup 모델과 호환 (playback 위치가 한 번에 하나의 directive 안).
+     *
+     * 부분 겹침 directive 는 복제 대상에서 제외 — 자른 stem 의 부분 재생은 의미상 모호하고, 사용자가
+     * 의도한 "이 구간 그대로 한 번 더" 를 위반.
+     */
+    private suspend fun applyDirectiveDuplicateInside(start: Long, end: Long) {
+        val width = end - start
+        if (width <= 0L) return
+        val clones = _uiState.value.separationDirectives
+            .filter { it.rangeStartMs >= start && it.rangeEndMs <= end }
+            .map { it.copy(
+                id = generateId(),
+                rangeStartMs = it.rangeStartMs + width,
+                rangeEndMs = it.rangeEndMs + width,
+            ) }
+        separationDirectiveRepository.addAll(clones)
+    }
+
+    /**
+     * 구간 `[start, end]` 와 조금이라도 겹치는 directive 를 모두 삭제. speed 변경 시 stem audio 는
+     * 원본 tempo 라 video 와 sync 가 깨지므로 보존 불가 — 사용자에게 재분리 유도가 가장 정직한 UX.
+     * (split/scale 로 살리려면 directive 에 appliedSpeedScale 추가 + BFF atempo wiring 필요 — 별도
+     * 작업으로 두고 본 단계에선 conservative delete.)
+     */
+    private suspend fun applyDirectiveDeleteOverlapping(start: Long, end: Long) {
+        val toDelete = _uiState.value.separationDirectives
+            .filter { it.rangeEndMs > start && it.rangeStartMs < end }
+            .map { it.id }
+        toDelete.forEach { separationDirectiveRepository.delete(it) }
     }
 
     // ── 채팅 dispatcher 전용 code-path ────────────────────────────────────────────
