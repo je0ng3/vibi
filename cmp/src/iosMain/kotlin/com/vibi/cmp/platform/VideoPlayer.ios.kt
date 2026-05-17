@@ -232,7 +232,14 @@ private fun SingleItemVideoPlayer(
             name = AVPlayerItemDidPlayToEndTimeNotification,
             `object` = null,
             queue = null,
-            usingBlock = { _ -> onEndedState.value() }
+            usingBlock = { _ ->
+                // 폴링이 currentTime(=endTime) 을 재보고해서 ViewModel state 가 0 → endMs 로
+                // 덮이는 race 차단. player 를 trimStart 로 되돌린 뒤 onEnded 콜.
+                player.seekToTime(
+                    CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
+                )
+                onEndedState.value()
+            }
         )
         player.seekToTime(
             CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
@@ -348,7 +355,11 @@ private fun MultiSegmentVideoPlayer(
             name = AVPlayerItemDidPlayToEndTimeNotification,
             `object` = null,
             queue = null,
-            usingBlock = { _ -> onEndedState.value() }
+            usingBlock = { _ ->
+                // 폴링 race 차단 — 0 으로 직접 되돌린 뒤 onEnded.
+                p.seekToTime(CMTimeMakeWithSeconds(0.0, preferredTimescale = 1000))
+                onEndedState.value()
+            }
         )
         onDispose {
             NSNotificationCenter.defaultCenter.removeObserver(bgObserver)

@@ -41,7 +41,13 @@ actual fun VideoPlayer(
                 applyPerItemPlayback(exoPlayer, items)
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) onEnded()
+                if (playbackState == Player.STATE_ENDED) {
+                    // STATE_ENDED 직후 polling 이 currentPosition(=endMs) 을 재보고해서 ViewModel
+                    // state 가 0 → endMs 로 덮이는 race 차단. player 자체를 0 으로 되돌려 currentPosition
+                    // 이 0 이 된 뒤에 onEnded 호출.
+                    exoPlayer.seekTo(0, 0L)
+                    onEnded()
+                }
             }
         }
         exoPlayer.addListener(listener)
