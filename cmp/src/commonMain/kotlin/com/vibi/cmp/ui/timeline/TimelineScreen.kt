@@ -728,6 +728,9 @@ fun TimelineScreen(
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
                 directiveColor = tokens.timelineBarDirective,
                 videoPeaks = videoPeaks,
+                primarySourceUri = state.videoUri,
+                primarySourceDurationMs = state.segments.firstOrNull { it.sourceUri == state.videoUri }
+                    ?.durationMs ?: state.videoDurationMs,
                 processingSeparations = processingOverlays,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
                 onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
@@ -1577,6 +1580,10 @@ private fun UnifiedTimelineBar(
      * 비어 있으면 (Android stub / 추출 실패) 기존 회색 strip + directive 막대 fallback.
      */
     videoPeaks: List<Float> = emptyList(),
+    /** Peak 가 추출된 source URI — segment.sourceUri 가 일치하는 segment 만 peak lookup. 다른 source 영역은 0. */
+    primarySourceUri: String = "",
+    /** Peak source 의 raw duration (ms). segment trim/speed 역매핑에 사용. */
+    primarySourceDurationMs: Long = 0L,
     /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
     processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
     onSegmentTap: (String) -> Unit = {},
@@ -1745,9 +1752,12 @@ private fun UnifiedTimelineBar(
                 val hasWaveform = videoPeaks.isNotEmpty() && totalMs > 0L
                 if (hasWaveform) {
                     TimelineWaveformBackground(
-                        peaks = videoPeaks,
+                        sourcePeaks = videoPeaks,
+                        segments = segments,
+                        primarySourceUri = primarySourceUri,
+                        sourceDurationMs = primarySourceDurationMs,
                         totalMs = totalMs,
-                        directiveRanges = directives.map { it.rangeStartMs..it.rangeEndMs },
+                        directives = directives,
                         defaultBarColor = markerColor.copy(alpha = 0.45f),
                         highlightBarColor = accent,
                         trackBg = trackColor.copy(alpha = 0.55f),
@@ -2150,37 +2160,103 @@ private fun BoxScope.DirectiveOverlayRow(
  * 재생바 strip 배경에 영상 audio 파형을 그린다. directive 구간에 속하는 막대는 highlightBarColor 로,
  * 그 외는 defaultBarColor 로 칠해 음원분리 적용 영역을 시각 구분.
  *
+ * 각 막대의 시각 높이에 다음을 모두 반영:
+ *  - **Segment trim/speed**: timeline 위치 → segment 내부 sourceMs 역매핑 후 peak lookup. 한 timeline 위치가
+ *    어느 source frame 을 가리키는지 정확히 계산해 trim 잘라낸 영역은 노출 안 되고 speed=2x 면 같은 시간 폭에
+ *    두 배 분량의 source peak 가 압축돼 보임.
+ *  - **Segment 볼륨**: 해당 segment 의 volumeScale 을 peak amplitude 에 곱한다.
+ *  - **Directive stem 볼륨**: directive 구간 안에서는 (원음 mute 여부 + 선택된 stem 중 최대 volume) 합산
+ *    스칼라를 peak 에 곱한다 — voice 만 1.0 + 원음 mute → 분리된 voice 만 들리는 상태가 1.0 으로 보존.
+ *
+ * Peak 원본은 [primarySourceUri] 와 매칭되는 segment 에만 적용 (다중 source 영상의 다른 source 영역은 0).
+ *
  * - 파형 amplitude 는 sqrt 보정해 작은 peak 도 살짝 보이게 — WaveformPlayBar 와 같은 톤.
  * - tap/drag 는 본 composable 안에서 처리 안 함. 호출자(UnifiedTimelineBar) 가 invisible overlay 로 처리.
  */
 @Composable
 private fun TimelineWaveformBackground(
-    peaks: List<Float>,
+    sourcePeaks: List<Float>,
+    segments: List<com.vibi.shared.domain.model.Segment>,
+    primarySourceUri: String,
+    sourceDurationMs: Long,
     totalMs: Long,
-    directiveRanges: List<LongRange>,
+    directives: List<com.vibi.shared.domain.model.SeparationDirective>,
     defaultBarColor: Color,
     highlightBarColor: Color,
     trackBg: Color,
     modifier: Modifier = Modifier,
 ) {
+    // directive 별 effective scale — 매 frame 재계산하지 않도록 directives 변경 시에만.
+    val directiveOverlays = remember(directives) {
+        directives.map { d ->
+            val originalContrib = if (d.muteOriginalSegmentAudio) 0f else 1f
+            val stemContrib = d.selections
+                .filter { it.selected }
+                .maxOfOrNull { it.volume } ?: 0f
+            DirectiveScaleOverlay(d.rangeStartMs, d.rangeEndMs, (originalContrib + stemContrib).coerceIn(0f, 1.5f))
+        }
+    }
+    // segment 누적 (acc, segment) — timelineMs → segment 역검색을 N=240 번 돌릴 때 O(N×S) 보다 빠르도록 미리 펼침.
+    val segmentSpans = remember(segments) {
+        var acc = 0L
+        segments.map { seg ->
+            val span = SegmentSpan(acc, acc + seg.effectiveDurationMs, seg)
+            acc += seg.effectiveDurationMs
+            span
+        }
+    }
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
             .background(trackBg),
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val n = peaks.size
+            val n = sourcePeaks.size
             if (n == 0 || totalMs <= 0L) return@Canvas
             val slot = size.width / n
             val barWidth = (slot * 0.6f).coerceAtLeast(1.5f)
             val cy = size.height / 2f
             val maxHalfHeight = size.height / 2f - 3f
             for (i in 0 until n) {
-                val peak = peaks[i].coerceIn(0f, 1f)
-                val h = maxOf(1.5f, kotlin.math.sqrt(peak) * maxHalfHeight)
+                val timelineMs = ((i + 0.5f) / n * totalMs).toLong()
+
+                // segment 역매핑: timelineMs 가 속한 segment 의 volumeScale + sourceMs 위치 → peak.
+                var segVolume = 1f
+                var sourcePeak = 0f
+                for (idx in segmentSpans.indices) {
+                    val span = segmentSpans[idx]
+                    val inside = if (idx == segmentSpans.lastIndex) {
+                        timelineMs in span.startMs..span.endMs
+                    } else {
+                        timelineMs in span.startMs until span.endMs
+                    }
+                    if (inside) {
+                        segVolume = span.segment.volumeScale
+                        if (span.segment.sourceUri == primarySourceUri && sourceDurationMs > 0L) {
+                            val rel = (timelineMs - span.startMs).coerceAtLeast(0L)
+                            val sourceMs = (rel * span.segment.speedScale).toLong() + span.segment.trimStartMs
+                            val peakIdx = ((sourceMs.toDouble() / sourceDurationMs) * n).toInt()
+                                .coerceIn(0, n - 1)
+                            sourcePeak = sourcePeaks[peakIdx]
+                        }
+                        break
+                    }
+                }
+
+                // directive overlay scale + 시각 컬러 분기 결정.
+                var directiveScale = 1f
+                var inDirective = false
+                for (ov in directiveOverlays) {
+                    if (timelineMs in ov.startMs..ov.endMs) {
+                        directiveScale = ov.scale
+                        inDirective = true
+                        break
+                    }
+                }
+
+                val effectivePeak = (sourcePeak * segVolume * directiveScale).coerceIn(0f, 1f)
+                val h = maxOf(1.5f, kotlin.math.sqrt(effectivePeak) * maxHalfHeight)
                 val x = slot * i + (slot - barWidth) / 2f
-                val msAtCenter = ((i + 0.5f) / n * totalMs).toLong()
-                val inDirective = directiveRanges.any { msAtCenter in it }
                 drawRect(
                     color = if (inDirective) highlightBarColor else defaultBarColor,
                     topLeft = Offset(x, cy - h),
@@ -2190,6 +2266,13 @@ private fun TimelineWaveformBackground(
         }
     }
 }
+
+private data class DirectiveScaleOverlay(val startMs: Long, val endMs: Long, val scale: Float)
+private data class SegmentSpan(
+    val startMs: Long,
+    val endMs: Long,
+    val segment: com.vibi.shared.domain.model.Segment,
+)
 
 /**
  * BGM 클립 액션 시트 — 타임라인 lane 의 막대 탭 시 ModalBottomSheet 로 표시.
