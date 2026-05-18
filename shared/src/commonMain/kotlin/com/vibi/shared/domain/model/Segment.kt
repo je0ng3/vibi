@@ -72,10 +72,12 @@ fun Segment.hasNonTrivialEdits(): Boolean {
  * 검사 항목:
  *  - 다중 segment
  *  - segment 별 [hasNonTrivialEdits] (trim / volume / speed)
- *  - 사용자 추가 합성 항목: BGM, image overlay, text overlay, separation directive
+ *  - 사용자 추가 합성 항목: BGM, separation directive
  *  - project 수준 frame/canvas 설정: [EditProject.frameWidth]/[EditProject.frameHeight]/
  *    [EditProject.backgroundColorHex]/[EditProject.videoScale]/
  *    [EditProject.videoOffsetXPct]/[EditProject.videoOffsetYPct]
+ *
+ * image overlay / text overlay 는 export 출력에 영향 없으므로 (preview 전용) 트리거에서 제외.
  *
  * default 기준값 (EditProject 기본 생성자):
  *  - frameWidth/frameHeight = 0 (미설정 — 첫 segment 의 native size 사용) **또는** 첫 segment 의
@@ -91,15 +93,11 @@ fun isProjectEdited(
     project: EditProject,
     segments: List<Segment>,
     bgmClips: List<BgmClip> = emptyList(),
-    imageClips: List<ImageClip> = emptyList(),
-    textOverlays: List<TextOverlay> = emptyList(),
     separationDirectives: List<SeparationDirective> = emptyList(),
 ): Boolean {
     if (segments.size > 1) return true
     if (segments.any { it.hasNonTrivialEdits() }) return true
     if (bgmClips.isNotEmpty()) return true
-    if (imageClips.isNotEmpty()) return true
-    if (textOverlays.isNotEmpty()) return true
     if (separationDirectives.isNotEmpty()) return true
     // frame size: 첫 segment 의 native size 와 매칭되거나 미설정(0) 이면 default 로 간주.
     // CreateProjectWithInitialVideoSegmentUseCase 가 첫 segment 의 width/height 를 그대로

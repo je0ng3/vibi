@@ -11,11 +11,9 @@ import com.vibi.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.DubClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
-import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.SubtitleClipRepository
-import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.usecase.share.GallerySaver
 import com.vibi.shared.platform.readFileBytes
 import com.vibi.shared.ui.export.ExportPlatformAdapter
@@ -45,9 +43,7 @@ class SaveAllVariantsUseCase(
     private val editProjectRepository: EditProjectRepository,
     private val dubClipRepository: DubClipRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
-    private val imageClipRepository: ImageClipRepository,
     private val segmentRepository: SegmentRepository,
-    private val textOverlayRepository: TextOverlayRepository,
     private val bgmClipRepository: BgmClipRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val bffApi: BffApi,
@@ -86,12 +82,10 @@ class SaveAllVariantsUseCase(
         require(targetLanguages.isNotEmpty()) { "No variants selected" }
 
         val dubClips = dubClipRepository.observeClips(projectId).first()
-        val imageClips = imageClipRepository.observeClips(projectId).first()
-        val textOverlays = textOverlayRepository.observeOverlays(projectId).first()
         val bgmClips = bgmClipRepository.observeClips(projectId).first()
         val separationDirectives = separationDirectiveRepository.getByProject(projectId)
 
-        val noEdits = imageClips.isEmpty() && textOverlays.isEmpty() && bgmClips.isEmpty() &&
+        val noEdits = bgmClips.isEmpty() &&
             separationDirectives.isEmpty() && segments.size == 1 &&
             segments[0].trimStartMs == 0L && segments[0].trimEndMs == 0L
 
@@ -121,11 +115,6 @@ class SaveAllVariantsUseCase(
                         publishProgress()
                         return@async segments[0].sourceUri
                     }
-                    val variantSubtitles = when {
-                        isOriginal -> emptyList()
-                        isOriginalSubtitle -> allSubtitleClips.filter { it.languageCode.isBlank() }
-                        else -> allSubtitleClips.filter { it.languageCode == languageCode }
-                    }
                     val audioOverridePath: String? = if (isOriginal || isOriginalSubtitle) null
                         else project.dubbedAudioPaths[languageCode] ?: project.dubbedAudioPath
 
@@ -134,16 +123,12 @@ class SaveAllVariantsUseCase(
                         outputLanguageCode = languageCode,
                         segments = segments,
                         dubClips = dubClips,
-                        subtitleClips = variantSubtitles,
-                        imageClips = imageClips,
-                        textOverlays = textOverlays,
                         bgmClips = bgmClips,
                         separationDirectives = separationDirectives,
                         frameWidth = project.frameWidth,
                         frameHeight = project.frameHeight,
                         backgroundColorHex = project.backgroundColorHex,
                         audioOverridePath = audioOverridePath,
-                        burnSubtitles = variantSubtitles.isNotEmpty() || textOverlays.isNotEmpty(),
                         preUploadedInputId = preUploadedInputId,
                     )
                     val outcome = platformAdapter.executeExport(request) { p ->

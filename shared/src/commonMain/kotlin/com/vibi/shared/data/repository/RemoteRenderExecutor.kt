@@ -6,7 +6,6 @@ import com.vibi.shared.data.remote.dto.RenderBgmClip
 import com.vibi.shared.data.remote.dto.RenderConfig
 import com.vibi.shared.data.remote.dto.RenderDubClip
 import com.vibi.shared.data.remote.dto.RenderFrame
-import com.vibi.shared.data.remote.dto.RenderImageClip
 import com.vibi.shared.data.remote.dto.RenderSegment
 import com.vibi.shared.data.remote.dto.RenderSeparationDirective
 import com.vibi.shared.data.remote.dto.RenderSeparationStem
@@ -15,7 +14,6 @@ import com.vibi.shared.domain.usecase.export.BgmClipMixInput
 import com.vibi.shared.domain.usecase.export.DubClipMixInput
 import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
-import com.vibi.shared.domain.usecase.export.ImageClipMixInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
 import com.vibi.shared.domain.usecase.export.SeparationDirectiveInput
 import com.vibi.shared.platform.currentTimeMillis
@@ -43,10 +41,7 @@ class RemoteRenderExecutor(
     override suspend fun renderProject(
         segments: List<SegmentInput>,
         dubClips: List<DubClipMixInput>,
-        imageClips: List<ImageClipMixInput>,
         outputPath: String,
-        assFilePath: String?,
-        fontDir: String?,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
         audioOverridePath: String?,
@@ -61,8 +56,6 @@ class RemoteRenderExecutor(
             val req = buildRenderRequest(
                 segments = segments,
                 dubClips = dubClips,
-                imageClips = imageClips,
-                assFilePath = assFilePath,
                 frame = frame,
                 bgmClips = bgmClips,
                 audioOverridePath = audioOverridePath,
@@ -75,8 +68,6 @@ class RemoteRenderExecutor(
             val jobId = api.submitRenderJob(
                 videoFiles = req.videoParts,
                 audioFiles = req.audioParts,
-                subtitles = req.subtitlePart,
-                imageFiles = req.imageParts,
                 segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
                 audioOverride = req.audioOverridePart,
@@ -109,8 +100,6 @@ class RemoteRenderExecutor(
     suspend fun submitAndAwaitJobId(
         segments: List<SegmentInput>,
         dubClips: List<DubClipMixInput>,
-        imageClips: List<ImageClipMixInput>,
-        assFilePath: String?,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
         audioOverridePath: String?,
@@ -126,8 +115,6 @@ class RemoteRenderExecutor(
             val req = buildRenderRequest(
                 segments = segments,
                 dubClips = dubClips,
-                imageClips = imageClips,
-                assFilePath = assFilePath,
                 frame = frame,
                 bgmClips = bgmClips,
                 audioOverridePath = audioOverridePath,
@@ -140,8 +127,6 @@ class RemoteRenderExecutor(
             val jobId = api.submitRenderJob(
                 videoFiles = req.videoParts,
                 audioFiles = req.audioParts,
-                subtitles = req.subtitlePart,
-                imageFiles = req.imageParts,
                 segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
                 audioOverride = req.audioOverridePart,
@@ -192,8 +177,6 @@ class RemoteRenderExecutor(
     private data class RenderRequest(
         val videoParts: List<BinaryPart>,
         val audioParts: List<BinaryPart>,
-        val subtitlePart: BinaryPart?,
-        val imageParts: List<BinaryPart>,
         val segmentImageParts: List<BinaryPart>,
         val bgmParts: List<BinaryPart>,
         val audioOverridePart: BinaryPart?,
@@ -203,8 +186,6 @@ class RemoteRenderExecutor(
     private suspend fun buildRenderRequest(
         segments: List<SegmentInput>,
         dubClips: List<DubClipMixInput>,
-        imageClips: List<ImageClipMixInput>,
-        assFilePath: String?,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
         audioOverridePath: String?,
@@ -284,22 +265,6 @@ class RemoteRenderExecutor(
             )
         }
 
-        val imageParts = mutableListOf<BinaryPart>()
-        val renderImageClips = mutableListOf<RenderImageClip>()
-        for ((index, clip) in imageClips.withIndex()) {
-            val key = "image_$index"
-            imageParts += BinaryPart(key, "$key.img", readFileBytes(clip.imageFilePath), "image/*")
-            renderImageClips += RenderImageClip(
-                imageFileKey = key,
-                startMs = clip.startMs,
-                endMs = clip.endMs,
-                xPct = clip.xPct,
-                yPct = clip.yPct,
-                widthPct = clip.widthPct,
-                heightPct = clip.heightPct
-            )
-        }
-
         val bgmParts = mutableListOf<BinaryPart>()
         val renderBgmClips = mutableListOf<RenderBgmClip>()
         for ((index, clip) in bgmClips.withIndex()) {
@@ -313,12 +278,6 @@ class RemoteRenderExecutor(
                 sourceTrimStartMs = clip.sourceTrimStartMs,
                 sourceTrimEndMs = clip.sourceTrimEndMs,
             )
-        }
-
-        val subtitlePart = assFilePath?.let { path ->
-            runCatching { readFileBytes(path) }.getOrNull()?.let { bytes ->
-                BinaryPart("subtitles", "subtitles.ass", bytes, "text/plain")
-            }
         }
 
         // audio_override 는 BFF snake_case 매칭 — 키 변경 시 BFF 동시 수정.
@@ -351,7 +310,6 @@ class RemoteRenderExecutor(
         val config = RenderConfig(
             dubClips = renderClips,
             segments = renderSegments,
-            imageClips = renderImageClips,
             frame = frame?.let {
                 RenderFrame(
                     width = it.width,
@@ -370,8 +328,6 @@ class RemoteRenderExecutor(
         return RenderRequest(
             videoParts = videoParts,
             audioParts = audioParts,
-            subtitlePart = subtitlePart,
-            imageParts = imageParts,
             segmentImageParts = segmentImageParts,
             bgmParts = bgmParts,
             audioOverridePart = audioOverridePart,

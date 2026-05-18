@@ -3,11 +3,9 @@ package com.vibi.shared.domain.usecase.render
 import com.vibi.shared.domain.model.isProjectEdited
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
-import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.repository.RenderRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
-import com.vibi.shared.domain.repository.TextOverlayRepository
 import kotlinx.coroutines.flow.first
 
 /**
@@ -21,7 +19,7 @@ enum class RenderKind { AUDIO, VIDEO }
  * jobId 를 보장한 뒤 반환한다. [kind] 에 따라 audio-only 또는 video render 를 별도 슬롯으로 캐싱.
  *
  * 동작:
- *  1. project + segments + bgm/image/text/separation 조회. `isProjectEdited(...) == false` 면
+ *  1. project + segments + bgm/separation 조회. `isProjectEdited(...) == false` 면
  *     단일 segment + 모든 default + 추가 합성 항목 없음 → 원본 영상 그대로 사용 가능.
  *     `null` 반환 (호출자가 segment[0].sourceUri 사용).
  *  2. `project.isRenderStale == false` 이고 [kind] 에 해당하는 jobId 가 있으면 그대로 재사용.
@@ -36,9 +34,7 @@ class EnsureLatestRenderUseCase(
     private val renderRepository: RenderRepository,
     private val editProjectRepository: EditProjectRepository,
     private val segmentRepository: SegmentRepository,
-    private val imageClipRepository: ImageClipRepository,
     private val bgmClipRepository: BgmClipRepository,
-    private val textOverlayRepository: TextOverlayRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
 ) {
     /**
@@ -58,11 +54,9 @@ class EnsureLatestRenderUseCase(
             throw IllegalStateException("Project has no segments")
         }
 
-        // 편집 검사를 위해 합성 항목들 선조회 — segment-local 외에 BGM / image / text / separation /
-        // project frame 설정도 모두 "편집됨" 으로 간주해야 BFF 가 사용자 미리보기와 동일한 영상을 받음.
-        val imageClips = imageClipRepository.observeClips(projectId).first()
+        // 편집 검사를 위해 합성 항목들 선조회 — BGM / separation / project frame 설정도 모두
+        // "편집됨" 으로 간주해야 BFF 가 사용자 미리보기와 동일한 영상을 받음.
         val bgmClips = bgmClipRepository.observeClips(projectId).first()
-        val textOverlays = textOverlayRepository.observeOverlays(projectId).first()
         val separationDirectives = separationDirectiveRepository.getByProject(projectId)
 
         // 편집 안 됨 — 원본 사용. caller 가 segments[0].sourceUri 로 multipart 업로드.
@@ -70,8 +64,6 @@ class EnsureLatestRenderUseCase(
                 project = project,
                 segments = segments,
                 bgmClips = bgmClips,
-                imageClips = imageClips,
-                textOverlays = textOverlays,
                 separationDirectives = separationDirectives,
             )
         ) {
@@ -92,9 +84,7 @@ class EnsureLatestRenderUseCase(
         val jobId = renderRepository.submitForEditedSource(
             project = project,
             segments = segments,
-            imageClips = imageClips,
             bgmClips = bgmClips,
-            textOverlays = textOverlays,
             separationDirectives = separationDirectives,
             kind = kind,
             onProgress = onProgress,

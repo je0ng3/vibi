@@ -22,9 +22,9 @@ import platform.Foundation.writeToFile
 /**
  * iOS Export 어댑터 — Android 와 동등하게 [ExportWithDubbingUseCase] 에 위임.
  *
- * 실제 ffmpeg 합성은 BFF `/api/v2/render` 가 처리. 본 어댑터는 임시 디렉터리 생성과
- * 출력 경로 발급만 담당. iOS-전용 ffmpeg 자체 합성(AVFoundation)으로 가는 것은
- * 별도 결정 사항 (현재는 BFF 위임 통일).
+ * 실제 합성은 현재 BFF `/api/v2/render` 가 처리. 본 어댑터는 임시 디렉터리 생성과
+ * 출력 경로 발급만 담당. iOS-전용 AVAssetExportSession 자체 합성으로의 마이그레이션은
+ * Phase 2 에서 진행 (Phase 1 은 export 페이로드 정리).
  */
 class IosExportPlatformAdapter(
     private val exportWithDubbing: ExportWithDubbingUseCase
@@ -55,12 +55,6 @@ class IosExportPlatformAdapter(
 
         val outputPath = "$cacheDir/export_${Clock.System.now().toEpochMilliseconds()}.mp4"
 
-        val needsAss = request.subtitleClips.isNotEmpty() || request.textOverlays.isNotEmpty()
-        val assFilePath = if (needsAss) "$cacheDir/subtitles_${request.projectId}.ass" else null
-
-        // iOS 는 자막 burn-in 시 폰트 디렉터리 별도 번들링 필요. 현재는 BFF 가 자체 폰트 사용 가정.
-        val fontDir: String? = null
-
         val frame = if (request.frameWidth > 0 && request.frameHeight > 0) {
             FrameInput(
                 width = request.frameWidth,
@@ -74,18 +68,12 @@ class IosExportPlatformAdapter(
         val result = exportWithDubbing.execute(
             segments = segmentInputs,
             dubClips = request.dubClips,
-            subtitleClips = request.subtitleClips,
             outputPath = outputPath,
-            assFilePath = assFilePath,
-            fontDir = fontDir,
             frame = frame,
-            imageClips = request.imageClips,
-            textOverlays = request.textOverlays,
             bgmClips = request.bgmClips,
             audioOverridePath = audioOverride,
             separationDirectives = request.separationDirectives,
             preUploadedInputId = request.preUploadedInputId,
-            resolveImagePath = { uri -> copyUriToCache(uri, cacheDir, prefix = "image") },
             resolveAudioPath = { uri -> copyUriToCache(uri, cacheDir, prefix = "bgm") },
             onProgress = onProgress
         )

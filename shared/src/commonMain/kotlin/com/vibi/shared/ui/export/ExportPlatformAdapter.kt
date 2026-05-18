@@ -2,11 +2,8 @@ package com.vibi.shared.ui.export
 
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.domain.model.DubClip
-import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SeparationDirective
-import com.vibi.shared.domain.model.SubtitleClip
-import com.vibi.shared.domain.model.TextOverlay
 
 /**
  * 플랫폼별 export 실행 의존성을 한 곳으로 모은 어댑터.
@@ -37,9 +34,6 @@ data class ExportRequest(
     val outputLanguageCode: String,
     val segments: List<Segment>,
     val dubClips: List<DubClip>,
-    val subtitleClips: List<SubtitleClip>,
-    val imageClips: List<ImageClip>,
-    val textOverlays: List<TextOverlay>,
     val bgmClips: List<BgmClip>,
     /** my_plan: 모든 결과 영상에 동일하게 적용되는 음성분리 명세. */
     val separationDirectives: List<SeparationDirective>,
@@ -47,7 +41,6 @@ data class ExportRequest(
     val frameHeight: Int,
     val backgroundColorHex: String,
     val audioOverridePath: String?,
-    val burnSubtitles: Boolean,
     /**
      * Multi-variant export 시 ExportViewModel 이 한 번 [BffApi.uploadRenderInputs] 로
      * video + dub audios 를 캐시 업로드하고 받은 inputId. non-null 이면 RemoteRenderExecutor 가

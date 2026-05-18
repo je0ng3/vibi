@@ -6,7 +6,6 @@ import kotlinx.serialization.Serializable
 data class RenderConfig(
     val dubClips: List<RenderDubClip>,
     val segments: List<RenderSegment>,
-    val imageClips: List<RenderImageClip> = emptyList(),
     val frame: RenderFrame? = null,
     val bgmClips: List<RenderBgmClip> = emptyList(),
     /**
@@ -80,17 +79,6 @@ data class RenderDubClip(
     val startMs: Long,
     val durationMs: Long,
     val volume: Float
-)
-
-@Serializable
-data class RenderImageClip(
-    val imageFileKey: String,
-    val startMs: Long,
-    val endMs: Long,
-    val xPct: Float,
-    val yPct: Float,
-    val widthPct: Float,
-    val heightPct: Float
 )
 
 @Serializable

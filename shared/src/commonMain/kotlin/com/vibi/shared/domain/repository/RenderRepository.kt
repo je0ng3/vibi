@@ -2,10 +2,8 @@ package com.vibi.shared.domain.repository
 
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.domain.model.EditProject
-import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SeparationDirective
-import com.vibi.shared.domain.model.TextOverlay
 import com.vibi.shared.domain.usecase.render.RenderKind
 
 /**
@@ -14,14 +12,14 @@ import com.vibi.shared.domain.usecase.render.RenderKind
  * `editedRenderJobId` 로 재참조한다.
  *
  * 본 인터페이스는 `SaveAllVariantsUseCase` 의 multi-variant 갤러리 저장 흐름과는 분리:
- * 본인은 ALWAYS 단일 jobId 1개만, 자막/dub/오버레이/오디오오버라이드 모두 제외 ("순수 편집 영상").
+ * 본인은 ALWAYS 단일 jobId 1개만, 자막/dub/오디오오버라이드 모두 제외 ("순수 편집 영상").
  */
 interface RenderRepository {
     /**
      * 편집 영상 render 잡을 BFF 에 제출하고 COMPLETED 까지 폴링 후 jobId 반환.
      *
-     * 빌더는 `subtitleClips / textOverlays / dubClips / audioOverridePath` 등 자막/더빙/오버레이
-     * 관련 입력은 제외해서 "순수 편집 영상" 만 만든다 (자막/더빙은 BFF 측에서 본 jobId 위에 합성).
+     * 빌더는 `dubClips / audioOverridePath` 등 더빙 관련 입력은 제외해서 "순수 편집 영상" 만
+     * 만든다 (자막/더빙은 BFF 측에서 본 jobId 위에 합성).
      *
      * @param kind RenderKind.AUDIO 면 audio-only m4a 출력 (자막/STT/분리용, 5–10x 빠름).
      *             RenderKind.VIDEO 면 풀 mp4 mux (자동 더빙용).
@@ -29,9 +27,7 @@ interface RenderRepository {
     suspend fun submitForEditedSource(
         project: EditProject,
         segments: List<Segment>,
-        imageClips: List<ImageClip>,
         bgmClips: List<BgmClip>,
-        textOverlays: List<TextOverlay>,
         separationDirectives: List<SeparationDirective>,
         kind: RenderKind,
         onProgress: (percent: Int) -> Unit,

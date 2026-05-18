@@ -9,16 +9,6 @@ data class DubClipMixInput(
     val volume: Float = 1.0f
 )
 
-data class ImageClipMixInput(
-    val imageFilePath: String,
-    val startMs: Long,
-    val endMs: Long,
-    val xPct: Float,
-    val yPct: Float,
-    val widthPct: Float,
-    val heightPct: Float
-)
-
 data class SegmentInput(
     val sourceFilePath: String,
     val type: SegmentType,
@@ -116,10 +106,7 @@ interface FfmpegExecutor {
     suspend fun renderProject(
         segments: List<SegmentInput>,
         dubClips: List<DubClipMixInput>,
-        imageClips: List<ImageClipMixInput> = emptyList(),
         outputPath: String,
-        assFilePath: String? = null,
-        fontDir: String? = null,
         frame: FrameInput? = null,
         bgmClips: List<BgmClipMixInput> = emptyList(),
         audioOverridePath: String? = null,

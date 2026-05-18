@@ -144,8 +144,6 @@ class BffApi(
     suspend fun submitRenderJob(
         videoFiles: List<BinaryPart>,
         audioFiles: List<BinaryPart>,
-        subtitles: BinaryPart?,
-        imageFiles: List<BinaryPart>,
         segmentImageFiles: List<BinaryPart>,
         bgmFiles: List<BinaryPart>,
         audioOverride: BinaryPart?,
@@ -162,8 +160,6 @@ class BffApi(
                         } else {
                             append("inputId", inputId)
                         }
-                        subtitles?.let { append(it) }
-                        imageFiles.forEach { append(it) }
                         segmentImageFiles.forEach { append(it) }
                         bgmFiles.forEach { append(it) }
                         audioOverride?.let { append(it) }

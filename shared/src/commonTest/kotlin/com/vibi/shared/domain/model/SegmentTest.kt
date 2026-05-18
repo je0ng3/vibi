@@ -86,42 +86,6 @@ class SegmentTest {
     }
 
     @Test
-    fun `isProjectEdited true when text overlay added`() {
-        val overlay = TextOverlay(
-            id = "t1",
-            projectId = "p1",
-            text = "hi",
-            startMs = 0L,
-            endMs = 1_000L,
-        )
-        assertTrue(
-            isProjectEdited(
-                project = pristineProject(),
-                segments = listOf(pristineSegment()),
-                textOverlays = listOf(overlay),
-            )
-        )
-    }
-
-    @Test
-    fun `isProjectEdited true when image overlay added`() {
-        val image = ImageClip(
-            id = "i1",
-            projectId = "p1",
-            imageUri = "content://image",
-            startMs = 0L,
-            endMs = 1_000L,
-        )
-        assertTrue(
-            isProjectEdited(
-                project = pristineProject(),
-                segments = listOf(pristineSegment()),
-                imageClips = listOf(image),
-            )
-        )
-    }
-
-    @Test
     fun `isProjectEdited true when separation directive added`() {
         val directive = SeparationDirective(
             id = "d1",

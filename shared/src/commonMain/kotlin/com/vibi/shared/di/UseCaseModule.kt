@@ -3,7 +3,6 @@ package com.vibi.shared.di
 import com.vibi.shared.domain.usecase.bgm.AddBgmClipUseCase
 import com.vibi.shared.domain.usecase.bgm.UpdateBgmClipUseCase
 import com.vibi.shared.domain.usecase.draft.ExpireOldDraftsUseCase
-import com.vibi.shared.domain.usecase.export.AssGenerator
 import com.vibi.shared.domain.usecase.export.ExportWithDubbingUseCase
 import com.vibi.shared.domain.usecase.image.AddImageClipUseCase
 import com.vibi.shared.domain.usecase.image.UpdateImageClipUseCase
@@ -70,9 +69,7 @@ val useCaseModule = module {
             editProjectRepository = get(),
             dubClipRepository = get(),
             subtitleClipRepository = get(),
-            imageClipRepository = get(),
             segmentRepository = get(),
-            textOverlayRepository = get(),
             bgmClipRepository = get(),
             separationDirectiveRepository = get(),
             bffApi = get(),
@@ -98,7 +95,6 @@ val useCaseModule = module {
     factoryOf(::DuplicateTextOverlayUseCase)
 
     // export
-    singleOf(::AssGenerator)
     factoryOf(::ExportWithDubbingUseCase)
 
     // timeline
