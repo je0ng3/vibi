@@ -220,6 +220,12 @@ data class TimelineUiState(
     val imageClips: List<ImageClip> = emptyList(),
     val playbackPositionMs: Long = 0L,
     val isPlaying: Boolean = false,
+    /**
+     * directive range 안에서 stem 재생 중일 때 video player 의 원본 audio 만 mute 하는 ephemeral 플래그.
+     * segment.volumeScale 을 건드리지 않아 사용자가 설정한 segment 볼륨·파형 amplitude 가 보존된다.
+     * 진입/이탈은 [muteVideoSegmentsForDirective] 가 토글 — DB persist 안 함.
+     */
+    val runtimeVideoMutedForDirective: Boolean = false,
     val selectedDubClipId: String? = null,
     val selectedSubtitleClipId: String? = null,
     val selectedImageClipId: String? = null,
@@ -4978,16 +4984,13 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 모든 video segment 의 원본 audio mute toggle. directive range 진입/이탈 시점에 TimelineScreen 이
-     * 호출 — range 안에서만 video mute, 밖에서는 원본 audio 들리도록.
+     * directive range 진입/이탈 시점에 TimelineScreen 이 호출 — range 안에서만 video player 원본 audio
+     * mute. ephemeral UiState 플래그만 토글 (DB write 없음). VideoPlayer 가 [runtimeVideoMutedForDirective]
+     * 를 보고 최종 volume 에 곱해 적용한다. segment.volumeScale 은 사용자 설정값 그대로 보존.
      */
     fun muteVideoSegmentsForDirective(mute: Boolean) {
-        val target = if (mute) 0f else 1f
-        viewModelScope.launch {
-            _uiState.value.segments
-                .filter { it.type == SegmentType.VIDEO && it.volumeScale != target }
-                .forEach { updateSegmentVolume(it.id, target) }
-        }
+        if (_uiState.value.runtimeVideoMutedForDirective == mute) return
+        _uiState.update { it.copy(runtimeVideoMutedForDirective = mute) }
     }
 
     fun onConfirmStemMix() {

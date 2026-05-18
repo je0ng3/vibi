@@ -579,7 +579,9 @@ fun TimelineScreen(
                             // effectiveTrimEndMs (durationMs fallback) 으로 항상 실값 전달.
                             trimEndMs = seg.effectiveTrimEndMs,
                             speedScale = seg.speedScale,
-                            volumeScale = seg.volumeScale,
+                            // directive range 안에서 stem 재생 중이면 원본 audio mute — segment.volumeScale 은
+                            // 사용자 설정값 보존하고 player 에만 일시 0 적용. 파형 amplitude 는 영향 없음.
+                            volumeScale = if (state.runtimeVideoMutedForDirective) 0f else seg.volumeScale,
                         )
                     }
                 }
