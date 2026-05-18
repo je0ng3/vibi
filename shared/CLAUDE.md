@@ -2,12 +2,12 @@
 
 ## Project
 
-vibi `:shared` — **Kotlin Multiplatform 비즈니스 로직 모듈**. 도메인 모델 + 리포지토리(인터페이스+구현) + Ktor Client multiplatform BFF 클라이언트 + Room v19 (multiplatform) + UseCase + ViewModel + Koin DI 를 `commonMain` 에 두고 `androidMain`/`iosMain` 으로 플랫폼 의존을 분리한다. UI 코드는 형제 모듈 `:cmp` 가 본 모듈을 소비한다.
+vibi `:shared` — **Kotlin Multiplatform 비즈니스 로직 모듈**. 도메인 모델 + 리포지토리(인터페이스+구현) + Ktor Client multiplatform BFF 클라이언트 + Room v5 (multiplatform, destructive migration 허용) + UseCase + ViewModel + Auth (GoogleSignIn / Apple AuthenticationServices) + Koin DI 를 `commonMain` 에 두고 `androidMain`/`iosMain` 으로 플랫폼 의존을 분리한다. UI 코드는 형제 모듈 `:cmp` 가 본 모듈을 소비한다.
 
 - **gradle 모듈명**: `:shared` (gradle 루트는 `vibi-mobile/`, `include(":shared")`)
 - 코드 스타일: official
 - `org.gradle.configuration-cache=true` (일부 명령은 `--no-configuration-cache` 필요 — `.claude/skills/build.md` 참조)
-- 코드 패키지는 아직 `com.vibi.shared.*` (Room `VibiDatabase` + iOS framework 이름 영향). 폴더·docs 는 `vibi` 로 통일하되 패키지 마이그레이션은 별도 작업.
+- 코드 패키지는 `com.vibi.shared.*` 통일. Room DB 클래스명 `VibiDatabase`, iOS framework 이름도 `vibi`.
 
 > 워크스페이스 지도와 형제 모듈(`:cmp`, `iosApp`) 관계는 워크스페이스 루트 `CLAUDE.md` 참조.
 
@@ -28,39 +28,61 @@ shared/
 └── src/
     ├── commonMain/kotlin/com/vibi/shared/
     │   ├── domain/
-    │   │   ├── model/                       # DubClip, Segment, Stem, EditProject,
-    │   │   │                                # SubtitleClip, BgmClip, ImageClip, TextOverlay,
-    │   │   │                                # VideoInfo, ImageInfo, ValidationResult, ... (15 files)
-    │   │   ├── repository/                  # 인터페이스 (AudioSeparationRepository,
-    │   │   │                                #         AutoDubRepository, AutoSubtitleRepository, ...)
-    │   │   ├── usecase/                     # 카테고리 (input/subtitle/separation/timeline/text/bgm/image/save/draft/export)
+    │   │   ├── model/                       # DubClip, Segment, Stem, EditProject, BgmClip,
+    │   │   │                                # SubtitleClip, ImageClip, TextOverlay, AuthUser,
+    │   │   │                                # VideoInfo, ImageInfo, ValidationResult,
+    │   │   │                                # SeparationDirective, SeparationMediaType,
+    │   │   │                                # TargetLanguage, SupportedLanguage, SubtitlePosition
+    │   │   ├── repository/                  # 인터페이스 — AudioSeparation, BgmClip, DubClip,
+    │   │   │                                # ImageClip, Segment, EditProject, SubtitleClip,
+    │   │   │                                # TextOverlay, SeparationDirective, Language, Render,
+    │   │   │                                # AutoSubtitle*, AutoDub*, LipSync* (※ 후 3개는 BFF
+    │   │   │                                # surface 절단 후 dead — 호출 시 404)
+    │   │   ├── chat/                        # ChatToolDispatcher · ProjectContextBuilder
+    │   │   ├── usecase/                     # 카테고리: input/separation/timeline/text/bgm/image/save/draft/export/subtitle/lipsync
     │   │   └── util/                        # LanePacking, ColorValidation
     │   ├── data/
-    │   │   ├── remote/api/BffApi.kt         # Ktor Client multiplatform — 12 v2 엔드포인트 + lipsync
-    │   │   ├── remote/dto/                  # kotlinx.serialization DTO
-    │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF)
-    │   │   └── local/db/                    # Room v19 (VibiDatabase, 7 entity + 7 DAO + Migrations)
-    │   ├── ui/                              # ViewModel (InputVM, TimelineVM, ExportVM, ShareVM, ChatVM)
-    │   ├── domain/chat/                     # ChatToolDispatcher · ProjectContextBuilder (Gemini routing)
-    │   ├── platform/                        # FileSystem expect, currentTimeMillis 등
-    │   └── di/                              # Koin 모듈 (database/network/repository/usecase/viewmodel)
-    ├── androidMain/                         # AndroidVideoMetadataExtractor, AndroidGallerySaver,
-    │                                        # AutoDubRepositoryImpl, AutoSubtitleRepositoryImpl,
-    │                                        # MediaJobUploader, AndroidExportPlatformAdapter,
+    │   │   ├── remote/api/BffApi.kt         # Ktor Client multiplatform.
+    │   │   │                                # 현행: auth/google · auth/apple · languages ·
+    │   │   │                                #      render(+inputs) · separate(+mix) · chat · testdata.
+    │   │   │                                # 잔존(404): submitSubtitleJob · regenerateSubtitleJob ·
+    │   │   │                                #          submitAutoDubJob · requestLipSync.
+    │   │   ├── remote/dto/                  # kotlinx.serialization DTO (Auth/Chat/Render/Separation/Subtitle/AutoDub/LipSync)
+    │   │   ├── remote/HttpClientFactory.kt  # expect/actual — Authorization 헤더 인젝션, Json 설정
+    │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF) + ChatRepository + AuthRepository + RemoteRenderExecutor
+    │   │   ├── local/db/                    # Room v5 — VibiDatabase, 8 entity + 8 DAO,
+    │   │   │                                # fallbackToDestructiveMigration(dropAllTables=true)
+    │   │   └── local/                       # AuthTokenStore · UserSession · JwtSubject · UserPreferencesStore (Multiplatform Settings)
+    │   ├── ui/                              # ViewModel — InputVM, TimelineVM, ChatVM, LoginVM
+    │   ├── platform/                        # expect — FileSystem, VideoThumbnailExtractor, TimeFormat,
+    │   │                                    # GoogleSignInClient, AppleSignInClient
+    │   └── di/                              # Koin 모듈 (DatabaseModule, NetworkModule, RepositoryModule, UseCaseModule, ViewModelModule)
+    ├── androidMain/                         # AndroidVideoMetadataExtractor / AndroidGallerySaver /
+    │                                        # AndroidAudio·ImageMetadataExtractor /
+    │                                        # AndroidGoogleSignInClient (Credential Manager) /
+    │                                        # AndroidAppleSignInClient (placeholder) /
+    │                                        # AndroidExportPlatformAdapter / AndroidShareSheetLauncher /
+    │                                        # MediaJobUploader / DatabaseBuilder.android /
+    │                                        # HttpClientFactory.android / FileSystem.android /
     │                                        # androidPlatformModule
-    ├── iosMain/                             # IosVideoMetadataExtractor, IosGallerySaver,
-    │                                        # IosAutoDubRepositoryImpl, IosAutoSubtitleRepositoryImpl,
-    │                                        # IosMediaJobUploader, IosExportPlatformAdapter,
-    │                                        # iosPlatformModule
-    └── commonTest/                          # BffApiTest (13), MigrationsTest, Migration7To8Test (4)
+    ├── iosMain/                             # IosVideoMetadataExtractor / IosGallerySaver /
+    │                                        # IosAudio·ImageMetadataExtractor /
+    │                                        # IosGoogleSignInClient (GoogleSignIn SPM) /
+    │                                        # IosAppleSignInClient (AuthenticationServices) /
+    │                                        # IosExportPlatformAdapter / IosShareSheetLauncher /
+    │                                        # IosMediaJobUploader / IosFilePathResolver /
+    │                                        # DatabaseBuilder.ios / HttpClientFactory.ios /
+    │                                        # FileSystem.ios / KoinHelper / iosPlatformModule
+    └── commonTest/                          # BffApi · 직렬화 · Repository · Migration 등 unit test
 ```
 
 ## 중요 제약
 
-- `commonMain` 에 **Android/JVM 전용 API 금지** (`android.*`, `java.io.File`, `java.util.UUID`, `System.currentTimeMillis`). 플랫폼 의존(파일시스템·오디오·메타데이터·갤러리)은 `expect fun` 또는 platform adapter interface (예: `ExportPlatformAdapter`).
-- Retrofit / Moshi / OkHttp / Hilt 는 iOS 불가 — 네트워크는 Ktor Client multiplatform, 직렬화는 kotlinx.serialization, DI 는 Koin.
+- `commonMain` 에 **Android/JVM 전용 API 금지** (`android.*`, `java.io.File`, `java.util.UUID`, `System.currentTimeMillis`). 플랫폼 의존(파일시스템·오디오·메타데이터·갤러리·인증)은 `expect fun` 또는 platform adapter interface (예: `ExportPlatformAdapter`, `GoogleSignInClient`).
+- Retrofit / Moshi / OkHttp / Hilt 는 iOS 불가 — 네트워크는 Ktor Client multiplatform, 직렬화는 kotlinx.serialization, DI 는 Koin, KV 저장은 Multiplatform Settings.
 - 본 모듈은 **로직만**. UI 코드(`@Composable`)는 `cmp/` 로.
 - 본 모듈이 모바일 도메인의 단일 source of truth — legacy-android 시절의 모델은 모두 흡수됐다.
+- **Room v5 + destructive migration** — 시연 단계라 `fallbackToDestructiveMigration(dropAllTables=true)`. schema 변경 시 기존 row 는 drop, migration 코드 작성 불필요. 출시 단계에서 정책 재검토.
 
 ## 아키텍처·Flow 규약
 
@@ -73,15 +95,30 @@ shared/
 
 ## Timeline stepper 동작 규약
 
-`TimelineViewModel` 의 3단계 stepper (`Edit` ↔ `AudioSources` ↔ `SubtitleDub`) 전환 시 적용되는 규약. 음원이 메인 작업이라 영상 선택 직후 `AudioSources` 가 기본 진입.
+`TimelineViewModel` 의 **2단계 stepper (`EditAudio` ↔ `SubtitleDub`)** 전환 시 적용되는 규약. 음원이 메인 작업이라 영상 선택 직후 `EditAudio` 가 기본 진입.
 
-- **단계 이동은 산출물·undo 모두 보존** — `onAdvanceStep` / `onRequestStepBack` 양방향 모두 `currentStep` 만 변경. BGM/separation/자막/더빙 결과·각 단계 undo 스택 모두 다른 단계 갔다 와도 그대로 유지. 사용자가 좌(Edit) ↔ 음원 ↔ 우(SubtitleDub) 를 자유롭게 오가는 흐름이 일반적이므로 보존이 기본.
-- **`commitSegmentEdit` 만 산출물 wipe** — 사용자가 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation/자막/더빙을 정리. segment 가 바뀌면 downstream 산출물이 stale 이라 어쩔 수 없음. 단순 단계 이동(편집 모드 진입·이탈 없이)은 wipe 안 함.
-- **Undo/redo 는 단계별 분리** — `mainUndoManagersByStep: Map<TimelineStep, UndoRedoManager>` 로 step 마다 독립 스택. 단계 이동은 출발/도착 단계 모두 스택 유지. `activeUndoManager()` 는 `isSegmentEditMode` 시 별도 `editModeUndoRedoManager`, 아니면 currentStep 의 매니저 반환.
-- **잡 진행 중 이동 가드** — `isLocalizationBusy()` (자막/더빙 진행) 또는 `audioSeparation.step == PROCESSING` 일 때는 stepper 이동 무시. 진행 중 잡 보호.
-- **BGM mux 시점은 lazy** — stepper 이동 시점이 아니라 자막/더빙 생성 버튼 클릭 시 `EnsureLatestRenderUseCase` 가 BFF 에 BGM/separation/image/text 포함한 단일 영상 render 잡 제출. stepper UX 만 보고 "이동 시 합성됨" 으로 오해 금지.
+- **단계 이동은 산출물 보존** — `onSelectStep` 은 `currentStep` 만 변경. BGM/separation/자막/더빙 결과는 다른 단계 갔다 와도 유지. 사용자가 좌(EditAudio) ↔ 우(SubtitleDub) 를 자유롭게 오가는 흐름이 일반적이라 보존이 기본.
+- **`commitSegmentEdit` 만 산출물 wipe** — 사용자가 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation/자막/더빙을 정리. segment 가 바뀌면 downstream 산출물이 stale 이라 어쩔 수 없음.
+- **Undo/redo 단일 스택** — 과거 step-별 분리에서 통합 (commit `a6c3580 refactor(timeline): undo 스택을 step 무관 단일 인스턴스로 통합`). text overlay / image clip / audio edit 모두 같은 `UndoRedoManager` 공유. segment edit 모드만 별도 `editModeUndoRedoManager`.
+- **잡 진행 중 이동 가드** — `isLocalizationBusy()` 또는 `audioSeparation.step == PROCESSING` 일 때는 stepper 이동 무시.
+- **전환 경고** — `StepTransitionWarning` (LocalizationLock / EditReset) 로 사용자에게 한 번 더 확인. `userPrefs.editResetSuppressed` 로 EditReset 경고 영구 끄기 가능.
+- **EnsureLatestRender 시점은 lazy** — stepper 이동 시점이 아니라 export/dub 생성 등 산출물이 필요한 시점에 `EnsureLatestRenderUseCase` 가 BFF 에 단일 영상 render 잡 제출 (BGM atrim+amix 포함). stepper UX 만 보고 "이동 시 합성됨" 으로 오해 금지.
+
+## Auth 흐름 요약
+
+```
+LoginScreen → LoginViewModel.signInWithGoogle()
+  → AuthRepository.signInWithGoogle()
+    → GoogleSignInClient.signIn()        // platform actual (SPM iOS / Credential Manager Android)
+    → BffApi.exchangeGoogleIdToken(idToken)
+    → AuthTokenStore.save(jwt, expiry)
+    → UserSession.set(userId)
+    → emit Result.success(AuthUser)
+```
+
+Apple 도 동일 패턴 (`AppleSignInClient` expect, BFF `/auth/apple`). 토큰은 `HttpClientFactory` 가 모든 outgoing 요청에 `Authorization: Bearer <jwt>` 헤더 인젝션 (구현 위치는 `HttpClientFactory.kt` 직접 확인).
 
 ## Skills
 
 - `build` — `.claude/skills/build.md`. KMP 빌드 명령과 configuration-cache 주의.
-- `ios-kn-patterns` — `.claude/skills/ios-kn-patterns.md`. iOS Kotlin/Native 자주 만나는 버그 패턴 모음 (NSURL, AVAsset, AVPlayer, K/N cinterop, NSData↔ByteArray, AVMutableComposition, CMP UIKitView). iosMain 또는 cmp/iosMain 코드 쓸 때 참조. 새 버그 만나면 본 skill 에 추가.
+- `ios-kn-patterns` — `.claude/skills/ios-kn-patterns.md`. iOS Kotlin/Native 자주 만나는 버그 패턴 모음 (NSURL, AVAsset, AVPlayer, K/N cinterop, NSData↔ByteArray, AVMutableComposition, CMP UIKitView, GoogleSignIn SPM, AuthenticationServices). iosMain 또는 cmp/iosMain 코드 쓸 때 참조. 새 버그 만나면 본 skill 에 추가.
