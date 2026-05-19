@@ -520,6 +520,12 @@ fun TimelineScreen(
                 val label = when {
                     saving -> "${savingPercent}%"
                     sharing -> "${sharingPercent}%"
+                    state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
+                        state.processingSeparations.isNotEmpty() -> "음원분리 중"
+                    state.autoSubtitleStatus == AutoJobStatus.RUNNING -> "자막 생성 중"
+                    state.regenerateSubtitleStatus == AutoJobStatus.RUNNING -> "자막 재생성 중"
+                    state.autoDubStatus == AutoJobStatus.RUNNING -> "더빙 중"
+                    state.sttPreflightStatus == AutoJobStatus.RUNNING -> "준비 중"
                     else -> "Export"
                 }
                 Text(label, style = typo.bodySm, color = tokens.onBackgroundPrimary)
