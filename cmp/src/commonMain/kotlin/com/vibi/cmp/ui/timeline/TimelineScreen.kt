@@ -2358,12 +2358,22 @@ private fun UnifiedTimelineBar(
                     }
                     // (c) 트림 핸들 — 선택된 클립의 좌·우 엣지. bgmRangeMode 면 미렌더 (range 핸들과 충돌 방지).
                     if (isSelected && bgmDragEnabled && !bgmRangeMode) {
+                        // 좁은 클립(녹음본 같은 짧은 BGM)은 두 핸들 hit zone (각 HandleHitWidth=32dp) 이
+                        // 클립 본체를 완전히 덮어 본체의 tap(선택해제)/drag(위치이동) 이 핸들에 가로채임.
+                        // widthDp <= 2*HandleHitWidth 면 핸들을 본체 바깥으로 밀어 본체 100% 접근 가능.
+                        val handleOutside = widthDp <= TimelineBarSpec.HandleHitWidth * 2
+                        val leftHandleOffsetX = if (handleOutside)
+                            offsetXDp - TimelineBarSpec.HandleHitWidth
+                        else offsetXDp - TimelineBarSpec.HandleHitWidth / 2
+                        val rightHandleOffsetX = if (handleOutside)
+                            offsetXDp + widthDp
+                        else offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2
                         // 좌 핸들 — sourceTrimStartMs + startMs 동시 갱신.
                         BgmTrimHandle(
                             side = BgmTrimSide.Start,
                             clipId = clip.id,
                             currentClip = currentClip,
-                            offsetX = offsetXDp - TimelineBarSpec.HandleHitWidth / 2,
+                            offsetX = leftHandleOffsetX,
                             offsetY = offsetYDp,
                             height = bgmRowHeight,
                             handleColor = accent,
@@ -2389,7 +2399,7 @@ private fun UnifiedTimelineBar(
                             side = BgmTrimSide.End,
                             clipId = clip.id,
                             currentClip = currentClip,
-                            offsetX = offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2,
+                            offsetX = rightHandleOffsetX,
                             offsetY = offsetYDp,
                             height = bgmRowHeight,
                             handleColor = accent,
