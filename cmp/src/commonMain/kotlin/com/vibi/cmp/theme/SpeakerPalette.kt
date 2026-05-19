@@ -8,7 +8,7 @@ import com.vibi.shared.domain.model.StemKind
  * 음원분리 stem 의 시각 색. SoundDeck 카드 chip + 타임라인 파형 highlight 가 같은 매핑을 공유해
  * 같은 화자가 두 군데서 같은 색으로 인지된다.
  *
- * speaker 는 **고채도** — BGM (muted pastel) 과 채도로 구분되도록 vivid 톤 5색. 6+ 화자는 wrap.
+ * speaker 는 **고채도** — BGM (muted pastel) 과 채도로 구분되도록 vivid 톤 4색. 5+ 화자는 wrap.
  */
 object SpeakerPalette {
     private val palette: List<Color> = listOf(
@@ -16,7 +16,6 @@ object SpeakerPalette {
         Color(0xFFE65100),  // speaker 2 — deep orange
         Color(0xFF2E7D32),  // speaker 3 — green
         Color(0xFFC2185B),  // speaker 4 — pink
-        Color(0xFF6A1B9A),  // speaker 5 — purple
     )
 
     @Suppress("UNUSED_PARAMETER")
