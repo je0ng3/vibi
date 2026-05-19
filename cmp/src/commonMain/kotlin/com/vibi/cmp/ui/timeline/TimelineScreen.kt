@@ -2428,7 +2428,7 @@ private fun UnifiedTimelineBar(
                                     modifier = Modifier.size(12.dp),
                                 )
                                 Text(
-                                    text = bgmClipLabelText(clip),
+                                    text = bgmClipLabelText(clip, bgmClips),
                                     color = clipContentColor,
                                     style = androidx.compose.ui.text.TextStyle(
                                         fontSize = 11.sp,
@@ -3148,9 +3148,21 @@ private fun isBgmRecording(clip: com.vibi.shared.domain.model.BgmClip): Boolean 
         clip.sourceUri.contains("/recordings/", ignoreCase = true)
 }
 
-/** BGM clip 의 표시 라벨 text. 녹음은 "녹음", 파일은 filename (18자 truncate). 아이콘은 호출부에서. */
-private fun bgmClipLabelText(clip: com.vibi.shared.domain.model.BgmClip): String {
-    if (isBgmRecording(clip)) return "녹음"
+/**
+ * BGM clip 의 표시 라벨 text. 녹음 1개면 "녹음", 2개 이상이면 timeline 순서대로 "녹음 1" / "녹음 2"...
+ * 파일은 filename (18자 truncate). 아이콘은 호출부에서.
+ */
+private fun bgmClipLabelText(
+    clip: com.vibi.shared.domain.model.BgmClip,
+    allClips: List<com.vibi.shared.domain.model.BgmClip>,
+): String {
+    if (isBgmRecording(clip)) {
+        val recordings = allClips.filter { isBgmRecording(it) }
+        if (recordings.size < 2) return "녹음"
+        val ordered = recordings.sortedBy { it.startMs }
+        val idx = ordered.indexOfFirst { it.id == clip.id }
+        return if (idx >= 0) "녹음 ${idx + 1}" else "녹음"
+    }
     val name = clip.sourceUri.substringAfterLast('/').substringBeforeLast('.')
     return name.take(18)
 }

@@ -74,19 +74,27 @@ private fun kindOrder(k: SoundCardKind): Int = when (k) {
     SoundCardKind.BGM -> 4
 }
 
+internal fun isRecordingSourceUri(sourceUri: String): Boolean {
+    val name = sourceUri.substringAfterLast('/').substringBeforeLast('.')
+    return name.startsWith("recording_", ignoreCase = true) ||
+        name.startsWith("rec_", ignoreCase = true) ||
+        sourceUri.contains("/recordings/", ignoreCase = true)
+}
+
 /**
  * BGM 카드 label — sourceUri 의 마지막 path segment (확장자 제외) 를 사용해 사용자가 삽입한
  * 음원의 실제 이름이 카드에 노출되게 한다.
  *
- * - 녹음 파일은 `rec_<currentTimeMillis>.m4a` (AudioRecorder.ios.kt) → "녹음"
- * - Android picker 의 구버전 자동 이름 `audio_<currentTimeMillis>.<ext>` → "음원"
- * - Android picker 의 신규 이름 `<원본>_<currentTimeMillis>.<ext>` → 접미사 제거 후 원본 노출.
- *   timestamp 가 13자리 이상이라 일반 파일명과 충돌 가능성 낮음.
+ * - 녹음은 [recordingOrdinal] 가 null/1 이면 "녹음", 2+ 이면 "녹음 N" (호출부가 timeline 순서로 부여).
+ * - Android picker 구버전 자동 이름 `audio_<ts>.<ext>` → "음원"
+ * - Android picker 신규 이름 `<원본>_<ts>.<ext>` → 접미사 제거 후 원본 노출.
  */
-internal fun bgmDisplayLabel(sourceUri: String): String {
+internal fun bgmDisplayLabel(sourceUri: String, recordingOrdinal: Int? = null): String {
+    if (isRecordingSourceUri(sourceUri)) {
+        return if (recordingOrdinal != null) "녹음 $recordingOrdinal" else "녹음"
+    }
     val lastSegment = sourceUri.substringAfterLast('/')
     val withoutExt = lastSegment.substringBeforeLast('.', missingDelimiterValue = lastSegment)
-    if (withoutExt.matches(Regex("rec_\\d+"))) return "녹음"
     if (withoutExt.matches(Regex("audio_\\d+"))) return "음원"
     val stripped = withoutExt.replace(Regex("_\\d{13,}$"), "")
     return stripped.ifBlank { "음원" }
@@ -133,12 +141,18 @@ fun buildSoundDeckGroups(
                 cards = cards,
             )
         }
-    val bgmCards = bgmClips
-        .sortedBy { it.startMs }
+    // timeline 순서로 정렬 후 녹음만 추려 1-based 순번 부여. 2+ 일 때만 라벨에 노출 (단일 녹음은 "녹음").
+    val sortedBgm = bgmClips.sortedBy { it.startMs }
+    val recordingOrdinal: Map<String, Int> = run {
+        val recordings = sortedBgm.filter { isRecordingSourceUri(it.sourceUri) }
+        if (recordings.size < 2) emptyMap()
+        else recordings.withIndex().associate { (i, b) -> b.id to (i + 1) }
+    }
+    val bgmCards = sortedBgm
         .map { bgm ->
             SoundCardModel(
                 key = "bgm:${bgm.id}",
-                label = bgmDisplayLabel(bgm.sourceUri),
+                label = bgmDisplayLabel(bgm.sourceUri, recordingOrdinal[bgm.id]),
                 kind = SoundCardKind.BGM,
                 source = SoundCardSource.Bgm(bgm.id),
                 selected = bgm.volumeScale > 0f,
