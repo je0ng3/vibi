@@ -2368,12 +2368,19 @@ private fun UnifiedTimelineBar(
                         val rightHandleOffsetX = if (handleOutside)
                             offsetXDp + widthDp
                         else offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2
+                        // 본체 바깥으로 hit zone 을 밀어낸 경우, chevron 시각은 그 hit zone 의 inner edge
+                        // (본체 쪽) 에 정렬해 본체 엣지에 그대로 붙어 보이도록. wide path 는 기존 center 유지.
+                        val leftVisualAlign =
+                            if (handleOutside) Alignment.CenterEnd else Alignment.Center
+                        val rightVisualAlign =
+                            if (handleOutside) Alignment.CenterStart else Alignment.Center
                         // 좌 핸들 — sourceTrimStartMs + startMs 동시 갱신.
                         BgmTrimHandle(
                             side = BgmTrimSide.Start,
                             clipId = clip.id,
                             currentClip = currentClip,
                             offsetX = leftHandleOffsetX,
+                            visualAlignment = leftVisualAlign,
                             offsetY = offsetYDp,
                             height = bgmRowHeight,
                             handleColor = accent,
@@ -2400,6 +2407,7 @@ private fun UnifiedTimelineBar(
                             clipId = clip.id,
                             currentClip = currentClip,
                             offsetX = rightHandleOffsetX,
+                            visualAlignment = rightVisualAlign,
                             offsetY = offsetYDp,
                             height = bgmRowHeight,
                             handleColor = accent,
@@ -3047,6 +3055,12 @@ private fun BgmTrimHandle(
     onLiveUpdate: (newTrimMs: Long, newStartMs: Long?) -> Unit,
     onCommit: (newTrimMs: Long, newStartMs: Long?) -> Unit,
     onCancel: () -> Unit,
+    /**
+     * hit zone 안에서 시각 chevron 을 정렬할 위치. 기본 Center — 좁은 클립 path 에서 hit zone 이 클립
+     * 본체 바깥으로 통째 밀려난 경우엔 visual 까지 같이 떨어져 보이지 않도록 CenterEnd(좌핸들) /
+     * CenterStart(우핸들) 로 inner-edge 정렬해 본체 엣지에 그대로 붙여 그린다.
+     */
+    visualAlignment: Alignment = Alignment.Center,
 ) {
     val clipRef by rememberUpdatedState(currentClip)
     var accumPx by remember(clipId, side) { mutableStateOf(0f) }
@@ -3150,11 +3164,13 @@ private fun BgmTrimHandle(
                     },
                 )
             },
-        contentAlignment = Alignment.Center,
+        contentAlignment = visualAlignment,
     ) {
         // CapCut 스타일 thumb — 두꺼운 단색 막대가 클립 엣지를 가운데로 가로지른다 (절반 안쪽, 절반 바깥).
         // 안쪽에 화살표 chevron 으로 "여기를 끌어 트림" 방향을 명시. 기존 RangeHandle 의 가는 막대 +
         // grip 선 조합은 timeline range 선택용이라 의미가 달랐고, 트림 핸들과 동거 시 시각 위계가 모호했다.
+        // 좁은 클립 path 에선 hit zone 이 본체 밖으로 통째 빠지므로 호출부가 visualAlignment 를 inner
+        // edge 로 넘겨 chevron 이 본체 엣지에 그대로 붙어 보이게 함.
         Box(
             modifier = Modifier
                 .width(10.dp)
