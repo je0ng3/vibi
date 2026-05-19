@@ -2116,38 +2116,23 @@ private fun UnifiedTimelineBar(
                     }
             }
 
-            // 진행 중 음원분리 overlay — range fill 과 동일한 파형 높이(40dp) 로 시각 위계 통일.
-            // 이전 12dp strip 은 40dp 파형 위에서 시각적으로 묻혀 진행 인지 어려움. 옅은 fill + accent
-            // border + 상단 진행 막대로 처리 중임을 명확히 한다.
+            // 진행 중 음원분리 overlay — 반투명 fill 단독 (테두리/진행 막대 없음, 사용자 요청).
             if (totalMs > 0L) {
                 val procFillHeight = TimelineBarSpec.WaveformHeight
-                val procBorderInsetY = (playbackRegionHeight - procFillHeight) / 2
                 processingSeparations.forEach { p ->
                     if (p.endMs <= p.startMs) return@forEach
                     val pStart = (p.startMs.toFloat() / totalMs).coerceIn(0f, 1f)
                     val pEnd = (p.endMs.toFloat() / totalMs).coerceIn(0f, 1f)
                     val pStartDp = totalWidthDp * pStart
                     val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
-                    RangeFillStrip(
-                        startDp = pStartDp,
-                        widthDp = pWidthDp,
-                        height = procFillHeight,
-                        playbackRegionHeight = playbackRegionHeight,
-                        accent = accent,
-                        fillAlpha = 0.18f,
-                        borderAlpha = 0.7f,
+                    Box(
+                        modifier = Modifier
+                            .offset(x = pStartDp)
+                            .width(pWidthDp)
+                            .height(procFillHeight)
+                            .align(Alignment.CenterStart)
+                            .background(accent.copy(alpha = 0.18f))
                     )
-                    val progress = (p.progress.coerceIn(0, 100)) / 100f
-                    if (progress > 0f) {
-                        Box(
-                            modifier = Modifier
-                                .offset(x = pStartDp, y = procBorderInsetY)
-                                .width(pWidthDp * progress)
-                                .height(TimelineBarSpec.RangeBorderThickness * 2)
-                                .align(Alignment.TopStart)
-                                .background(accent)
-                        )
-                    }
                 }
             }
 
