@@ -697,7 +697,6 @@ fun TimelineScreen(
                 }
             }
 
-            // 영상편집 진입은 SoundDeck 의 "영상 다듬기" 카드(EditEntryCard)로 일원화.
         }
 
         // Transport row — 좌: 전체화면 / 중앙: 재생 정지 / 우: undo·redo. 세 영역을 Box 의 align 으로
@@ -1039,20 +1038,8 @@ fun TimelineScreen(
                         onAddSeparation = null,
                         onAddBgm = null,
                     )
-                    // 영상 다듬기 진입 — stepper 가 사라진 unified 모드에선 본 카드가 유일한 진입점.
-                    // 분리/자막/더빙 진행 중엔 disabled (commit 시 산출물 wipe 위험 방지).
-                    if (unifiedScroll && !state.isSegmentEditMode && !state.isRangeSelecting) {
-                        val firstSegIdForEdit = state.segments.firstOrNull {
-                            it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
-                        }?.id
-                        com.vibi.cmp.ui.timeline.sounddeck.EditEntryCard(
-                            enabled = firstSegIdForEdit != null && !deckDisabled,
-                            onClick = {
-                                val segId = firstSegIdForEdit ?: return@EditEntryCard
-                                viewModel.onEnterSegmentEditMode(segId)
-                            },
-                        )
-                    }
+                    // 영상 다듬기 진입은 timeline 의 영상 파형 탭으로 일원화 (UnifiedTimelineBar
+                    // 의 onWaveformTapInNeutral) — 별도 진입 카드 폐기.
                 }
             }
             androidx.compose.foundation.layout.FlowRow(
@@ -2127,6 +2114,27 @@ private fun UnifiedTimelineBar(
                             onDirectiveTap = onDirectiveTap,
                         )
                     }
+            }
+
+            // 이미 분리 완료된 directive 구간 — 옅은 fill 로 점유 표시. 파형 highlight 색만으로는
+            // 음원분리 range 선택 중 어디가 occupied 인지 한눈에 안 들어와 사용자 보고.
+            if (totalMs > 0L) {
+                val dirFillHeight = TimelineBarSpec.WaveformHeight
+                directives.forEach { d ->
+                    if (d.rangeEndMs <= d.rangeStartMs) return@forEach
+                    val dStart = (d.rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val dEnd = (d.rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val dStartDp = totalWidthDp * dStart
+                    val dWidthDp = totalWidthDp * (dEnd - dStart).coerceAtLeast(0f)
+                    Box(
+                        modifier = Modifier
+                            .offset(x = dStartDp)
+                            .width(dWidthDp)
+                            .height(dirFillHeight)
+                            .align(Alignment.CenterStart)
+                            .background(accent.copy(alpha = 0.12f))
+                    )
+                }
             }
 
             // 진행 중 음원분리 overlay — 반투명 fill 단독 (테두리/진행 막대 없음, 사용자 요청).
