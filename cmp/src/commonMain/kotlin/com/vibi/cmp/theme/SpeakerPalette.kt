@@ -20,7 +20,9 @@ object SpeakerPalette {
 
     @Suppress("UNUSED_PARAMETER")
     fun colorFor(speakerIndex: Int?, tokens: VibiColors): Color {
-        val i = ((speakerIndex ?: 1) - 1).coerceAtLeast(0) % palette.size
+        // speakerIndex 는 BFF stemId "speaker_<N>" 의 N — 0-based. (BFF SeparationService 참고.)
+        // 1-based 가정으로 -1 하면 speaker_0 과 speaker_1 이 둘 다 palette[0] 으로 collapse 됨.
+        val i = (speakerIndex ?: 0).coerceAtLeast(0) % palette.size
         return palette[i]
     }
 
