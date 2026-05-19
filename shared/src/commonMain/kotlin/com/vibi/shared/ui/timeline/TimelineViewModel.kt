@@ -4063,6 +4063,32 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * 타임라인 위에서 BGM 클립 좌·우 엣지를 드래그해 trim. start 핸들 드래그는 [newStartMs] 도 동반
+     * 갱신 (CapCut 의미상 좌측 잘라낼 때 timeline 좌측 엣지는 손가락 위치에 머무름). end 핸들 드래그는
+     * [newStartMs] 가 null — startMs 불변. trim range 유효성은 use case 가 검증 + clamp.
+     */
+    fun onUpdateBgmTrim(
+        clipId: String,
+        newSourceTrimStartMs: Long,
+        newSourceTrimEndMs: Long,
+        newStartMs: Long?,
+    ) {
+        viewModelScope.launch {
+            try {
+                updateBgmClip(
+                    clipId = clipId,
+                    startMs = newStartMs?.coerceAtLeast(0L),
+                    sourceTrimStartMs = newSourceTrimStartMs.coerceAtLeast(0L),
+                    sourceTrimEndMs = newSourceTrimEndMs.coerceAtLeast(0L),
+                )
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(bgmError = e.message)
+            }
+        }
+    }
+
+    /**
      * BGM 클립을 source 로 자막 자동 생성. 영상 segment 흐름과 동일한 GenerateAutoSubtitlesUseCase
      * 재사용 — mediaType=AUDIO 만 다름. invalidation 책임은 use case 가 EditProject autoSubtitleStatus
      * 기록 + 자막 클립 갱신으로 이미 처리.
