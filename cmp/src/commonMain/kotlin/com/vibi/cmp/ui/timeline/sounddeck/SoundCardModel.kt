@@ -24,6 +24,8 @@ data class SoundCardModel(
     val rangeEndMs: Long?,
     /** SPEAKER 카드만 — 1-based. SoundCard chip + 타임라인 파형 highlight 가 같은 팔레트로 매핑. */
     val speakerIndex: Int? = null,
+    /** BGM 카드만 — startMs 정렬 1-based. SoundCard chip + 타임라인 클립 블록이 BgmPalette 로 cycle. */
+    val bgmIndex: Int? = null,
 )
 
 enum class SoundCardKind { SPEAKER, VOICE_ALL, BACKGROUND, OTHER_STEM, BGM }
@@ -149,7 +151,7 @@ fun buildSoundDeckGroups(
         else recordings.withIndex().associate { (i, b) -> b.id to (i + 1) }
     }
     val bgmCards = sortedBgm
-        .map { bgm ->
+        .mapIndexed { i, bgm ->
             SoundCardModel(
                 key = "bgm:${bgm.id}",
                 label = bgmDisplayLabel(bgm.sourceUri, recordingOrdinal[bgm.id]),
@@ -161,6 +163,7 @@ fun buildSoundDeckGroups(
                 audioUrl = bgm.sourceUri,
                 rangeStartMs = bgm.startMs,
                 rangeEndMs = bgm.startMs + bgm.effectiveDurationMs,
+                bgmIndex = i + 1,
             )
         }
     val bgmGroup = if (bgmCards.isEmpty()) emptyList()

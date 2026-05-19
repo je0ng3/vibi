@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.BgmPalette
 import com.vibi.cmp.theme.SpeakerPalette
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.ui.components.VibiPanelCard
@@ -93,7 +94,7 @@ fun SoundCard(
                     SoundCardKind.SPEAKER -> SpeakerPalette.colorFor(model.speakerIndex, tokens)
                     SoundCardKind.VOICE_ALL -> tokens.accent
                     SoundCardKind.BACKGROUND -> tokens.mutedText
-                    SoundCardKind.BGM -> tokens.accent.copy(alpha = 0.7f)
+                    SoundCardKind.BGM -> BgmPalette.colorFor(model.bgmIndex, tokens)
                     SoundCardKind.OTHER_STEM -> tokens.chipBg
                 }
                 Box(

@@ -2285,6 +2285,12 @@ private fun UnifiedTimelineBar(
                             .background(accent)
                     )
                 }
+                // BGM 클립 색은 startMs 정렬 1-based 인덱스로 BgmPalette cycle (4색). 같은 통합 매핑을
+                // SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을 매칭.
+                val bgmIndexByClipId: Map<String, Int> = bgmClips
+                    .sortedBy { it.startMs }
+                    .withIndex()
+                    .associate { (i, b) -> b.id to (i + 1) }
                 bgmClips.forEach { clip ->
                     // effectiveDurationMs 는 trim (sourceTrimStart/End) + speed 모두 반영 — 시각 막대 길이를
                     // BGM 의 실제 timeline 점유와 일치시켜야 사용자가 trim 결과를 즉시 확인 가능.
@@ -2319,13 +2325,12 @@ private fun UnifiedTimelineBar(
                     val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
                     val isMuted = clip.volumeScale <= 0f
                     val isRecording = isBgmRecording(clip)
-                    // 트랙 종류별 색 구분. 녹음 = atmosphere peach (양 테마 동일 톤, 항상 밝은 색),
-                    // 파일 = brand accent (light→dark ink / dark→white).
-                    val clipBaseColor = if (isRecording) tokens.gradientPeach else accent
-                    // 블록 내 콘텐츠(라벨/아이콘/파형) 색 — 블록 배경과 페어링해 양 테마 모두 contrast 유지.
-                    // 녹음 블록(항상 밝은 peach) 위에는 항상 어두운 잉크. 파일 블록(accent = 잉크/흰색
-                    // 자동 invert) 위에는 backgroundPrimary 가 자동 반대 색을 잡아준다.
-                    val clipContentColor = if (isRecording) Color(0xFF0C0A09) else tokens.backgroundPrimary
+                    // 클립 색은 timeline 순서로 cycle (BgmPalette = 4색 muted gradient). 모든 BGM 이 같은
+                    // 팔레트라 양 테마 모두 밝은 톤 → contentColor 는 어두운 잉크로 고정 (대비 안정).
+                    val clipBaseColor = com.vibi.cmp.theme.BgmPalette.colorFor(
+                        bgmIndexByClipId[clip.id], tokens,
+                    )
+                    val clipContentColor = Color(0xFF0C0A09)
                     // selection border 는 bgmRangeMode 일 땐 미적용 — range overlay 핸들과 시각 충돌 방지.
                     val showSelectionBorder = isSelected && !bgmRangeMode
                     Box(

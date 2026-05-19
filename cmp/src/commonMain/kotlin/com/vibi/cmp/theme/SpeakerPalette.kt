@@ -8,21 +8,21 @@ import com.vibi.shared.domain.model.StemKind
  * 음원분리 stem 의 시각 색. SoundDeck 카드 chip + 타임라인 파형 highlight 가 같은 매핑을 공유해
  * 같은 화자가 두 군데서 같은 색으로 인지된다.
  *
- * speaker palette 는 [VibiColors.gradient*] 5종에서 hue 가 잘 떨어진 순서로 선택. 6+ 화자는 wrap.
+ * speaker 는 **고채도** — BGM (muted pastel) 과 채도로 구분되도록 vivid 톤 5색. 6+ 화자는 wrap.
  */
 object SpeakerPalette {
-    private fun palette(tokens: VibiColors): List<Color> = listOf(
-        tokens.gradientSky,
-        tokens.gradientPeach,
-        tokens.gradientMint,
-        tokens.gradientRose,
-        tokens.gradientLavender,
+    private val palette: List<Color> = listOf(
+        Color(0xFF1E88E5),  // speaker 1 — blue
+        Color(0xFFE65100),  // speaker 2 — deep orange
+        Color(0xFF2E7D32),  // speaker 3 — green
+        Color(0xFFC2185B),  // speaker 4 — pink
+        Color(0xFF6A1B9A),  // speaker 5 — purple
     )
 
+    @Suppress("UNUSED_PARAMETER")
     fun colorFor(speakerIndex: Int?, tokens: VibiColors): Color {
-        val p = palette(tokens)
-        val i = ((speakerIndex ?: 1) - 1).coerceAtLeast(0) % p.size
-        return p[i]
+        val i = ((speakerIndex ?: 1) - 1).coerceAtLeast(0) % palette.size
+        return palette[i]
     }
 
     /**
@@ -35,4 +35,23 @@ object SpeakerPalette {
             StemKind.BACKGROUND -> tokens.mutedText
             else -> fallback
         }
+}
+
+/**
+ * BGM 클립 (파일 삽입 + 즉시 녹음 통합) 의 시각 색. 삽입 순서 (timeline startMs) 기준 1-based
+ * 인덱스로 4색 cycle — 사용자가 어떤 BGM 인지 색만으로 구분 가능. 5개 이상은 wrap.
+ */
+object BgmPalette {
+    private fun palette(tokens: VibiColors): List<Color> = listOf(
+        tokens.gradientMint,
+        tokens.gradientLavender,
+        tokens.gradientRose,
+        tokens.gradientPeach,
+    )
+
+    fun colorFor(bgmIndex: Int?, tokens: VibiColors): Color {
+        val p = palette(tokens)
+        val i = ((bgmIndex ?: 1) - 1).coerceAtLeast(0) % p.size
+        return p[i]
+    }
 }
