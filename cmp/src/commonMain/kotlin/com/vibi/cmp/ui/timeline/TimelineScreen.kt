@@ -2080,9 +2080,12 @@ private fun UnifiedTimelineBar(
                     }
             }
 
-            // 진행 중인 음원분리 overlay — directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
-            // showRange / showSegments 와 무관하게 노출 — 어느 모드에서든 처리 중 구간 인지 가능. 클릭 비활성.
+            // 진행 중 음원분리 overlay — range fill 과 동일한 파형 높이(40dp) 로 시각 위계 통일.
+            // 이전 12dp strip 은 40dp 파형 위에서 시각적으로 묻혀 진행 인지 어려움. 옅은 fill + accent
+            // border + 상단 진행 막대로 처리 중임을 명확히 한다.
             if (totalMs > 0L) {
+                val procFillHeight = TimelineBarSpec.WaveformHeight
+                val procBorderInsetY = (playbackRegionHeight - procFillHeight) / 2
                 processingSeparations.forEach { p ->
                     if (p.endMs <= p.startMs) return@forEach
                     val pStart = (p.startMs.toFloat() / totalMs).coerceIn(0f, 1f)
@@ -2093,19 +2096,36 @@ private fun UnifiedTimelineBar(
                         modifier = Modifier
                             .offset(x = pStartDp)
                             .width(pWidthDp)
-                            .height(contentHeight)
+                            .height(procFillHeight)
                             .align(Alignment.CenterStart)
-                            .background(accent.copy(alpha = 0.25f))
-                    ) {
-                        val fill = (p.progress.coerceIn(0, 100)) / 100f
-                        if (fill > 0f) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(fill)
-                                    .background(accent.copy(alpha = 0.6f))
-                            )
-                        }
+                            .background(accent.copy(alpha = 0.18f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(x = pStartDp, y = procBorderInsetY)
+                            .width(pWidthDp)
+                            .height(TimelineBarSpec.RangeBorderThickness)
+                            .align(Alignment.TopStart)
+                            .background(accent.copy(alpha = 0.7f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(x = pStartDp, y = -procBorderInsetY)
+                            .width(pWidthDp)
+                            .height(TimelineBarSpec.RangeBorderThickness)
+                            .align(Alignment.BottomStart)
+                            .background(accent.copy(alpha = 0.7f))
+                    )
+                    val progress = (p.progress.coerceIn(0, 100)) / 100f
+                    if (progress > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = pStartDp, y = procBorderInsetY)
+                                .width(pWidthDp * progress)
+                                .height(TimelineBarSpec.RangeBorderThickness * 2)
+                                .align(Alignment.TopStart)
+                                .background(accent)
+                        )
                     }
                 }
             }
@@ -2664,7 +2684,8 @@ private fun TimelineWaveformBackground(
     // directive 별 effective scale + stem 기여도. directive 영역의 bar 높이는 선택된 모든 stem 의 peak 를
     // volume 으로 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) — 화자+배경 둘 다 켜면 mix shape 이 보임.
     // muteOriginalSegmentAudio=false 면 source peak 도 추가 항으로 합산.
-    val directiveOverlays = remember(directives, stemPeaksByUrl) {
+    val tokens = LocalVibiColors.current
+    val directiveOverlays = remember(directives, stemPeaksByUrl, tokens) {
         // 같은 stem audio URL 을 공유하는 모든 piece (split 결과) 중 (sourceOffset + duration) 의 max
         // 를 stem audio 전체 길이로 추정. waveform peak idx 매핑이 piece 길이가 아니라 stem 전체 길이
         // 기준이어야 split 뒷 piece (sourceOffset > 0) 가 stem 의 올바른 구간을 보여줌.
@@ -2690,6 +2711,7 @@ private fun TimelineWaveformBackground(
                     peaks = peaks,
                     volume = sel.volume,
                     totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
+                    color = stemBarColor(sel.stemId, tokens, fallback = highlightBarColor),
                 )
             }
             DirectiveScaleOverlay(
@@ -2757,23 +2779,28 @@ private fun TimelineWaveformBackground(
                 // directive overlay scale + 시각 컬러 분기 결정. directive 안일 때 선택된 모든 stem 의 peak 를
                 // volume 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) → 화자+배경 둘 다 켜면 합쳐진 mix 가 보임.
                 // mute 안 한 경우 source peak 도 추가 항으로 더함. stem peaks 없으면 기존 source × scale fallback.
+                // 또 dominant contribution(peak×volume 최대) 의 색을 bar 색으로 채택해 화자별 시각 분리.
                 var directiveScale = 1f
                 var inDirective = false
                 var directivePeak: Float? = null
+                var directiveBarColor: Color? = null
                 for (ov in directiveOverlays) {
                     if (timelineMs in ov.startMs..ov.endMs) {
                         directiveScale = ov.scale
                         inDirective = true
                         if (ov.stemContributions.isNotEmpty()) {
-                            // rel = stem audio 안의 글로벌 ms. fraction 은 stem 전체 길이 기준 — piece 길이
-                            // 로 나누면 split 뒷 piece 에서 idx 가 항상 끝으로 clamp 돼 파형이 깨짐.
                             val rel = (timelineMs - ov.startMs).coerceAtLeast(0L) + ov.sourceOffsetMs
                             var sumSq = 0.0
+                            var dominantWeight = 0f
                             for (c in ov.stemContributions) {
                                 val idx = ((rel.toDouble() / c.totalDurMs) * c.peaks.size).toInt()
                                     .coerceIn(0, c.peaks.size - 1)
                                 val v = c.peaks[idx] * c.volume
                                 sumSq += v * v
+                                if (v > dominantWeight) {
+                                    dominantWeight = v
+                                    directiveBarColor = c.color
+                                }
                             }
                             if (ov.includeOriginal) {
                                 val v = sourcePeak * segVolume
@@ -2793,7 +2820,11 @@ private fun TimelineWaveformBackground(
                 val h = maxOf(barPx / 2f, kotlin.math.sqrt(effectivePeak) * maxHalfHeight)
                 val x = slotPx * i
                 drawRoundRect(
-                    color = if (inDirective) highlightBarColor else defaultBarColor,
+                    color = when {
+                        !inDirective -> defaultBarColor
+                        directiveBarColor != null -> directiveBarColor
+                        else -> highlightBarColor
+                    },
                     topLeft = Offset(x, cy - h),
                     size = Size(barPx, h * 2f),
                     cornerRadius = cornerR,
@@ -2811,10 +2842,30 @@ private data class DirectiveScaleOverlay(
     val includeOriginal: Boolean = true,
     val sourceOffsetMs: Long = 0L,
 )
+/**
+ * 음원분리 stem 의 시각 색. SoundDeck chip ([com.vibi.cmp.theme.SpeakerPalette]) 과 동일 매핑 —
+ * 같은 화자가 데크와 타임라인에서 같은 색으로 인지된다.
+ */
+private fun stemBarColor(
+    stemId: String,
+    tokens: com.vibi.cmp.theme.VibiColors,
+    fallback: Color,
+): Color = when (com.vibi.shared.domain.model.Stem.kindFromId(stemId)) {
+    com.vibi.shared.domain.model.StemKind.SPEAKER ->
+        com.vibi.cmp.theme.SpeakerPalette.colorFor(
+            com.vibi.shared.domain.model.Stem.speakerIndexFromId(stemId),
+            tokens,
+        )
+    com.vibi.shared.domain.model.StemKind.BACKGROUND -> tokens.mutedText
+    else -> fallback
+}
+
 private data class StemPeakContribution(
     val peaks: List<Float>,
     val volume: Float,
     val totalDurMs: Long,
+    /** 시각 색 — SPEAKER 는 [SpeakerPalette], BACKGROUND/VOICE_ALL 은 기존 highlight 색. */
+    val color: Color,
 )
 private data class SegmentSpan(
     val startMs: Long,

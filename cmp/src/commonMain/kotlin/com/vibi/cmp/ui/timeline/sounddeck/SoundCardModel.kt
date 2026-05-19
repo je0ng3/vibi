@@ -22,6 +22,8 @@ data class SoundCardModel(
     val audioUrl: String?,
     val rangeStartMs: Long?,
     val rangeEndMs: Long?,
+    /** SPEAKER 카드만 — 1-based. SoundCard chip + 타임라인 파형 highlight 가 같은 팔레트로 매핑. */
+    val speakerIndex: Int? = null,
 )
 
 enum class SoundCardKind { SPEAKER, VOICE_ALL, BACKGROUND, OTHER_STEM, BGM }
@@ -119,6 +121,7 @@ fun buildSoundDeckGroups(
                         audioUrl = sel.audioUrl,
                         rangeStartMs = null,
                         rangeEndMs = null,
+                        speakerIndex = Stem.speakerIndexFromId(sel.stemId),
                     )
                 }
                 .sortedWith(compareBy({ kindOrder(it.kind) }, { it.label }))
