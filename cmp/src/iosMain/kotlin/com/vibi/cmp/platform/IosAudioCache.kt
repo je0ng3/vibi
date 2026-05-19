@@ -18,12 +18,16 @@ import platform.Foundation.writeToFile
  * KMP `:shared` 의 absUrl 변환이 framework 빌드 캐시 등으로 stale 일 때를 위한 self-contained 안전망.
  *
  * - http(s):// 면 그대로
- * - "/" 시작이면 BFFBaseURL prepend (BFFBaseURL 없으면 입력 그대로)
- * - 그 외 (file path 등) 그대로
+ * - `/api/` 시작이면 BFFBaseURL prepend (BFFBaseURL 없으면 입력 그대로)
+ * - 그 외 ("/Users/...", "/var/..." 등 filesystem 절대 path 포함) 그대로
+ *
+ * 주의: `/`로 시작하는 모든 입력을 prepend 하면 즉석 녹음·picker 결과 (NSCachesDirectory /
+ * NSDocumentDirectory 절대 path) 까지 remote URL 로 변환되어 download 시도 후 silent fail —
+ * 반드시 `/api/` 같이 BFF API path 만 prepend 해야 한다.
  */
 internal fun resolveAbsoluteAudioUrl(url: String): String {
     if (url.startsWith("http://") || url.startsWith("https://")) return url
-    if (!url.startsWith("/")) return url
+    if (!url.startsWith("/api/")) return url
     val baseUrl = (NSBundle.mainBundle.objectForInfoDictionaryKey("BFFBaseURL") as? String)
         ?.takeIf { it.isNotEmpty() } ?: return url
     return "${baseUrl.trimEnd('/')}/${url.trimStart('/')}"

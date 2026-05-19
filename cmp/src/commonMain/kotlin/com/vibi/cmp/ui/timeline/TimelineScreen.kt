@@ -72,8 +72,6 @@ import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.platform.StemMixerSource
-import com.vibi.cmp.platform.rememberAudioPicker
-import com.vibi.cmp.platform.rememberAudioRecorder
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.cmp.ui.chat.ChatPanel
 import com.vibi.shared.domain.model.AutoJobStatus
@@ -178,6 +176,9 @@ fun TimelineScreen(
 
     // 채팅 패널 토글 — FAB (헤더 우측) 로 열고 ModalBottomSheet 가 자체적으로 dismiss 처리.
     var chatSheetVisible by remember { mutableStateOf(false) }
+
+    // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. 드롭다운 두 항목이 진입 mode 결정.
+    var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
 
     // 저장 완료 → InputScreen 복귀. ViewModel 의 _navigateBackHome SharedFlow 가 1회성 신호.
     LaunchedEffect(viewModel) {
@@ -842,23 +843,7 @@ fun TimelineScreen(
                     AutoJobStatus.FAILED -> "❌ 다시 시도"
                     else -> "음원 분리"
                 }
-                val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }
-                val recorder = rememberAudioRecorder(
-                    onRecorded = { uri, _ -> viewModel.onPickBgmAudio(uri) },
-                    onError = { /* TODO: bgmError 상태로 토스트 */ },
-                )
-                val recording = recorder.isRecording
-                var pendingRecord by remember { mutableStateOf(false) }
-                LaunchedEffect(recording) { if (recording) pendingRecord = false }
-                var micLevel by remember { mutableStateOf(0f) }
-                LaunchedEffect(recording) {
-                    if (!recording) { micLevel = 0f; return@LaunchedEffect }
-                    while (recording) {
-                        micLevel = recorder.currentLevel
-                        kotlinx.coroutines.delay(100)
-                    }
-                    micLevel = 0f
-                }
+                // 녹음/파일선택/미리듣기 는 AudioInsertSheet 가 흡수 — 본 scope 에선 메뉴만 띄움.
                 var audioMenuOpen by remember { mutableStateOf(false) }
                 // 편집 토글 — segment edit 모드 내내 표시. range 미선택 상태 (start==end) 면 apply 류는
                 // VM 가드에서 no-op 처리되고 onCancel 만 활성. 사용자가 토글 사라짐 → 다시 진입 반복하지 않도록.
@@ -906,38 +891,12 @@ fun TimelineScreen(
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                             shape = VibiShape.lg,
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
-                            onClick = {
-                                if (recording) recorder.stop()
-                                else audioMenuOpen = true
-                            },
+                            onClick = { audioMenuOpen = true },
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    when {
-                                        state.isAddingBgm -> "⏳ 추가 중"
-                                        recording -> "⏹ 녹음 중"
-                                        pendingRecord -> "⏳ 준비 중"
-                                        else -> "음원 삽입"
-                                    },
-                                    style = typo.bodySm,
-                                )
-                                if (recording) {
-                                    Spacer(Modifier.width(VibiSpacing.xs))
-                                    Box(
-                                        modifier = Modifier
-                                            .height(14.dp)
-                                            .width(36.dp)
-                                            .background(tokens.timelineBarTrack, VibiShape.xs),
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxHeight()
-                                                .fillMaxWidth(micLevel.coerceIn(0f, 1f))
-                                                .background(tokens.accent, VibiShape.xs),
-                                        )
-                                    }
-                                }
-                            }
+                            Text(
+                                text = if (state.isAddingBgm) "⏳ 추가 중" else "음원 삽입",
+                                style = typo.bodySm,
+                            )
                         }
                         DropdownMenu(
                             expanded = audioMenuOpen,
@@ -947,15 +906,14 @@ fun TimelineScreen(
                                 text = { Text("파일 업로드") },
                                 onClick = {
                                     audioMenuOpen = false
-                                    audioPicker.launch()
+                                    audioInsertMode = AudioInsertMode.Picker
                                 },
                             )
                             DropdownMenuItem(
                                 text = { Text("즉시 녹음") },
                                 onClick = {
                                     audioMenuOpen = false
-                                    pendingRecord = true
-                                    recorder.start()
+                                    audioInsertMode = AudioInsertMode.Recording
                                 },
                             )
                         }
@@ -1288,6 +1246,18 @@ fun TimelineScreen(
             )
         }
     }
+
+    // 음원 삽입 / 즉시 녹음 통합 peek sheet — 하단 ~48% peek. 위쪽 타임라인은 그대로 노출.
+    // 삽입 확정 시 onPickBgmAudio 호출 — 영상보다 길면 BgmTrimSheet 가 자동 chain.
+    AudioInsertSheet(
+        mode = audioInsertMode,
+        modifier = Modifier.align(Alignment.BottomCenter),
+        onInsert = { uri ->
+            audioInsertMode = null
+            viewModel.onPickBgmAudio(uri)
+        },
+        onDismiss = { audioInsertMode = null },
+    )
     } // close Box wrapper
 
     // STT 스크립트 검토 sheet — review 모드에서 STT 완료 후 표시. 영상편집 모드 진행 중엔 숨김.

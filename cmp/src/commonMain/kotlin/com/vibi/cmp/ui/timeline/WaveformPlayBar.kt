@@ -45,12 +45,17 @@ fun WaveformPlayBar(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     onSeek: ((Long) -> Unit)? = null,
+    barColorOverride: Color? = null,
+    playedColorOverride: Color? = null,
+    playheadColorOverride: Color? = null,
+    trackBgOverride: Color? = null,
 ) {
     val tokens = LocalVibiColors.current
-    val barColor = tokens.onBackgroundPrimary.copy(alpha = 0.45f)
-    val playedColor = tokens.accent
-    val playheadColor = tokens.onBackgroundPrimary
-    val trackBg = tokens.timelineBarTrack.copy(alpha = if (compact) 0.45f else 0.55f)
+    val barColor = barColorOverride ?: tokens.onBackgroundPrimary.copy(alpha = 0.45f)
+    val playedColor = playedColorOverride ?: tokens.accent
+    val playheadColor = playheadColorOverride ?: tokens.onBackgroundPrimary
+    val trackBg = trackBgOverride
+        ?: tokens.timelineBarTrack.copy(alpha = if (compact) 0.45f else 0.55f)
     val containerHeight = if (compact) 28.dp else 56.dp
     val cornerRadius = if (compact) 4.dp else 6.dp
 
