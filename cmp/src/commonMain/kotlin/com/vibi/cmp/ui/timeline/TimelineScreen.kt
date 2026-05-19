@@ -2004,7 +2004,8 @@ private fun UnifiedTimelineBar(
                 }
             }
 
-            // Layer 2 — 회색 타임라인 strip(=contentHeight 12dp)에 정렬. 트림 핸들도 동일 높이.
+            // Layer 2 — 파형(WaveformHeight 40dp) 전체를 아우르는 fill + chevron 트림 핸들. BGM 클립 선택과
+            // 동일한 시각 언어 — 사용자가 음원분리 구간 선택을 "BGM 편집과 같은 방식" 으로 인지하도록.
             // tap absorber 없음 → 자식 segment.clickable / parent free-interval tap 모두 살림.
             // rangeEndMs <= rangeStartMs (zero-width) = "선택 없음" 상태 → range 시각 모두 숨김 (mode 유지).
             // bgmRangeMode 면 영상 strip 의 fill/handles 안 그림 — BGM lane 에 같은 시각이 노출.
@@ -2013,8 +2014,7 @@ private fun UnifiedTimelineBar(
                 val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
                 val rangeStartDp = totalWidthDp * startFrac
                 val rangeWidthDp = totalWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
-                // 회색 strip 높이 = contentHeight. 위/아래 inset = (playbackRegionHeight - contentHeight) / 2.
-                val rangeStripInsetY = (playbackRegionHeight - contentHeight) / 2
+                val rangeFillHeight = TimelineBarSpec.WaveformHeight
 
                 var fillBaseStartMs by remember { mutableStateOf(0L) }
                 var fillAccumPx by remember { mutableStateOf(0f) }
@@ -2022,7 +2022,7 @@ private fun UnifiedTimelineBar(
                     modifier = Modifier
                         .offset(x = rangeStartDp)
                         .width(rangeWidthDp)
-                        .height(contentHeight)
+                        .height(rangeFillHeight)
                         .align(Alignment.CenterStart)
                         .background(accent.copy(alpha = 0.32f))
                         .pointerInput(totalWidthPx, totalMs) {
@@ -2041,10 +2041,12 @@ private fun UnifiedTimelineBar(
                             )
                         }
                 )
-                // 상단/하단 border — 회색 strip 의 위/아래 모서리에 정렬.
+                // 파형 strip 의 상/하 엣지에 정렬되는 accent border — 선택 영역을 박스처럼 감싸 BGM 선택의
+                // border 시각과 통일.
+                val rangeBorderInsetY = (playbackRegionHeight - rangeFillHeight) / 2
                 Box(
                     modifier = Modifier
-                        .offset(x = rangeStartDp, y = rangeStripInsetY)
+                        .offset(x = rangeStartDp, y = rangeBorderInsetY)
                         .width(rangeWidthDp)
                         .height(TimelineBarSpec.RangeBorderThickness)
                         .align(Alignment.TopStart)
@@ -2052,23 +2054,26 @@ private fun UnifiedTimelineBar(
                 )
                 Box(
                     modifier = Modifier
-                        .offset(x = rangeStartDp, y = -rangeStripInsetY)
+                        .offset(x = rangeStartDp, y = -rangeBorderInsetY)
                         .width(rangeWidthDp)
                         .height(TimelineBarSpec.RangeBorderThickness)
                         .align(Alignment.BottomStart)
                         .background(accent)
                 )
 
-                // 좌/우 bracket 핸들 — playback region 높이만큼 hit zone (BGM lane drag 와 충돌 회피).
+                // 좌/우 chevron 핸들 — BGM 트림 핸들과 동일 디자인. hit zone 은 파형 높이만큼만.
                 val minGap = TimelineBarSpec.MinRangeGapMs
+                val rangeHandleOffsetY = (playbackRegionHeight - rangeFillHeight) / 2
                 RangeHandle(
                     offsetX = rangeStartDp - handleHitWidth / 2,
+                    offsetY = rangeHandleOffsetY,
                     hitWidth = handleHitWidth,
-                    hitHeight = playbackRegionHeight,
+                    hitHeight = rangeFillHeight,
                     visualWidth = handleVisualWidth,
                     handleColor = accent,
                     gripColor = markerColor,
-                    gripHeight = contentHeight,
+                    gripHeight = rangeFillHeight,
+                    chevron = RangeHandleChevron.Start,
                     totalWidthPx = totalWidthPx,
                     totalMs = totalMs,
                     baseMsProvider = { currentRangeStart },
@@ -2077,12 +2082,14 @@ private fun UnifiedTimelineBar(
                 )
                 RangeHandle(
                     offsetX = rangeStartDp + rangeWidthDp - handleHitWidth / 2,
+                    offsetY = rangeHandleOffsetY,
                     hitWidth = handleHitWidth,
-                    hitHeight = playbackRegionHeight,
+                    hitHeight = rangeFillHeight,
                     visualWidth = handleVisualWidth,
                     handleColor = accent,
                     gripColor = markerColor,
-                    gripHeight = contentHeight,
+                    gripHeight = rangeFillHeight,
+                    chevron = RangeHandleChevron.End,
                     totalWidthPx = totalWidthPx,
                     totalMs = totalMs,
                     baseMsProvider = { currentRangeEnd },
@@ -2810,6 +2817,12 @@ private fun RangeHandle(
     clamp: (Long) -> Long,
     onChange: (Long) -> Unit,
     offsetY: androidx.compose.ui.unit.Dp = 0.dp,
+    /**
+     * null 이면 기존 visual (얇은 막대 + 가운데 grip 선) — segment edit 등 좁은 strip 에 쓰임.
+     * Start/End 면 CapCut 스타일 chevron 막대 (BgmTrimHandle 와 동일 시각) — 음원분리 range 가 파형 높이를
+     * 가득 채우면서 트림 핸들도 같은 언어로 보이도록.
+     */
+    chevron: RangeHandleChevron? = null,
 ) {
     // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
@@ -2838,23 +2851,46 @@ private fun RangeHandle(
             .pointerInput(Unit) { detectTapGestures(onTap = { }) },
         contentAlignment = Alignment.Center
     ) {
-        // 시각 막대 두 개 모두 gripHeight (= 회색 strip 두께) 로 통일.
-        // hit zone 자체는 fillMaxHeight 유지 — 드래그 잡기 영역은 풀 바 높이.
-        Box(
-            Modifier
-                .width(visualWidth)
-                .height(gripHeight)
-                .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
-                .background(handleColor)
-        )
-        Box(
-            Modifier
-                .width(TimelineBarSpec.GripWidth)
-                .height(gripHeight)
-                .background(gripColor)
-        )
+        if (chevron != null) {
+            // CapCut/BgmTrimHandle 와 동일 — 두꺼운 단색 막대 + 안쪽으로 향하는 chevron 화살표. range 가
+            // 파형 전체를 감싸는 상황에서 트림 의도를 BGM 편집과 같은 시각으로 통일.
+            Box(
+                modifier = Modifier
+                    .width(10.dp)
+                    .height(gripHeight)
+                    .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
+                    .background(handleColor),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = if (chevron == RangeHandleChevron.Start)
+                        Icons.AutoMirrored.Filled.KeyboardArrowLeft
+                    else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = if (chevron == RangeHandleChevron.Start) "왼쪽 트림" else "오른쪽 트림",
+                    tint = gripColor,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        } else {
+            // 기존 시각 — 얇은 막대 두 개. hit zone 은 fillMaxHeight 유지.
+            Box(
+                Modifier
+                    .width(visualWidth)
+                    .height(gripHeight)
+                    .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
+                    .background(handleColor)
+            )
+            Box(
+                Modifier
+                    .width(TimelineBarSpec.GripWidth)
+                    .height(gripHeight)
+                    .background(gripColor)
+            )
+        }
     }
 }
+
+private enum class RangeHandleChevron { Start, End }
 
 /**
  * BGM clip 블록 내부에 trim 적용된 source 파형 구간을 mini bar 로 그림. peaks 는 sourceUri 전체에
