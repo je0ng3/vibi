@@ -101,39 +101,42 @@ fun EditActionsPanel(
                 }
             }
         }
+        // 4 버튼 동일 폭(weight 1f) + 작은 gap — SpaceBetween 시 좁은 화면에서 가장 긴 라벨
+        // ("배경음 제거") 가 잘려 보이지 않던 케이스 회피. weight 가 행 전체를 4등분해 어떤 라벨이든
+        // 고정 슬롯에 들어가고, 행 폭 자체가 양 끝까지 채워져 "양쪽 정렬" 요구도 자연스럽게 만족.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             OutlinedButton(
                 onClick = { expanded = if (expanded == "volume") null else "volume" },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(30.dp),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
                 ),
-            ) { Text("볼륨", fontSize = 12.sp) }
+            ) { Text("볼륨", fontSize = 12.sp, maxLines = 1) }
             OutlinedButton(
                 onClick = { expanded = if (expanded == "speed") null else "speed" },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(30.dp),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "speed") tokens.accent else tokens.onBackgroundPrimary,
                 ),
-            ) { Text("속도", fontSize = 12.sp) }
+            ) { Text("속도", fontSize = 12.sp, maxLines = 1) }
             OutlinedButton(
                 onClick = onSecondaryAction,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(30.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text(secondaryActionLabel, fontSize = 12.sp, color = tokens.accent) }
+            ) { Text(secondaryActionLabel, fontSize = 12.sp, color = tokens.accent, maxLines = 1) }
             OutlinedButton(
                 onClick = onDelete,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(30.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text("삭제", fontSize = 12.sp, color = tokens.accent) }
+            ) { Text("삭제", fontSize = 12.sp, color = tokens.accent, maxLines = 1) }
         }
 
         // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배).
@@ -182,17 +185,18 @@ fun EditActionsPanel(
 }
 
 /**
- * 음원분리 결과 / BGM 편집 슬라이더 전용 muted 색상. M3 Slider 기본은 thumb·activeTrack=primary(우리
- * 테마에선 잉크 near-black) + inactiveTrack=surfaceContainerHighest(M3 미override 기본 라벤더
- * 0xFFE6E0E9). 두 색이 분리 stem 카드 (화자/배경 팔레트) 위에서 액티브 컬러로 인식돼 시각 과부하 +
- * 사용자가 "보라" 로 인지. mutedText 한 톤으로 묶고 alpha 를 단계화해 active/inactive 만 구분.
+ * 음원분리 결과 / BGM 편집 슬라이더 색상.
+ *
+ * - thumb · activeTrack: M3 기본 (= colorScheme.primary = 우리 테마 잉크 near-black). 사용자가
+ *   "현재 값" 을 즉각 인지할 수 있도록 유지.
+ * - inactiveTrack: M3 기본은 surfaceContainerHighest (라벤더 0xFFE6E0E9, 우리 colorScheme
+ *   미override) 라 stem 카드 위에서 "보라" 로 인지됨 → mutedText 옅은 회색으로 교체.
+ *
+ * [base] 는 inactiveTrack tint 의 기준색 (보통 tokens.mutedText).
  */
 @Composable
 internal fun mutedSliderColors(base: androidx.compose.ui.graphics.Color): SliderColors =
     SliderDefaults.colors(
-        thumbColor = base,
-        activeTrackColor = base.copy(alpha = 0.40f),
-        activeTickColor = base.copy(alpha = 0.40f),
         inactiveTrackColor = base.copy(alpha = 0.18f),
         inactiveTickColor = base.copy(alpha = 0.18f),
     )

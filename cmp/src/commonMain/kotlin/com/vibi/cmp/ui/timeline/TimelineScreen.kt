@@ -2471,22 +2471,16 @@ private fun UnifiedTimelineBar(
                     }
                     // (c) 트림 핸들 — 선택된 클립의 좌·우 엣지. bgmRangeMode 면 미렌더 (range 핸들과 충돌 방지).
                     if (isSelected && bgmDragEnabled && !bgmRangeMode) {
-                        // 좁은 클립(녹음본 같은 짧은 BGM)은 두 핸들 hit zone (각 HandleHitWidth=32dp) 이
-                        // 클립 본체를 완전히 덮어 본체의 tap(선택해제)/drag(위치이동) 이 핸들에 가로채임.
-                        // widthDp <= 2*HandleHitWidth 면 핸들을 본체 바깥으로 밀어 본체 100% 접근 가능.
-                        val handleOutside = widthDp <= TimelineBarSpec.HandleHitWidth * 2
-                        val leftHandleOffsetX = if (handleOutside)
-                            offsetXDp - TimelineBarSpec.HandleHitWidth
-                        else offsetXDp - TimelineBarSpec.HandleHitWidth / 2
-                        val rightHandleOffsetX = if (handleOutside)
-                            offsetXDp + widthDp
-                        else offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2
-                        // 본체 바깥으로 hit zone 을 밀어낸 경우, chevron 시각은 그 hit zone 의 inner edge
-                        // (본체 쪽) 에 정렬해 본체 엣지에 그대로 붙어 보이도록. wide path 는 기존 center 유지.
-                        val leftVisualAlign =
-                            if (handleOutside) Alignment.CenterEnd else Alignment.Center
-                        val rightVisualAlign =
-                            if (handleOutside) Alignment.CenterStart else Alignment.Center
+                        // 핸들 hit zone 은 **항상 본체 바깥** — 좌 핸들은 좌측 32dp, 우 핸들은 우측 32dp.
+                        // 이전엔 wide clip 에서 hit zone 절반을 본체 안쪽으로 밀어 시각 elegance 를 챙겼지만
+                        // 본체 가장자리 16dp 가 핸들에 흡수돼 사용자가 재탭 선택해제 못 함. tap detector chain
+                        // 으로도 두 pointerInput 간 down 분배가 케이스별로 일정하지 않아 — hit zone 자체를
+                        // 분리해 본체 100% tappable 로 만드는 게 robust. chevron 시각은 hit zone 의 inner
+                        // edge 정렬로 본체 엣지에 그대로 붙어 보이도록.
+                        val leftHandleOffsetX = offsetXDp - TimelineBarSpec.HandleHitWidth
+                        val rightHandleOffsetX = offsetXDp + widthDp
+                        val leftVisualAlign = Alignment.CenterEnd
+                        val rightVisualAlign = Alignment.CenterStart
                         // 좌 핸들 — sourceTrimStartMs + startMs 동시 갱신.
                         BgmTrimHandle(
                             side = BgmTrimSide.Start,

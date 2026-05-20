@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -44,24 +46,40 @@ fun LoginScreen(
         viewModel.navigateToHome.collect { onSignedIn() }
     }
 
+    // 상단 — 로고만 중앙. 하단 — Google/Apple 버튼 + ToS. 두 영역을 Box align 으로 분리.
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(horizontal = 32.dp),
-        contentAlignment = Alignment.Center,
     ) {
+        Text(
+            text = "vibi",
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 56.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.Center),
+        )
+
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp),
+            verticalArrangement = Arrangement.Bottom,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .widthIn(max = 360.dp)
+                .padding(bottom = 32.dp),
         ) {
-            Text(
-                text = "vibi",
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 56.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(48.dp))
+            (state as? LoginViewModel.UiState.Error)?.let { err ->
+                Text(
+                    text = err.message,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
             Button(
                 onClick = viewModel::signInWithGoogle,
@@ -83,7 +101,6 @@ fun LoginScreen(
             Spacer(Modifier.height(12.dp))
 
             // Apple Human Interface Guidelines — 검정 배경 + 흰색 텍스트, 최소 44pt 높이.
-            // 다크/라이트 테마 무관하게 Apple 표준 외형 유지.
             Button(
                 onClick = viewModel::signInWithApple,
                 enabled = !anyLoading,
@@ -107,19 +124,8 @@ fun LoginScreen(
                 }
             }
 
-            (state as? LoginViewModel.UiState.Error)?.let { err ->
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = err.message,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            Spacer(Modifier.height(24.dp))
-            // App Store 가이드라인 5.1.1 데이터 수집 고지. URL 핸들러 도입 시 clickable 링크로 전환 —
-            // empty onClick 링크는 심사 reject 사유이므로 현재는 plain text.
+            Spacer(Modifier.height(20.dp))
+            // App Store 가이드라인 5.1.1 데이터 수집 고지.
             Text(
                 text = "Sign In 시 이용약관 및 개인정보 처리방침에 동의하는 것으로 간주됩니다.",
                 style = MaterialTheme.typography.labelSmall,
