@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -54,12 +55,14 @@ fun LoginScreen(
             .navigationBarsPadding()
             .padding(horizontal = 32.dp),
     ) {
+        // 이전 레이아웃 (Column verticalArrangement.Center 안 logo + 48dp + 버튼들) 에서 로고는
+        // 컬럼 상단에 있어 실제 위치는 화면 위쪽 ~1/3. BiasAlignment(-0.3) 로 그 위치 복원.
         Text(
             text = "vibi",
             color = MaterialTheme.colorScheme.primary,
             fontSize = 56.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier.align(BiasAlignment(0f, -0.3f)),
         )
 
         Column(
