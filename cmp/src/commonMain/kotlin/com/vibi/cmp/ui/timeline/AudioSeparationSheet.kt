@@ -241,7 +241,7 @@ fun AudioSeparationSheet(
                                             playingId = stem.stemId
                                         }
                                     },
-                                    modifier = Modifier.size(36.dp),
+                                    modifier = Modifier.size(VibiSpacing.touchMin),
                                 ) {
                                     Icon(
                                         imageVector = if (isThisPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -273,7 +273,7 @@ fun AudioSeparationSheet(
                                     onClick = {
                                         volumeExpandStemId = if (volumeExpanded) null else stem.stemId
                                     },
-                                    modifier = Modifier.size(32.dp),
+                                    modifier = Modifier.size(VibiSpacing.touchMin),
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.VolumeUp,
@@ -365,26 +365,34 @@ fun AudioSeparationSheet(
 @Composable
 private fun CircleToggle(selected: Boolean, onClick: () -> Unit) {
     val tokens = LocalVibiColors.current
+    // 외곽: 투명 hit area 44dp (iOS HIG 44pt 기준). 내부: 시각 20dp 라디오 — 시각 톤은 그대로,
+    // 손가락이 인접 row 의 화자 색 indicator/슬라이더에 닿지 않게 안전 마진 확보.
     Box(
         modifier = Modifier
-            .size(VibiSpacing.md)
+            .size(VibiSpacing.touchMin)
             .clip(CircleShape)
-            .border(
-                width = 1.dp,
-                color = tokens.onBackgroundPrimary.copy(alpha = 0.6f),
-                shape = CircleShape,
-            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) {
-            // 라디오 버튼 스타일: 외곽 + 안 채운 동그라미.
-            Box(
-                modifier = Modifier
-                    .size(VibiSpacing.sm)
-                    .clip(CircleShape)
-                    .background(tokens.onBackgroundPrimary)
-            )
+        Box(
+            modifier = Modifier
+                .size(VibiSpacing.md)
+                .clip(CircleShape)
+                .border(
+                    width = 1.dp,
+                    color = tokens.onBackgroundPrimary.copy(alpha = 0.6f),
+                    shape = CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .size(VibiSpacing.sm)
+                        .clip(CircleShape)
+                        .background(tokens.onBackgroundPrimary)
+                )
+            }
         }
     }
 }

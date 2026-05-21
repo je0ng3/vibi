@@ -129,7 +129,7 @@ fun BgmTrimSheet(
             ) {
                 IconButton(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(VibiSpacing.touchMin)
                         .clip(CircleShape)
                         .background(
                             if (isPreviewing) tokens.accent.copy(alpha = 0.2f)
