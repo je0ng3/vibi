@@ -960,7 +960,9 @@ fun TimelineScreen(
                 com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
                     label = sepLabel,
                     description = null,
-                    enabled = firstSegId != null && !state.isSegmentEditMode,
+                    // 영상편집 모드에서도 활성 — onEnterRangeMode 가 isSegmentEditMode=false 로 전환해
+                    // 분리 모드로 자연스럽게 이동. 영상편집 deselect 시점에 stuck disabled 되던 회귀 fix.
+                    enabled = firstSegId != null,
                     onClick = {
                         val segId = firstSegId ?: return@IconLabelCard
                         when (state.separationStatus) {
@@ -984,7 +986,9 @@ fun TimelineScreen(
                     com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
                         label = if (state.isAddingBgm) "추가 중..." else "음원 삽입",
                         description = null,
-                        enabled = !state.isAddingBgm && !state.isSegmentEditMode,
+                        // 영상편집 모드 가드 제거 — deselect 후 stuck disabled 되던 회귀 fix.
+                        // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
+                        enabled = !state.isAddingBgm,
                         onClick = { audioMenuOpen = true },
                     ) {
                         Icon(
@@ -2438,12 +2442,18 @@ private fun UnifiedTimelineBar(
                         // 배경(brand accent / 코랄) 위에서도 가독성 확보. 이모지(=Unicode 글리프) 대신
                         // SVG Material 아이콘으로 플랫폼/폰트 차이 무관하게 균일 렌더.
                         if (widthDp > 36.dp) {
+                            // 라벨 아이콘+텍스트를 옅은 흰색 plate 위에 얹어 글씨 가독성 확보 — BGM 팔레트
+                            // 색과 그 위에 오는 클립 파형이 라벨 stroke 와 시각 noise 로 충돌해 텍스트가
+                            // 흐릿하게 보이던 케이스 해소. 카드 자체는 그대로 보이도록 plate alpha 는 낮게.
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(3.dp),
                                 modifier = Modifier
                                     .align(Alignment.CenterStart)
-                                    .padding(horizontal = 6.dp),
+                                    .padding(horizontal = 4.dp)
+                                    .clip(VibiShape.xs)
+                                    .background(Color(0xFFFFFFFF).copy(alpha = 0.55f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp),
                             ) {
                                 androidx.compose.material3.Icon(
                                     imageVector = if (isRecording) Icons.Filled.Mic else Icons.Filled.MusicNote,
