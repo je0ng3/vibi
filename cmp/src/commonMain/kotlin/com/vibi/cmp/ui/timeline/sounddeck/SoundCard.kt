@@ -128,7 +128,7 @@ fun SoundCard(
                 IconButton(
                     onClick = onTogglePreview,
                     enabled = !disabled && !model.audioUrl.isNullOrBlank(),
-                    modifier = Modifier.size(VibiSpacing.xl),
+                    modifier = Modifier.size(VibiSpacing.touchMin),
                 ) {
                     Icon(
                         imageVector = if (isPreviewing) Icons.Filled.Pause

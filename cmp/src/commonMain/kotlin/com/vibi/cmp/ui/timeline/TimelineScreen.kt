@@ -700,10 +700,11 @@ fun TimelineScreen(
         }
 
         // Transport row — 좌: 전체화면 / 중앙: 재생 정지 / 우: undo·redo. 세 영역을 Box 의 align 으로
-        // 절대 배치해 중앙 버튼이 화면 너비와 무관하게 정확히 가운데 위치. 버튼 크기는 36dp 균일.
+        // 절대 배치해 중앙 버튼이 화면 너비와 무관하게 정확히 가운데 위치. 버튼 크기는 touchMin(44dp)
+        // 균일 — iOS HIG 44pt / Material 3 48dp 기준 충족.
         if (state.videoUri.isNotEmpty()) {
-            val btnSize = 36.dp
-            val iconSize = 18.dp
+            val btnSize = VibiSpacing.touchMin
+            val iconSize = 20.dp
             Box(modifier = Modifier.fillMaxWidth().height(btnSize)) {
                 // Left — 전체화면 진입.
                 Box(
@@ -1343,7 +1344,7 @@ fun TimelineScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(VibiSpacing.touchMin)
                         .clip(CircleShape)
                         .clickable { fullscreenOpen = false },
                     contentAlignment = Alignment.Center,

@@ -28,7 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.VibiShape
@@ -82,7 +81,7 @@ fun EditActionsPanel(
                 if (onCancel != null) {
                     IconButton(
                         onClick = onCancel,
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(VibiSpacing.touchMin),
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
@@ -111,71 +110,86 @@ fun EditActionsPanel(
         ) {
             OutlinedButton(
                 onClick = { expanded = if (expanded == "volume") null else "volume" },
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(30.dp),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
                 ),
-            ) { Text("볼륨", fontSize = 12.sp, maxLines = 1) }
+            ) { Text("볼륨", style = typo.bodySm, maxLines = 1) }
             OutlinedButton(
                 onClick = { expanded = if (expanded == "speed") null else "speed" },
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(30.dp),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "speed") tokens.accent else tokens.onBackgroundPrimary,
                 ),
-            ) { Text("속도", fontSize = 12.sp, maxLines = 1) }
+            ) { Text("속도", style = typo.bodySm, maxLines = 1) }
             OutlinedButton(
                 onClick = onSecondaryAction,
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(30.dp),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text(secondaryActionLabel, fontSize = 12.sp, color = tokens.accent, maxLines = 1) }
+            ) { Text(secondaryActionLabel, style = typo.bodySm, color = tokens.accent, maxLines = 1) }
             OutlinedButton(
                 onClick = onDelete,
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(30.dp),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
+                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text("삭제", fontSize = 12.sp, color = tokens.accent, maxLines = 1) }
+            ) { Text("삭제", style = typo.bodySm, color = tokens.accent, maxLines = 1) }
         }
 
-        // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배).
+        // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). Local state 로 슬라이더 위치 즉시 갱신 +
+        // onVolumeChange 로 부모에 live commit. parent prop (volume) 이 바뀌면 (예: 적용 / Apply
+        // 외부 경로) sliderVal 도 재seed.
         if (expanded == "volume") {
+            var sliderVal by remember(expanded, volume) { mutableStateOf(volume) }
             Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("볼륨 ${(volume * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplyVolume(volume) }) { Text("적용") }
+                    Text("볼륨 ${(sliderVal * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
+                    TextButton(onClick = { onApplyVolume(sliderVal) }) { Text("적용") }
                 }
                 Slider(
-                    value = volume,
+                    value = sliderVal,
                     valueRange = 0f..2f,
-                    onValueChange = onVolumeChange,
+                    onValueChange = {
+                        sliderVal = it
+                        onVolumeChange(it)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = mutedSliderColors(tokens.mutedText),
                 )
             }
         }
 
-        // 속도 — 0.25..4.
+        // 속도 — 0.25..4. BGM 호출 측은 onSpeedChange 가 no-op (commit 비용 큼 — applyBgmRangeSpeed
+        // 가 lane re-pack + 다른 BGM 들의 startMs 조정 동반). 그렇다고 onValueChange 를 그대로
+        // no-op 으로 두면 controlled Slider 라 value prop 이 안 바뀌어 슬라이더가 시각적으로
+        // 움직이지 않음 → 사용자 입장에서 "조절이 안됨". local state 로 시각만 즉시 갱신, parent
+        // 의 onSpeedChange 는 그대로 호출해 (live preview 원하는 호출은 그쪽에서 처리), 실제
+        // commit 은 "적용" 의 onApplySpeed(sliderVal) 가 담당.
         if (expanded == "speed") {
+            var sliderVal by remember(expanded, speed) { mutableStateOf(speed) }
             Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    val pct = (speed * 100).toInt()
+                    val pct = (sliderVal * 100).toInt()
                     Text("속도 ${pct}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplySpeed(speed) }) { Text("적용") }
+                    TextButton(onClick = { onApplySpeed(sliderVal) }) { Text("적용") }
                 }
                 Slider(
-                    value = speed,
+                    value = sliderVal,
                     valueRange = 0.25f..4f,
-                    onValueChange = onSpeedChange,
+                    onValueChange = {
+                        sliderVal = it
+                        onSpeedChange(it)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = mutedSliderColors(tokens.mutedText),
                 )

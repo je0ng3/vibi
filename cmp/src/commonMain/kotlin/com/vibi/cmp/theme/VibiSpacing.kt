@@ -17,4 +17,8 @@ object VibiSpacing {
     val lg = 24.dp
     val xl = 32.dp
     val xxl = 40.dp
+
+    // 터치 타겟 전용 — iOS HIG 44pt / Material 3 48dp 기준. 일반 spacing 토큰(xxl=40dp)이
+    // 44 미만이라 무심코 .size(VibiSpacing.xxl) 한 곳들이 모두 기준 미달이 되던 문제 회피.
+    val touchMin = 44.dp
 }

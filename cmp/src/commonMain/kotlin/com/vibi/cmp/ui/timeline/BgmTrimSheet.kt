@@ -228,7 +228,11 @@ private fun WaveformWithTrimOverlay(
     val density = LocalDensity.current
     val waveformHeight = 56.dp // WaveformPlayBar non-compact 기본 높이.
     val handleVisualWidth = 6.dp
-    val handleHitWidth = 24.dp
+    // hit zone 은 iOS HIG 44pt 기준 충족. visual(6dp) 과 분리해 시각적으로는 가느다란 막대 유지하면서
+    // 드래그 정밀도 확보 — 두 핸들이 가까이 붙어도 양쪽 hit 영역이 22dp 씩 좌우로 펼쳐져 충돌하지 않음
+    // (선택 구간이 최소 0dp 까지 좁혀져도 양쪽 hit 의 합산은 44dp + 44dp 로 겹치지만, 드래그 우선순위는
+    // 각 TrimHandle 의 pointerInput 이 개별로 처리하므로 동작은 분리됨).
+    val handleHitWidth = VibiSpacing.touchMin
     val onChangeState = rememberUpdatedState(onChange)
     val startMsState = rememberUpdatedState(rangeStartMs)
     val endMsState = rememberUpdatedState(rangeEndMs)
