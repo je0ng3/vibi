@@ -16,7 +16,9 @@ local.properties
 **/local.properties
 
 # iOS auth secrets (Google OAuth client id + BFF base URL). template 만 커밋.
+# Auth.xcconfig = Debug (로컬 IP), Auth.release.xcconfig = Release (production HTTPS).
 iosApp/Configs/Auth.xcconfig
+iosApp/Configs/Auth.release.xcconfig
 
 # IDE
 /.idea

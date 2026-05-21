@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		09FED4B446BD58DF150C455A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */; };
 		1418830F2E3513899E992F09 /* IapBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAFE5C633F399A49083DA87E /* IapBridge.swift */; };
 		1C81D6F669B7BB6D2FFCCEB3 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
 		22EA1CB33A17DCC6FC82406D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F543015C899423D4B01CEB2E /* Assets.xcassets */; };
@@ -20,11 +21,13 @@
 		1285E8A7B7E7359EA11B9591 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		31D437C050DEC290DFDC9414 /* Auth.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Auth.xcconfig; sourceTree = "<group>"; };
 		3B948C2AA245A5D5254AD028 /* GoogleSignInBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInBridge.swift; sourceTree = "<group>"; };
+		49D2CFAEA830715CAA68FDB9 /* Auth.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Auth.release.xcconfig; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
 		7AA697C6EED01C13E40190AA /* AppleSignInBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInBridge.swift; sourceTree = "<group>"; };
-		86038AE1032E284E79B32AD6 /* iosApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		86038AE1032E284E79B32AD6 /* iosApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C49B0B02429FBBC9F867DDE1 /* iosApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iosApp.entitlements; sourceTree = "<group>"; };
+		C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F543015C899423D4B01CEB2E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FAFE5C633F399A49083DA87E /* IapBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IapBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -51,6 +54,7 @@
 				C117AD187833E2513BD2F553 /* Info.plist */,
 				C49B0B02429FBBC9F867DDE1 /* iosApp.entitlements */,
 				668CECA83ACC03A83C85A623 /* iOSApp.swift */,
+				C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */,
 				1285E8A7B7E7359EA11B9591 /* SceneDelegate.swift */,
 			);
 			path = iosApp;
@@ -68,6 +72,7 @@
 		38F57C2AA6CF0EF5E2F51BAF /* Configs */ = {
 			isa = PBXGroup;
 			children = (
+				49D2CFAEA830715CAA68FDB9 /* Auth.release.xcconfig */,
 				31D437C050DEC290DFDC9414 /* Auth.xcconfig */,
 			);
 			path = Configs;
@@ -88,7 +93,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 29DCA9F0B3A40325067EB163 /* Build configuration list for PBXNativeTarget "iosApp" */;
 			buildPhases = (
-				464D3F95C5C8D9EB377EC247 /* Verify Auth.xcconfig */,
+				6C15BE5EF898C99A6C9EF5AC /* Verify Auth xcconfig */,
 				80829C78A007C2795A08CA15 /* Build Kotlin frameworks */,
 				297B59D9CE634556D6007C40 /* Sources */,
 				1623B02D10928C8101C1F806 /* Resources */,
@@ -116,6 +121,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					78B53CC79860CBFC2F5543C6 = {
+						DevelopmentTeam = P49F6J5FKS;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -148,13 +154,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				22EA1CB33A17DCC6FC82406D /* Assets.xcassets in Resources */,
+				09FED4B446BD58DF150C455A /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		464D3F95C5C8D9EB377EC247 /* Verify Auth.xcconfig */ = {
+		6C15BE5EF898C99A6C9EF5AC /* Verify Auth xcconfig */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -164,14 +171,14 @@
 			);
 			inputPaths = (
 			);
-			name = "Verify Auth.xcconfig";
+			name = "Verify Auth xcconfig";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ ! -f \"$SRCROOT/Configs/Auth.xcconfig\" ]; then\n  echo \"error: Configs/Auth.xcconfig is missing. Copy Configs/Auth.xcconfig.template and fill in your Google OAuth client id + BFF base URL.\" >&2\n  exit 1\nfi\n";
+			shellScript = "MISSING=\"\"\nif [ ! -f \"$SRCROOT/Configs/Auth.xcconfig\" ]; then\n  MISSING=\"$MISSING Auth.xcconfig\"\nfi\nif [ \"$CONFIGURATION\" = \"Release\" ] && [ ! -f \"$SRCROOT/Configs/Auth.release.xcconfig\" ]; then\n  MISSING=\"$MISSING Auth.release.xcconfig\"\nfi\nif [ -n \"$MISSING\" ]; then\n  echo \"error: Missing xcconfig file(s):$MISSING. Copy the matching .template and fill in your Google OAuth client id + BFF base URL.\" >&2\n  exit 1\nfi\n";
 		};
 		80829C78A007C2795A08CA15 /* Build Kotlin frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -340,7 +347,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = P49F6J5FKS;
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework",
@@ -369,12 +375,11 @@
 		};
 		AF835BFF1220CA5AB5B867E4 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 31D437C050DEC290DFDC9414 /* Auth.xcconfig */;
+			baseConfigurationReference = 49D2CFAEA830715CAA68FDB9 /* Auth.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = P49F6J5FKS;
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework",

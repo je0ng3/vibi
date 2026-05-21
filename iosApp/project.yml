@@ -78,8 +78,10 @@ targets:
             CFBundleURLSchemes:
               - $(GOOGLE_OAUTH_IOS_REVERSED_CLIENT_ID)
     configFiles:
+      # Debug: 로컬 BFF (cleartext HTTP, LAN IP). NSAllowsLocalNetworking 으로 ATS 우회.
+      # Release: production BFF (HTTPS 필수). 별도 xcconfig 로 분리해 archive 시 자동 적용.
       Debug: Configs/Auth.xcconfig
-      Release: Configs/Auth.xcconfig
+      Release: Configs/Auth.release.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibi.ios
@@ -106,13 +108,20 @@ targets:
         Release:
           KOTLIN_FRAMEWORK_BUILD_TYPE: release
     preBuildScripts:
-      - name: "Verify Auth.xcconfig"
-        # Auth.xcconfig (gitignore) 누락 시 build 가 silent 하게 빈 plist 생성하고 런타임에 깨짐.
-        # 명시적으로 fail 하고 template 로 안내.
+      - name: "Verify Auth xcconfig"
+        # xcconfig (gitignore) 누락 시 build 가 silent 하게 빈 plist 생성하고 런타임에 깨짐.
+        # Debug / Release 둘 다 명시적으로 fail 하고 template 로 안내.
         basedOnDependencyAnalysis: false
         script: |
+          MISSING=""
           if [ ! -f "$SRCROOT/Configs/Auth.xcconfig" ]; then
-            echo "error: Configs/Auth.xcconfig is missing. Copy Configs/Auth.xcconfig.template and fill in your Google OAuth client id + BFF base URL." >&2
+            MISSING="$MISSING Auth.xcconfig"
+          fi
+          if [ "$CONFIGURATION" = "Release" ] && [ ! -f "$SRCROOT/Configs/Auth.release.xcconfig" ]; then
+            MISSING="$MISSING Auth.release.xcconfig"
+          fi
+          if [ -n "$MISSING" ]; then
+            echo "error: Missing xcconfig file(s):$MISSING. Copy the matching .template and fill in your Google OAuth client id + BFF base URL." >&2
             exit 1
           fi
       - name: "Build Kotlin frameworks"

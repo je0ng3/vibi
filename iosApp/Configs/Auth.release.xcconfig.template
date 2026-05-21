@@ -1,0 +1,23 @@
+// Release 빌드 (App Store / TestFlight) 전용 xcconfig.
+//
+// 이 파일은 template — Auth.release.xcconfig 로 복사 후 production 값을 채워라.
+// 실제 Auth.release.xcconfig 는 .gitignore.
+//
+// Debug 빌드는 Auth.xcconfig (로컬 IP, cleartext HTTP) 를 사용한다.
+// Xcode 의 archive / Product → Build For → Release 가 이 파일을 사용.
+//
+// ATS 정책: NSAllowsLocalNetworking 은 .local / private IP / localhost 에만
+// cleartext 허용. 아래 production URL 은 반드시 HTTPS 여야 함 (그렇지 않으면 ATS 가 차단).
+
+// Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs (iOS)
+// Release 도 같은 client id 사용 (Bundle ID 단위로 발급되므로).
+GOOGLE_OAUTH_IOS_CLIENT_ID = REPLACE_BASE.apps.googleusercontent.com
+GOOGLE_OAUTH_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_BASE
+
+// BFF production endpoint. 트레일링 슬래시 포함, HTTPS 필수.
+// xcconfig 의 `//` 주석 처리 우회: URL_SLASH 를 두 번 substitute.
+URL_SLASH = /
+BFF_BASE_URL = https:$(URL_SLASH)$(URL_SLASH)api.vibi.fm/
+
+// Apple Developer Team ID. App Store 배포용 Team 으로 설정 (Personal Team 아님).
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
