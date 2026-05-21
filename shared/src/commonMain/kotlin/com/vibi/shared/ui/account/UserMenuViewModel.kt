@@ -7,8 +7,8 @@ import com.vibi.shared.data.local.CreditStore
 import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.dto.AdminGrantRequest
-import com.vibi.shared.data.remote.dto.CreditPurchaseRequest
 import com.vibi.shared.data.repository.AuthRepository
+import com.vibi.shared.data.repository.CreditPurchaseService
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.domain.model.IapPlatform
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -33,6 +33,7 @@ class UserMenuViewModel(
     private val creditStore: CreditStore,
     private val userSession: UserSession,
     private val bffApi: BffApi,
+    private val creditPurchaseService: CreditPurchaseService,
 ) : ViewModel() {
 
     data class UiState(
@@ -81,25 +82,22 @@ class UserMenuViewModel(
         }
     }
 
-    /** IAP 시스템이 결제 성공 콜백을 돌려준 직후 호출 — BFF 가 영수증 검증 + idempotent 가산. */
-    fun purchaseCredits(
+    /**
+     * IAP 시스템이 결제 성공 콜백을 돌려준 직후 호출. 호출자가 Result.isSuccess 일 때 transaction
+     * finish 를 트리거 — 실패 시 finish 보류로 다음 앱 실행에서 Transaction.updates listener 가
+     * 같은 영수증을 재제출 (4.5.2 reject 방지).
+     */
+    suspend fun purchaseCredits(
         product: CreditProduct,
         platform: IapPlatform,
         receipt: String,
         transactionId: String,
-    ) {
-        viewModelScope.launch {
-            val req = CreditPurchaseRequest(
-                productId = product.productId,
-                platform = platform.wireName,
-                receipt = receipt,
-                transactionId = transactionId,
-            )
-            runCatching { bffApi.purchaseCredits(req) }
-                .onSuccess { resp -> creditStore.setBalance(userSession.current(), resp.balance) }
-                .onFailure { refreshBalance() }
-        }
-    }
+    ): Result<Unit> = creditPurchaseService.redeemReceipt(
+        productId = product.productId,
+        platform = platform,
+        receipt = receipt,
+        transactionId = transactionId,
+    )
 
     /**
      * 관리자 무료 충전. 매 호출마다 BFF 가 새 txId (admin-<UUID>) 를 생성하므로 같은 상품을
@@ -118,6 +116,10 @@ class UserMenuViewModel(
 
 /**
  * 크레딧 상품 한 건. 실제 SKU 와 매핑되는 [productId] + UI 표시용 [credits]/[priceLabel].
+ *
+ * **단위 규약**: 1 크레딧 = 영상 1분 구간의 음원 분리 / 배경음 분리. App Store Connect 의
+ * product description 과 본 객체의 [subtitle] 모두 같은 단위를 사용해야 사용자·심사관 혼선
+ * 없음. 단위 변경 시 ASC localized description 도 같이 수정.
  */
 data class CreditProduct(
     val productId: String,
@@ -134,14 +136,14 @@ data class CreditProduct(
                 credits = 10,
                 priceLabel = "₩1,500",
                 title = "10 크레딧",
-                subtitle = "가볍게 한 번 더",
+                subtitle = "10분 분량 · 가볍게 한 번 더",
             ),
             CreditProduct(
                 productId = "vibi.credits.50",
                 credits = 50,
                 priceLabel = "₩6,900",
                 title = "50 크레딧",
-                subtitle = "가장 인기",
+                subtitle = "50분 분량 · 8% 할인",
                 highlight = true,
             ),
             CreditProduct(
@@ -149,7 +151,7 @@ data class CreditProduct(
                 credits = 150,
                 priceLabel = "₩18,000",
                 title = "150 크레딧",
-                subtitle = "1팩당 약 17% 저렴",
+                subtitle = "150분 분량 · 20% 할인",
             ),
         )
     }

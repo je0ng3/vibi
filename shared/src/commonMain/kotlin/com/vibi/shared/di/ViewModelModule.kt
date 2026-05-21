@@ -82,6 +82,7 @@ val viewModelModule = module {
             creditStore = get(),
             userSession = get(),
             bffApi = get(),
+            creditPurchaseService = get(),
         )
     }
 }

@@ -61,7 +61,12 @@ fun CreditPurchaseSheet(
     currentCredits: Int,
     isAdmin: Boolean,
     onDismiss: () -> Unit,
-    onPurchased: (product: CreditProduct, platform: IapPlatform, receipt: String, transactionId: String) -> Unit,
+    onPurchased: suspend (
+        product: CreditProduct,
+        platform: IapPlatform,
+        receipt: String,
+        transactionId: String,
+    ) -> Result<Unit>,
     onAdminGrant: suspend (product: CreditProduct) -> Result<Unit>,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -117,8 +122,16 @@ fun CreditPurchaseSheet(
                         }
                         when (val r = launcher.purchase(target.productId)) {
                             is PurchaseResult.Success -> {
-                                onPurchased(target, r.platform, r.receipt, r.transactionId)
-                                status = Status.Success
+                                // BFF 검증·가산이 성공해야 transaction 을 finish. 실패 시 unfinished
+                                // queue 에 남겨두면 Transaction.updates listener 가 다음 실행에서 재시도.
+                                val bff = onPurchased(target, r.platform, r.receipt, r.transactionId)
+                                status = bff.fold(
+                                    onSuccess = {
+                                        launcher.finishTransaction(r.transactionId)
+                                        Status.Success
+                                    },
+                                    onFailure = { Status.Deferred },
+                                )
                             }
                             is PurchaseResult.UserCancelled -> status = Status.Idle
                             is PurchaseResult.Failed -> status = Status.Error(r.message)
@@ -134,6 +147,10 @@ fun CreditPurchaseSheet(
                 )
                 Status.Success -> Text(
                     text = if (isAdmin) "✓ 관리자 충전이 적용되었습니다." else "✓ 구매가 완료되었습니다.",
+                    style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.primary),
+                )
+                Status.Deferred -> Text(
+                    text = "결제가 완료됐어요. 잠시 후 크레딧이 자동으로 적용됩니다.",
                     style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.primary),
                 )
                 else -> Unit
@@ -161,7 +178,7 @@ fun CreditPurchaseSheet(
     }
 
     LaunchedEffect(status) {
-        if (status is Status.Success) {
+        if (status is Status.Success || status is Status.Deferred) {
             kotlinx.coroutines.delay(900)
             onDismiss()
         }
@@ -173,6 +190,8 @@ private sealed interface Status {
     data object Purchasing : Status
     data object Restoring : Status
     data object Success : Status
+    /** 결제는 성공했으나 BFF 가산이 일시 실패 — Transaction.updates listener 가 재시도. */
+    data object Deferred : Status
     data class Error(val message: String) : Status
 }
 
@@ -215,7 +234,7 @@ private fun Header(currentCredits: Int, isAdmin: Boolean) {
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "현재 보유 · ${currentCredits} 크레딧",
+                text = "현재 보유 · ${currentCredits} 크레딧 (= ${currentCredits}분 분리 가능)",
                 style = TextStyle(fontSize = 13.sp, color = tokens.mutedText),
             )
         }
@@ -252,7 +271,7 @@ private fun HeroBanner() {
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "음원만 더 깔끔하게",
+                    text = "1 크레딧 = 1분 분리",
                     style = TextStyle(
                         fontSize = 15.sp,
                         color = tokens.onBackgroundPrimary,
@@ -261,7 +280,7 @@ private fun HeroBanner() {
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "분리 · 자동 더빙 · 자동 자막 한 번에",
+                    text = "영상 1분 구간의 음원 / 배경음 분리에 사용됩니다",
                     style = TextStyle(
                         fontSize = 12.sp,
                         color = tokens.onBackgroundPrimary.copy(alpha = 0.75f),
@@ -446,7 +465,8 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
 private fun FinePrint() {
     val tokens = LocalVibiColors.current
     Text(
-        text = "결제는 구매 확인 시 Apple ID 또는 Google 계정으로 청구됩니다. " +
+        text = "1 크레딧 = 영상 1분 구간의 음원 / 배경음 분리. " +
+            "결제는 구매 확인 시 Apple ID 또는 Google 계정으로 청구됩니다. " +
             "크레딧은 환불되지 않으며 미사용분도 양도/현금 환산할 수 없습니다.",
         style = TextStyle(
             fontSize = 11.sp,

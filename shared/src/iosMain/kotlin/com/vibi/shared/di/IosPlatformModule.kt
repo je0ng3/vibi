@@ -11,6 +11,7 @@ import com.vibi.shared.data.repository.IosVideoMetadataExtractor
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
 import com.vibi.shared.platform.IosAppleSignInClient
+import com.vibi.shared.platform.IapTransactionReconciler
 import com.vibi.shared.platform.IosGoogleSignInClient
 import com.vibi.shared.platform.IosIapClient
 import com.vibi.shared.platform.IosVideoThumbnailExtractor
@@ -50,4 +51,10 @@ val iosPlatformModule = module {
     single<GoogleSignInClient> { IosGoogleSignInClient(bridge = get()) }
     single<AppleSignInClient> { IosAppleSignInClient(bridge = get()) }
     single { IosIapClient(bridge = get()) }
+    single {
+        IapTransactionReconciler(
+            bridge = get(),
+            creditPurchaseService = get(),
+        )
+    }
 }

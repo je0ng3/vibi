@@ -10,13 +10,15 @@ import StoreKit
 ///
 /// 세션 동안 `Product` 객체는 캐시 — 매 구매마다 카탈로그 RTT (~100~500ms) 방지.
 ///
-/// **출시 전 필수**:
-///   - App Store Connect 에 productId 등록 (consumable IAP).
-///   - Xcode > Capabilities > In-App Purchase 추가.
-///   - Sandbox tester 계정으로 결제 흐름 verify.
-///   - `Transaction.updates` 장기 listener 추가 — Ask-to-Buy 승인 / Family Sharing / crash
-///     직후 복구 / 환불 revocation 처럼 `Product.purchase()` 호출 밖에서 도착하는 transaction
-///     도 처리해야 결제 후 credit 누락 안 됨. (현 v1 은 명시적 구매 흐름만 커버)
+/// **Transaction lifecycle 규약**:
+///   - `Product.purchase()` 결과 transaction 은 즉시 `finish()` 하지 않고
+///     `pendingTransactions[txId] = tx` 로 보관 → `finishTransaction(txId)` 호출 시점에 finish.
+///     호출자(Kotlin) 는 BFF 가 영수증을 검증·가산한 직후에만 finish 한다.
+///   - `Transaction.updates` for-await 루프가 Ask-to-Buy 승인 / Family Sharing / 직전 실행에서
+///     finish 못한 transaction 등을 emit → `transactionListener` 람다로 Kotlin 측에 전달.
+///     Kotlin reconciler 가 BFF 영수증 검증 후 `finishTransaction` 으로 마무리.
+///   - finish 하지 않은 transaction 은 다음 앱 실행에서 또 `Transaction.updates` 가 emit —
+///     사용자가 결제 후 credit 누락되는 케이스 (4.5.2 reject 사유) 차단.
 final class IapBridgeImpl: NSObject, IapBridge {
 
     // outcome 문자열은 Kotlin `IapBridge` 의 expected 값과 동기. 변경 시 양쪽 모두 갱신.
@@ -28,6 +30,11 @@ final class IapBridgeImpl: NSObject, IapBridge {
 
     private var productCache: [String: Product] = [:]
     private let cacheQueue = DispatchQueue(label: "vibi.iap.cache")
+
+    private var pendingTransactions: [String: Transaction] = [:]
+    private let pendingQueue = DispatchQueue(label: "vibi.iap.pending")
+
+    private var updatesTask: Task<Void, Never>?
 
     func purchase(
         productId: String,
@@ -48,26 +55,28 @@ final class IapBridgeImpl: NSObject, IapBridge {
                 case .success(let verification):
                     switch verification {
                     case .verified(let tx):
-                        // 영수증 — Transaction.jsonRepresentation 은 Apple 서명된 JWS.
-                        // BFF 가 App Store Server API 로 재검증하므로 그대로 base64 인코딩 전달.
+                        // Transaction.jsonRepresentation 은 Apple 서명된 JWS — BFF 가 App Store
+                        // Server API 로 재검증하므로 그대로 base64 인코딩 전달.
                         let receiptB64 = tx.jsonRepresentation.base64EncodedString()
-                        // 소비성 (consumable) — finish 호출해야 다음 구매 가능. BFF 검증 후 호출이
-                        // 정석이지만 v1 stub 영수증 검증 단계라 여기서 즉시 finish.
-                        await tx.finish()
-                        callback(Outcome.success, "\(tx.id)", receiptB64, nil)
+                        let txKey = "\(tx.id)"
+                        // foreground 가 BFF 호출 후 finishTransaction 부를 때까지 보관. 동시에
+                        // Transaction.updates listener 가 같은 tx 를 emit 해도 이 dict 가
+                        // "foreground 가 이미 처리 중" 마커로 작동해 중복 BFF 호출 차단.
+                        pendingQueue.sync { pendingTransactions[txKey] = tx }
+                        callback(Outcome.success, txKey, receiptB64, nil)
                     case .unverified(_, let error):
                         callback(Outcome.failed, nil, nil, "verification_failed: \(error.localizedDescription)")
                     }
                 case .userCancelled:
                     callback(Outcome.cancelled, nil, nil, nil)
                 case .pending:
-                    // Ask-to-Buy / SCA 보류. 결과는 Transaction.updates 로 별도 도착 (출시 전 TODO).
+                    // Ask-to-Buy / SCA 보류. 부모 승인 후 Transaction.updates 로 도착 —
+                    // transactionListener 가 BFF 가산을 처리.
                     callback(Outcome.failed, nil, nil, "purchase_pending")
                 @unknown default:
                     callback(Outcome.failed, nil, nil, "unknown_result")
                 }
             } catch is CancellationError {
-                // 호출자가 취소 — callback 호출 안 함 (Kotlin 측 continuation 도 이미 cancel 상태).
                 return
             } catch {
                 callback(Outcome.failed, nil, nil, error.localizedDescription)
@@ -91,6 +100,50 @@ final class IapBridgeImpl: NSObject, IapBridge {
             }
         }
         return CancellableTask(task: task)
+    }
+
+    func finishTransaction(transactionId: String) {
+        let cached = pendingQueue.sync { pendingTransactions.removeValue(forKey: transactionId) }
+        if let cached = cached {
+            Task { await cached.finish() }
+            return
+        }
+        // 캐시 miss — 다른 세션이 emit 한 transaction 일 수 있어 Transaction.unfinished 를 한 번
+        // 훑어 동일 id 찾기. unfinished 는 finite snapshot AsyncSequence 라 자연 종료.
+        Task {
+            for await result in Transaction.unfinished {
+                if case .verified(let tx) = result, "\(tx.id)" == transactionId {
+                    await tx.finish()
+                    return
+                }
+            }
+        }
+    }
+
+    func setTransactionListener(
+        listener: @escaping (String, String, String) -> Void
+    ) {
+        updatesTask?.cancel()
+        updatesTask = Task.detached { [weak self] in
+            for await result in Transaction.updates {
+                guard let self = self else { return }
+                guard case .verified(let tx) = result else {
+                    // .unverified — Apple 서명 검증 실패. 위변조 의심 transaction 은 finish 도
+                    // 안 함 (Apple 권장).
+                    continue
+                }
+                let txKey = "\(tx.id)"
+                // foreground purchase() 가 이미 캐시한 tx — Kotlin 측이 처리 중이므로 listener
+                // 호출 skip (BFF idempotent 지만 중복 RTT 회피).
+                let alreadyPending = self.pendingQueue.sync {
+                    self.pendingTransactions[txKey] != nil
+                }
+                if alreadyPending { continue }
+                let receipt = tx.jsonRepresentation.base64EncodedString()
+                self.pendingQueue.sync { self.pendingTransactions[txKey] = tx }
+                listener(txKey, receipt, tx.productID)
+            }
+        }
     }
 
     private func cachedProduct(productId: String) async throws -> Product? {

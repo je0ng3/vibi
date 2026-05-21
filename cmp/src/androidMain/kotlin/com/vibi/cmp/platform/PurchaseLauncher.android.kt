@@ -23,4 +23,7 @@ actual class PurchaseLauncher actual constructor() {
         delay(250)
         return RestoreResult.Failed("복원할 구매 내역이 없습니다.")
     }
+
+    // Android 는 Play Billing 미연동 mock — 별도 finish queue 없음.
+    actual fun finishTransaction(transactionId: String) = Unit
 }

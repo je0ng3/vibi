@@ -3,7 +3,9 @@ package com.vibi.shared.di
 import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
 import com.vibi.shared.platform.IapBridge
+import com.vibi.shared.platform.IapTransactionReconciler
 import org.koin.dsl.module
+import org.koin.mp.KoinPlatform
 
 /**
  * Convenience entry point for Swift/iOS callers who cannot pass Kotlin default
@@ -31,4 +33,5 @@ fun initKoinIos(
             },
         ),
     )
+    KoinPlatform.getKoin().get<IapTransactionReconciler>().start()
 }

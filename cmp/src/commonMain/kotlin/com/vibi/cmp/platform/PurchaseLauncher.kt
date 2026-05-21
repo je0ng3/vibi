@@ -17,9 +17,16 @@ expect class PurchaseLauncher() {
      * App Store / Play Store 가 보관 중인 이전 비소비성 / 구독 구매 복원.
      *
      * 본 호출은 단순히 OS 캐시를 새로고침할 뿐 — 복원된 transaction 자체는 별도 listener
-     * (`Transaction.updates`, 출시 전 TODO) 가 enumerate. 따라서 [RestoreResult] 는 단순 완료/취소/실패만.
+     * (`Transaction.updates`) 가 enumerate. 따라서 [RestoreResult] 는 단순 완료/취소/실패만.
      */
     suspend fun restorePurchases(): RestoreResult
+
+    /**
+     * BFF 영수증 검증·가산이 성공한 뒤 호출. StoreKit/Play 의 unfinished queue 에서 해당
+     * transaction 을 제거한다. 호출 전에 결제 popup 만 끝낸 채로 두면 다음 앱 실행 시
+     * Transaction.updates listener 가 같은 영수증을 다시 가져와 재시도 (4.5.2 reject 방지).
+     */
+    fun finishTransaction(transactionId: String)
 }
 
 sealed interface PurchaseResult {

@@ -18,6 +18,10 @@ actual class PurchaseLauncher actual constructor() {
 
     actual suspend fun restorePurchases(): RestoreResult =
         client.restorePurchases().toResult()
+
+    actual fun finishTransaction(transactionId: String) {
+        client.finishTransaction(transactionId)
+    }
 }
 
 private fun IosPurchaseOutcome.toResult(): PurchaseResult = when (this) {

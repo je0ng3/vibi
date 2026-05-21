@@ -69,6 +69,14 @@ val repositoryModule = module {
     single { com.vibi.shared.data.local.UserPreferencesStore(settings = get()) }
     single { com.vibi.shared.data.local.CreditStore(settings = get(), userSession = get()) }
     single {
+        com.vibi.shared.data.repository.CreditPurchaseService(
+            bffApi = get(),
+            tokenStore = get(),
+            userSession = get(),
+            creditStore = get(),
+        )
+    }
+    single {
         AuthRepository(
             googleSignInClient = get(),
             appleSignInClient = get(),

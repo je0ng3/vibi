@@ -39,6 +39,10 @@ class IosIapClient(
         }
         cont.invokeOnCancellation { handle.cancel() }
     }
+
+    fun finishTransaction(transactionId: String) {
+        bridge.finishTransaction(transactionId)
+    }
 }
 
 sealed interface IosPurchaseOutcome {
