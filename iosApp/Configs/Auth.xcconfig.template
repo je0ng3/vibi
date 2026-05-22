@@ -20,3 +20,12 @@ GOOGLE_OAUTH_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_BASE
 // - 운영: https:$(URL_SLASH)$(URL_SLASH)api.example.com/
 URL_SLASH = /
 BFF_BASE_URL = http:$(URL_SLASH)$(URL_SLASH)192.168.40.207:8080/
+
+// Apple Developer Team ID (Personal Team 도 ID 존재). xcodegen 이 매 regen 마다 .xcodeproj 의
+// 수동 Team 선택을 reset 하므로 여기서 single source 로 관리.
+//
+// Team ID 확인:
+//   - Xcode → Settings → Accounts → 본인 Apple ID 클릭 → 우측 패널의 Team 컬럼에 표시
+//   - 또는 developer.apple.com 로그인 → Membership → Team ID
+//   - Personal Team (무료) 의 경우 10자 영숫자 (예: ABCDE12345)
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
