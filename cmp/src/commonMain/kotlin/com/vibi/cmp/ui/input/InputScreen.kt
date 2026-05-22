@@ -168,7 +168,7 @@ fun InputScreen(
                     if (isFirstPick) {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "음원 분리 · 더빙 · 자막을 한 번에",
+                            text = "영상은 남기고, 소음만 지운다",
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = Color(0xCCFFFFFF),

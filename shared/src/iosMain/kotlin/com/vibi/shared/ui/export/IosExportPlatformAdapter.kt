@@ -78,11 +78,9 @@ class IosExportPlatformAdapter : ExportPlatformAdapter, KoinComponent {
 
         val result = executor.renderProject(
             segments = segmentInputs,
-            dubClips = emptyList(),
             outputPath = outputPath,
             frame = frame,
             bgmClips = bgmInputs,
-            audioOverridePath = null,
             separationDirectives = directives,
             preUploadedInputId = request.preUploadedInputId,
             onProgress = onProgress,

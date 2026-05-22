@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 object VibiRadius {
     /** timeline segment block. */
     val xs = 4.dp
-    /** subtitle overlay. */
+    /** small chip / badge. */
     val sm = 6.dp
     /** panel-card. */
     val lg = 14.dp

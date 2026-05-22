@@ -12,19 +12,13 @@ import com.vibi.shared.domain.usecase.export.SegmentInput
 import com.vibi.shared.domain.usecase.export.toExportInput
 
 /**
- * `RenderRepository` 의 commonMain 구현. 자막/더빙/분리 가 source 로 쓸 "편집 영상" 1개만 만든다.
+ * `RenderRepository` 의 commonMain 구현. 음원분리 가 source 로 쓸 "편집 영상" 1개만 만든다.
  *
- * 제외:
- *  - dubClips / audioOverridePath: 더빙은 본 source 의 audio 를 STT 후 재합성.
- *
- * 포함 (사용자가 timeline 에 만든 결과를 STT 가 듣게):
+ * 포함:
  *  - segments (trim/speed/volume)
  *  - frame (캔버스 비율 / 배경)
- *  - bgmClips: 본 BG 음악이 STT 에 영향. 포함해야 사용자 의도 반영.
- *  - separationDirectives: 음원분리 결과 stem mix — 본 source 에 반영.
- *
- * bgmClips 는 플랫폼별 path 해결이 필요 (Android `content://` URI). 본 구현은 기본적으로 path
- * 해결 안 함 — 따라서 BGM 이 필요한 프로젝트는 platform-specific resolver 를 주입해야 함.
+ *  - bgmClips
+ *  - separationDirectives: 음원분리 결과 stem mix
  */
 class RenderRepositoryImpl(
     private val executor: RemoteRenderExecutor,
@@ -93,10 +87,8 @@ class RenderRepositoryImpl(
 
         return executor.submitAndAwaitJobId(
             segments = segmentInputs,
-            dubClips = emptyList(),
             frame = frame,
             bgmClips = bgmMixInputs,
-            audioOverridePath = null,
             separationDirectives = separationInputs,
             preUploadedInputId = null,
             outputKind = when (kind) {

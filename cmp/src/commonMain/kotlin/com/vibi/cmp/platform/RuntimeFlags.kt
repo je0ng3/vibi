@@ -12,8 +12,7 @@ object RuntimeFlags {
     const val soundDeckEnabled: Boolean = true
 
     /**
-     * Timeline 의 3단계 stepper UI 와 단계별 분기 숨김 — AudioSources + SubtitleDub 을
-     * 한 스크롤로 노출. Edit 단계 자동 진입도 비활성. true 가 새 디자인 기본.
+     * Timeline stepper UI 숨김. 자막/더빙 제거 후 단계가 하나뿐이라 항상 true.
      */
     const val stepperHidden: Boolean = true
 

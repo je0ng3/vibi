@@ -264,7 +264,7 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "음원 분리 · 자동 더빙에 사용",
+                text = "음원 분리에 사용",
                 style = TextStyle(
                     fontSize = 12.sp,
                     color = tokens.mutedText,

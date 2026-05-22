@@ -254,8 +254,6 @@ data class TimelineUiState(
     val separationDirectives: List<SeparationDirective> = emptyList(),
     val separationStatus: AutoJobStatus = AutoJobStatus.IDLE,
     val showExportOptionsSheet: Boolean = false,
-    /** 상세 편집 모드 (현재 자막/더빙 제거 후 사용처 거의 없음 — 향후 정리 여지). */
-    val showDetailEdit: Boolean = false,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     val shareStatus: ShareStatus = ShareStatus.IDLE,
     /**
@@ -342,11 +340,10 @@ class TimelineViewModel constructor(
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
 
     /**
-     * 메인 timeline undo 스택 — 모든 편집(영상 segment / BGM / 자막 / 더빙 / 분리 directive / frame /
-     * text overlay / image clip) 이 같은 스택을 공유. TimelineStep 가 EditAudio ↔ SubtitleDub 사이를
-     * 오가도 스택은 그대로 — 사용자는 step 와 무관하게 직전 편집을 되돌릴 수 있다.
+     * 메인 timeline undo 스택 — 모든 편집(영상 segment / BGM / 분리 directive / frame /
+     * text overlay / image clip) 이 같은 스택을 공유.
      *
-     * 단, 영상편집 commit / 음원분리 commit 같은 비가역 checkpoint 후에는 [UndoRedoManager.clear] +
+     * 영상편집 commit / 음원분리 commit 같은 비가역 checkpoint 후에는 [UndoRedoManager.clear] +
      * 새 baseline push 로 스택을 끊어 사용자가 commit 이전 상태로 되돌리지 않도록 막는다.
      */
     private val mainUndoManager: UndoRedoManager<TimelineSnapshot> = UndoRedoManager(maxHistory = 50)
@@ -354,28 +351,20 @@ class TimelineViewModel constructor(
     private var hasSeededUndoSnapshot = false
 
     /**
-     * `editedVideoRenderProgress` 단일 필드 mutation helper.
-     *
-     * BFF 편집 영상 render 잡 (자막·자동더빙·분리 시작 직전 EnsureLatestRender) 의 진행률(0..100)을
-     * UiState 에 반영하는 패턴이 본 ViewModel 곳곳에 반복되어 helper 로 단일화.
+     * `editedVideoRenderProgress` 단일 필드 mutation helper. BFF 편집 영상 render 잡
+     * (분리 시작 직전 EnsureLatestRender) 의 진행률(0..100)을 UiState 에 반영.
      *
      *  - `percent != null` → "편집 영상 준비 중… (xx%)" 노출.
-     *  - `percent == null` → 진행 중 아님 (또는 무편집 → render skip / 다음 단계 진입).
+     *  - `percent == null` → 진행 중 아님 (또는 무편집 → render skip).
      */
     private fun setRenderProgress(percent: Int?) {
         _uiState.update { it.copy(editedVideoRenderProgress = percent) }
     }
 
-    // Auto-trigger gates: prevent re-firing background pipelines on every
-    // project emission. ARMED → eligible to fire; FIRED → already running
-    // or finished. Reset to ARMED on explicit retry, or on a failure /
-    // cancellation that left the project FAILED so the user can retry.
+    // 음원분리 자동 재개·refresh 가드 — project 가 다시 emit 되어도 한 번만 fire.
     private enum class TriggerGate { ARMED, FIRED }
-    private var subtitleGate = TriggerGate.ARMED
-    private var dubGate = TriggerGate.ARMED
     private var separationGate = TriggerGate.ARMED
     private var separationRefreshGate = TriggerGate.ARMED
-    private var reviewSheetGate = TriggerGate.ARMED
 
     /**
      * Hot-path 가드 — 이미 stale 마킹된 상태면 [markRenderStale] 의 코루틴 launch 도 skip.
@@ -448,7 +437,6 @@ class TimelineViewModel constructor(
                 selectedSegmentId = null,
                 showAudioSeparationSheet = false,
                 showAppendSheet = false,
-                showDetailEdit = false,
                 showFrameSheet = false,
                 showTextOverlaySheet = false,
             )
@@ -811,10 +799,6 @@ class TimelineViewModel constructor(
 
     fun onTogglePlayback() {
         _uiState.value = _uiState.value.copy(isPlaying = !_uiState.value.isPlaying)
-    }
-
-    fun onToggleDetailEdit() {
-        _uiState.value = _uiState.value.copy(showDetailEdit = !_uiState.value.showDetailEdit)
     }
 
     /**
@@ -1511,7 +1495,6 @@ class TimelineViewModel constructor(
             pendingRangeSpeed = seg.speedScale,
             isPlaying = false,
             showAudioSeparationSheet = false,
-            showDetailEdit = false,
             showAppendSheet = false,
         )
         updateUndoRedoState()
@@ -1705,7 +1688,6 @@ class TimelineViewModel constructor(
                 separationDirectives = emptyList(),
                 processingSeparations = emptyList(),
                 separationStatus = AutoJobStatus.IDLE,
-                showDetailEdit = false,
             )
         }
     }

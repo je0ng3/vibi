@@ -3,12 +3,6 @@ package com.vibi.shared.domain.usecase.export
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.model.SeparationDirective
 
-data class DubClipMixInput(
-    val audioFilePath: String,
-    val startMs: Long,
-    val volume: Float = 1.0f
-)
-
 data class SegmentInput(
     val sourceFilePath: String,
     val type: SegmentType,
@@ -98,18 +92,14 @@ fun SeparationDirective.toExportInput(): SeparationDirectiveInput? {
 
 interface FfmpegExecutor {
     /**
-     * @param preUploadedInputId non-null 이면 BFF 가 캐시된 video/audios 를 재사용 — segment 의
-     *   video bytes 와 dub audio bytes 를 multipart 로 다시 보내지 않는다. multi-variant export 에서
-     *   ExportViewModel 이 1회 [BffApi.uploadRenderInputs] 호출 후 받은 inputId 를 모든 variant 로
-     *   주입하는 fan-out 최적화. variant 단일이면 null (선업로드 round-trip 비용 회피).
+     * @param preUploadedInputId non-null 이면 BFF 가 캐시된 video 를 재사용 — segment 의 video bytes
+     *   를 multipart 로 다시 보내지 않는다.
      */
     suspend fun renderProject(
         segments: List<SegmentInput>,
-        dubClips: List<DubClipMixInput>,
         outputPath: String,
         frame: FrameInput? = null,
         bgmClips: List<BgmClipMixInput> = emptyList(),
-        audioOverridePath: String? = null,
         separationDirectives: List<SeparationDirectiveInput> = emptyList(),
         preUploadedInputId: String? = null,
         onProgress: (percent: Int) -> Unit

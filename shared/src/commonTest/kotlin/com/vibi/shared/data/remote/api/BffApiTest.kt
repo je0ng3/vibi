@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
 /**
  * BFF API integration tests using Ktor MockEngine.
  *
- * 12 BFF v2 endpoints + lipsync (3개 추가, shared 가 legacy superset).
+ * BFF v2 endpoints — auth/render/separate/mix/credits/testdata.
  * 각 엔드포인트마다 happy path + 에러 path. 멀티파트/스트리밍은 별도 단언.
  *
  * legacy-android 의 BffApiService 와 동등 동작을 보장하기 위한 회귀 테스트.
@@ -81,7 +81,7 @@ class BffApiTest {
             segmentImageFiles = emptyList(),
             bgmFiles = emptyList(),
             audioOverride = null,
-            config = RenderConfig(dubClips = emptyList(), segments = emptyList())
+            config = RenderConfig(segments = emptyList())
         )
 
         assertEquals(HttpMethod.Post, captured[0].method)
@@ -240,24 +240,5 @@ class BffApiTest {
         assertContains(captured[0].url.toString(), "token=xyz")
     }
 
-    // ───────────────────── lipsync (shared-only superset) ─────────────────────
-
-    @Test
-    fun `requestLipSync posts video plus audio plus timing`() = runTest {
-        val (api, captured) = buildApi { _ ->
-            respond(
-                content = """{"jobId":"lip-1"}""",
-                status = HttpStatusCode.OK,
-                headers = jsonHeaders()
-            )
-        }
-        api.requestLipSync(
-            video = BinaryPart("video", "v.mp4", byteArrayOf(0x01), "video/mp4"),
-            audio = BinaryPart("audio", "a.mp3", byteArrayOf(0x02), "audio/mpeg"),
-            startMs = 1000,
-            durationMs = 5000
-        )
-        assertEquals("api/v2/lipsync", captured[0].url.encodedPath.trimStart('/'))
-    }
 }
 

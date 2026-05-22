@@ -140,7 +140,7 @@ private data class StemSyncKey(
 )
 
 /**
- * Timeline 화면 — 6 핵심 기능 (업로드·TTS·자막·더빙·음성분리·구간선택) 통합.
+ * Timeline 화면 — 영상 업로드 · 세그먼트 편집 · BGM 삽입 · 음원분리 통합.
  *
  * shared `TimelineViewModel` 을 Koin parametersOf(projectId) 로 inject. 각 기능 sheet 는
  * 별도 Composable. 비디오 프리뷰는 `cmp.platform.VideoPlayer` expect/actual.
@@ -154,10 +154,6 @@ fun TimelineScreen(
     val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
     val state by viewModel.uiState.collectAsState()
 
-    // 자막/더빙 제거 후 단일 단계만 — stepper 분기 비활성. showSubtitleDubContent 는 false 고정.
-    val unifiedScroll = com.vibi.cmp.platform.RuntimeFlags.stepperHidden
-    val showAudioSourcesContent = true
-    val showSubtitleDubContent = false
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. 드롭다운 두 항목이 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
@@ -275,8 +271,6 @@ fun TimelineScreen(
     // 사용자가 BGM 작업 + 영상 segment 작업을 자유롭게 섞을 수 있도록. segment 편집은
     // 영상 위 우상단 연필 버튼(onEnterSegmentEditMode) 명시 진입.
 
-    // 자막/더빙 단계 진입 시 생성 패널 자동 열기. 사용자가 닫으면 같은 단계 안에서 다시 열리지 않고,
-    // 다른 단계 갔다 돌아오면 다시 열림 (currentStep 키 변경으로 재발화).
     // 구간 모드 진입 + 선택 있는 경우만 재생 위치 정렬 (zero-width 선택 = 자유 재생 허용).
     LaunchedEffect(state.isRangeSelecting) {
         if (state.isRangeSelecting && state.pendingRangeEndMs > state.pendingRangeStartMs) {
@@ -637,8 +631,6 @@ fun TimelineScreen(
                     }
             }
             // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive + BGM lane 까지 한 컴포넌트.
-            // AudioSources 단계 + 음원분리 진행 가능 상태(=비 segment edit) 에서만 BGM region 노출.
-            // SubtitleDub 단계에서는 BFF render 가 BGM 포함해 합치므로 별도 시각 불필요 — 데이터는 보존.
             UnifiedTimelineBar(
                 segments = state.segments,
                 directives = sortedDirectives,
@@ -703,8 +695,7 @@ fun TimelineScreen(
                 //     → onEnterRangeMode 진입).
                 //   - sheet/processing 단계: showAudioSeparationSheet (BGM 분리 path 는 range mode
                 //     없이 곧장 sheet 만 열리므로 별도 가드 필요).
-                showBgm = showAudioSourcesContent &&
-                    !state.showAudioSeparationSheet &&
+                showBgm = !state.showAudioSeparationSheet &&
                     !(state.isRangeSelecting && !state.isSegmentEditMode),
                 // BGM 타깃 모드 — editTargets 에 Bgm 포함 시 영상 strip 의 range overlay 숨기고 BGM lane
                 // 에 동일 디자인의 range fill 노출. 영상/BGM 동시 선택 막아 사용자 의도가 분명한 트랙에만 apply.
@@ -746,20 +737,12 @@ fun TimelineScreen(
             }
         }
 
-        // 더빙/자막 트랙 막대는 일단 숨김 — 음성분리 한 기능만 노출하는 단순화 단계.
-        // 선택된 클립 액션 row 제거 — 액션은 자막 편집 패널 우상단의 "적용" 버튼 한 군데로 통합.
-
-        // 자막/더빙 진행 상태는 상단 버전 chip 의 spinner 로만 표시.
-
         // 진입점 버튼들 (음원 분리 + 음원 삽입)
         val firstSegId = state.segments.firstOrNull()?.id
-        val anyJobRunning = state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.processingSeparations.isNotEmpty()
         if (!state.isRangeSelecting || state.isSegmentEditMode) {
-            // 음원 단계 — 음원분리/음원삽입 두 버튼을 weight(1f) 로 균등 분배.
             // 진행 상태는 timeline accent overlay 가 표시 — 버튼 라벨은 새 분리 진입점으로 고정.
             // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
-            if (showAudioSourcesContent) {
+            run {
                 val sepLabel = when (state.separationStatus) {
                     AutoJobStatus.FAILED -> "다시 시도"
                     else -> "음원 분리"
@@ -868,23 +851,12 @@ fun TimelineScreen(
                     // 의 onWaveformTapInNeutral) — 별도 진입 카드 폐기.
                 }
             }
-            androidx.compose.foundation.layout.FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-                verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-            ) {
-                // 자막/더빙 진입 버튼 제거 — 기능 비활성화.
-                // 음원 단계 (음원분리 + 음원삽입) 는 위 Row 에서 이미 처리.
-            }
         }
 
         // BGM panel 은 inline list 가 아닌, lane 의 막대 탭 → ModalBottomSheet 로 전환.
         // 아래 `state.selectedBgmClipId` 분기가 sheet 를 띄움.
 
         Spacer(Modifier.height(VibiSpacing.xs))
-
-        // 편집 영상 render 진행률 + 자막/더빙 생성 진행 상태는 위 "생성 시작" 버튼 라벨에 통합.
-        // 별도 progress card 폐기.
 
         // 저장 상태 메시지 (실패 시) — 헤더 저장 버튼이 진행률을 자체 표시하므로
         // running/done 은 별도 표시 안 함. 실패 메시지만 사용자에게 알림.
@@ -1072,11 +1044,10 @@ fun TimelineScreen(
     // 담당하고, 트림은 타임라인 위 좌·우 핸들이 담당한다. 화면 하단에서 sheet 가 올라오는 동선은
     // 새 인터랙션과 중복돼 사용자가 같은 작업을 두 군데서 보게 됨.
 
-    // 음성분리 sheet — 음원 단계 + 영상편집 모드 아닐 때만.
+    // 음성분리 sheet — 영상편집 모드 아닐 때만.
     state.audioSeparation
         ?.takeIf {
-            showAudioSourcesContent &&
-                state.showAudioSeparationSheet && !state.isSegmentEditMode
+            state.showAudioSeparationSheet && !state.isSegmentEditMode
         }
         ?.let { sepState ->
         AudioSeparationSheet(
@@ -1117,88 +1088,6 @@ private val TimelineStep.label: String
     get() = when (this) {
         TimelineStep.EditAudio -> "편집·음원"
     }
-
-/**
- * 3단계 stepper row — 라벨 + 노드 + 커넥터. 노드 안 아이콘은 현재 단계 기준 방향 표시:
- * 과거(왼쪽)는 ← (ArrowBack), 미래(오른쪽)는 → (ArrowForward), 현재는 빈 원.
- * 모든 노드(현재 제외) 클릭으로 [TimelineViewModel.onSelectStep] — 양방향 즉시 이동 (산출물·undo 보존).
- */
-@Composable
-private fun TimelineStepperRow(
-    currentStep: TimelineStep,
-    onStepClick: (TimelineStep) -> Unit,
-) {
-    val tokens = LocalVibiColors.current
-    val typo = LocalVibiTypography.current
-    val steps = TimelineStep.entries.toList()
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = VibiSpacing.xxs),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        steps.forEachIndexed { index, step ->
-            val isCurrent = step == currentStep
-            val isPast = step.ordinal < currentStep.ordinal
-            val nodeColor = when {
-                isCurrent -> tokens.accent
-                isPast -> tokens.accent.copy(alpha = 0.5f)
-                else -> tokens.chipBgDisabled
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(enabled = !isCurrent) { onStepClick(step) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Box(
-                    modifier = Modifier.size(VibiSpacing.lg).clip(CircleShape).background(nodeColor),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (!isCurrent) {
-                        Icon(
-                            imageVector = if (isPast) Icons.AutoMirrored.Filled.ArrowBack
-                                          else Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = if (isPast) "이전 단계로" else "다음 단계로",
-                            tint = if (isPast) tokens.backgroundPrimary else tokens.onBackgroundPrimary,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
-                }
-                Text(step.label, fontSize = 11.sp, color = tokens.onBackgroundPrimary)
-            }
-            if (index < steps.size - 1) {
-                Box(
-                    modifier = Modifier
-                        .weight(0.4f)
-                        .height(1.dp)
-                        .background(
-                            if (currentStep.ordinal > index) tokens.accent.copy(alpha = 0.5f)
-                            else tokens.chipBgDisabled
-                        ),
-                )
-            }
-        }
-    }
-}
-
-/**
- * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) lang 은 호출부에서 `selected=true, enabled=false`
- * 로 넘겨 selected 색칠 + 클릭 비활성. blocked 인 동안 onClick 비활성 (FilterChip enabled=false).
- */
-@Composable
-private fun LangFilterChip(
-    label: String,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    FilterChip(
-        selected = selected,
-        enabled = enabled,
-        onClick = onClick,
-        label = { Text(label) },
-    )
-}
 
 /**
  * 통합 타임라인 바 — segment/directive content strip + BGM lane 까지 한 컴포넌트로 묶음.

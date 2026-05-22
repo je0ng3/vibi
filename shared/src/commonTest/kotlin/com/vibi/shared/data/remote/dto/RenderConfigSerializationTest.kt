@@ -10,9 +10,6 @@ class RenderConfigSerializationTest {
     @Test
     fun `RenderConfig round-trip preserves fields`() {
         val original = RenderConfig(
-            dubClips = listOf(
-                RenderDubClip(audioFileKey = "dub1.mp3", startMs = 1_000L, durationMs = 2_000L, volume = 0.8f)
-            ),
             segments = listOf(
                 RenderSegment(
                     sourceFileKey = "seg1.mp4",

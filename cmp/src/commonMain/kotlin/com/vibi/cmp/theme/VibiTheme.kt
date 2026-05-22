@@ -11,7 +11,7 @@ import androidx.compose.ui.graphics.Color
 
 /**
  * 화면 전반에서 쓰는 색 토큰. Material3 colorScheme 으로 표현 못 하는 (semi-transparent chip bg,
- * 자막 overlay bg, atmosphere gradient orb 등) 앱 고유 색상을 한 곳에 모음.
+ * atmosphere gradient orb 등) 앱 고유 색상을 한 곳에 모음.
  *
  * 팔레트는 ElevenLabs editorial — off-white canvas + warm near-black ink + 파스텔 atmospheric
  * gradient orb 5종. 자세한 토큰 정의는 `cmp/DESIGN.md` 참조. 13개 코어 필드는 backward-compat
@@ -26,7 +26,6 @@ data class VibiColors(
     val panelBg: Color,
     /** DESIGN.md `canvas-soft` — panel-card 바탕. backgroundPrimary(canvas) 보다 살짝 밝음. */
     val panelBgSoft: Color,
-    val subtitleOverlayBg: Color,
     val mutedText: Color,
     val accent: Color,
     /** 통합 타임라인 바 — 가운데 얇은 배경 strip. */
@@ -68,7 +67,6 @@ val LightVibiColors = VibiColors(
     chipContentDisabled = Color(0xFFA8A29E),  // muted-soft
     panelBg = Color(0xFFFFFFFF),  // surface-card — pure white card on off-white canvas
     panelBgSoft = Color(0xFFFAFAFA),  // canvas-soft — panel-card 바탕
-    subtitleOverlayBg = Color(0xCC0C0A09),  // ink with 80% alpha — overlay on video
     mutedText = Color(0xFF777169),  // muted
     accent = Color(0xFF292524),  // primary — ink pill (유일한 CTA 색)
     timelineBarTrack = Color(0xFFE7E5E4),  // hairline
@@ -94,7 +92,6 @@ val DarkVibiColors = VibiColors(
     chipContentDisabled = Color(0xFFA8A29E),  // muted-soft
     panelBg = Color(0xFF1C1917),  // dark-surface-card
     panelBgSoft = Color(0xFF1C1917),  // dark 모드는 canvas-soft 분리 안함 — surface-card 와 동일 plate
-    subtitleOverlayBg = Color(0xCCFAFAFA),  // light overlay on dark video
     mutedText = Color(0xFFA8A29E),  // dark-body
     accent = Color(0xFFFAFAFA),  // primary inverted — white pill on dark canvas
     timelineBarTrack = Color(0xFF292524),  // dark-hairline

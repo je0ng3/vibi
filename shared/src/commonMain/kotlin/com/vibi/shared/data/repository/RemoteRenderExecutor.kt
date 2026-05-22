@@ -4,14 +4,12 @@ import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.api.BinaryPart
 import com.vibi.shared.data.remote.dto.RenderBgmClip
 import com.vibi.shared.data.remote.dto.RenderConfig
-import com.vibi.shared.data.remote.dto.RenderDubClip
 import com.vibi.shared.data.remote.dto.RenderFrame
 import com.vibi.shared.data.remote.dto.RenderSegment
 import com.vibi.shared.data.remote.dto.RenderSeparationDirective
 import com.vibi.shared.data.remote.dto.RenderSeparationStem
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.usecase.export.BgmClipMixInput
-import com.vibi.shared.domain.usecase.export.DubClipMixInput
 import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
@@ -40,11 +38,9 @@ class RemoteRenderExecutor(
 
     override suspend fun renderProject(
         segments: List<SegmentInput>,
-        dubClips: List<DubClipMixInput>,
         outputPath: String,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
-        audioOverridePath: String?,
         separationDirectives: List<SeparationDirectiveInput>,
         preUploadedInputId: String?,
         onProgress: (percent: Int) -> Unit
@@ -55,10 +51,8 @@ class RemoteRenderExecutor(
 
             val req = buildRenderRequest(
                 segments = segments,
-                dubClips = dubClips,
                 frame = frame,
                 bgmClips = bgmClips,
-                audioOverridePath = audioOverridePath,
                 separationDirectives = separationDirectives,
                 preUploadedInputId = preUploadedInputId,
                 outputKind = null,
@@ -67,10 +61,10 @@ class RemoteRenderExecutor(
             onProgress(5)
             val jobId = api.submitRenderJob(
                 videoFiles = req.videoParts,
-                audioFiles = req.audioParts,
+                audioFiles = emptyList(),
                 segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
-                audioOverride = req.audioOverridePart,
+                audioOverride = null,
                 config = req.config,
                 inputId = preUploadedInputId,
             ).jobId
@@ -99,10 +93,8 @@ class RemoteRenderExecutor(
      */
     suspend fun submitAndAwaitJobId(
         segments: List<SegmentInput>,
-        dubClips: List<DubClipMixInput>,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
-        audioOverridePath: String?,
         separationDirectives: List<SeparationDirectiveInput>,
         preUploadedInputId: String?,
         outputKind: String = "video",
@@ -114,10 +106,8 @@ class RemoteRenderExecutor(
 
             val req = buildRenderRequest(
                 segments = segments,
-                dubClips = dubClips,
                 frame = frame,
                 bgmClips = bgmClips,
-                audioOverridePath = audioOverridePath,
                 separationDirectives = separationDirectives,
                 preUploadedInputId = preUploadedInputId,
                 outputKind = outputKind,
@@ -126,10 +116,10 @@ class RemoteRenderExecutor(
             onProgress(5)
             val jobId = api.submitRenderJob(
                 videoFiles = req.videoParts,
-                audioFiles = req.audioParts,
+                audioFiles = emptyList(),
                 segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
-                audioOverride = req.audioOverridePart,
+                audioOverride = null,
                 config = req.config,
                 inputId = preUploadedInputId,
             ).jobId
@@ -176,19 +166,15 @@ class RemoteRenderExecutor(
 
     private data class RenderRequest(
         val videoParts: List<BinaryPart>,
-        val audioParts: List<BinaryPart>,
         val segmentImageParts: List<BinaryPart>,
         val bgmParts: List<BinaryPart>,
-        val audioOverridePart: BinaryPart?,
         val config: RenderConfig,
     )
 
     private suspend fun buildRenderRequest(
         segments: List<SegmentInput>,
-        dubClips: List<DubClipMixInput>,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
-        audioOverridePath: String?,
         separationDirectives: List<SeparationDirectiveInput>,
         preUploadedInputId: String?,
         outputKind: String?,
@@ -250,21 +236,6 @@ class RemoteRenderExecutor(
             }
         }
 
-        val audioParts = mutableListOf<BinaryPart>()
-        val renderClips = mutableListOf<RenderDubClip>()
-        for ((index, clip) in dubClips.withIndex()) {
-            val key = "audio_$index"
-            if (preUploadedInputId == null) {
-                audioParts += BinaryPart(key, "$key.mp3", readFileBytes(clip.audioFilePath), "audio/mpeg")
-            }
-            renderClips += RenderDubClip(
-                audioFileKey = key,
-                startMs = clip.startMs,
-                durationMs = 0,
-                volume = clip.volume
-            )
-        }
-
         val bgmParts = mutableListOf<BinaryPart>()
         val renderBgmClips = mutableListOf<RenderBgmClip>()
         for ((index, clip) in bgmClips.withIndex()) {
@@ -280,15 +251,8 @@ class RemoteRenderExecutor(
             )
         }
 
-        // audio_override 는 BFF snake_case 매칭 — 키 변경 시 BFF 동시 수정.
-        val audioOverridePart = audioOverridePath?.let { path ->
-            runCatching { readFileBytes(path) }.getOrNull()?.let { bytes ->
-                BinaryPart("audio_override", "audio_override.mp3", bytes, "audio/mpeg")
-            }
-        }
-
-        // selected=false 필터는 호출자(ExportWithDubbingUseCase) 단계에서 이미 적용 — 여기로
-        // 넘어온 SeparationDirectiveInput 의 selections 는 mix 에 들어갈 stem 만 남아있음.
+        // selected=false 필터는 호출자 단계에서 이미 적용 — 여기로 넘어온 SeparationDirectiveInput 의
+        // selections 는 mix 에 들어갈 stem 만 남아있음.
         val renderSeparationDirectives = separationDirectives.map { d ->
             RenderSeparationDirective(
                 id = d.id,
@@ -308,7 +272,6 @@ class RemoteRenderExecutor(
         }
 
         val config = RenderConfig(
-            dubClips = renderClips,
             segments = renderSegments,
             frame = frame?.let {
                 RenderFrame(
@@ -318,19 +281,14 @@ class RemoteRenderExecutor(
                 )
             },
             bgmClips = renderBgmClips,
-            // multipart audio_override 가 있을 때 BFF 가 audio_override 슬롯을 활성화하기
-            // 위해 같은 키를 config 에도 반드시 명시. 누락 시 BFF 는 multipart 파일을 무시.
-            audioOverrideKey = audioOverridePart?.let { "audio_override" },
             separationDirectives = renderSeparationDirectives,
             outputKind = outputKind ?: "video",
         )
 
         return RenderRequest(
             videoParts = videoParts,
-            audioParts = audioParts,
             segmentImageParts = segmentImageParts,
             bgmParts = bgmParts,
-            audioOverridePart = audioOverridePart,
             config = config,
         )
     }
