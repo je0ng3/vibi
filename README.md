@@ -7,11 +7,11 @@
 
 ## 의존 백엔드
 
-이 앱은 **vibi-bff** (Kotlin/Ktor) 를 통해 음원 분리 · 렌더 · 채팅 (Gemini function calling) · 소셜 로그인 (Google + Apple) 을 호출한다. 모든 외부 API (Perso · Gemini · Google tokeninfo · Apple JWKS) 는 BFF 에서만 다루며, 클라이언트는 `/api/v2` 만 사용한다. 단 Google/Apple **native SDK 의 ID Token** 만 클라이언트가 받아 BFF 에 교환한다.
+이 앱은 **vibi-bff** (Kotlin/Ktor) 를 통해 음원 분리 · 렌더 · 소셜 로그인 (Google + Apple) 을 호출한다. 모든 외부 API (Perso · Google tokeninfo · Apple JWKS) 는 BFF 에서만 다루며, 클라이언트는 `/api/v2` 만 사용한다. 단 Google/Apple **native SDK 의 ID Token** 만 클라이언트가 받아 BFF 에 교환한다.
 
 빌드 전에 BFF 가 동작 중이어야 한다 (기본 `:8080`).
 
-> 과거 자동 자막 / 자동 더빙 / lipsync 는 BFF surface 절단됨 (BFF commit `52f8d7c`). 모바일 코드에 잔존 (`AutoSubtitleRepository`, `AutoDubRepository`, `LipSyncRepository`, 관련 UseCase / `BffApi` 메서드) 하지만 호출 시 404 — 신규 작업의 진입점으로 쓰지 말 것.
+> 자막 / 더빙 / lipsync 는 BFF surface (BFF commit `52f8d7c`) 와 모바일 코드 양쪽에서 모두 제거됨. 음원 분리·BGM·세그먼트 편집만 유지.
 
 ## 사전 준비
 
@@ -98,9 +98,9 @@ open iosApp/iosApp.xcodeproj
 vibi-mobile/
 ├── shared/                                 # :shared — KMP 비즈니스 로직
 │   ├── commonMain/com/vibi/shared/
-│   │   ├── domain/{model,repository,chat,usecase,util}/
+│   │   ├── domain/{model,repository,usecase,util}/
 │   │   ├── data/{remote,repository,local,local/db}/    # Ktor Client + Room v5 (destructive migration)
-│   │   ├── ui/{auth,input,timeline,chat}/              # ViewModel
+│   │   ├── ui/{auth,input,timeline}/                   # ViewModel
 │   │   ├── platform/                                   # expect — GoogleSignInClient, AppleSignInClient, FileSystem, ...
 │   │   └── di/                                         # Koin 모듈
 │   ├── androidMain/  └── iosMain/                      # 플랫폼별 actual (인증 / 미디어 / DB / HttpClient)
@@ -109,7 +109,7 @@ vibi-mobile/
 │   ├── commonMain/com/vibi/cmp/
 │   │   ├── App.kt + ui/navigation/VibiNavHost.kt       # Splash · Login · Input · Timeline
 │   │   ├── theme/                                      # VibiTheme · Typography · Radius · Spacing
-│   │   ├── ui/{splash,auth,input,timeline,chat,share,components,cupertino}/
+│   │   ├── ui/{splash,auth,input,timeline,share,components,cupertino}/
 │   │   ├── ui/timeline/sounddeck/                      # SoundDeck · SoundCard · ABPreviewBar · ...
 │   │   └── platform/                                   # VideoPlayer / MediaPicker / Audio* / StemMixer / Waveform expect
 │   ├── androidMain/  └── iosMain/                      # Media3 / AVPlayer · PHPicker · GoogleSignIn 등 actual
@@ -119,7 +119,7 @@ vibi-mobile/
 
 핵심 화면 흐름: **Splash → (signedIn) Input ↔ Timeline / (signedOut) Login → Input**.
 
-타임라인 sheet 군: AudioSeparation · InsertSubtitle (로컬 표시 전용) · BgmTrim · DetailEdit · ExportVariantPicker · ChatPanel.
+타임라인 sheet 군: AudioSeparation · BgmTrim · ExportOptions · ExportVariantPicker.
 타임라인 구간 선택은 별도 sheet 가 아니라 `UnifiedTimelineBar` 인라인 (28~56dp 바, segment/directive content strip + range fill + bracket 핸들 + 재생 marker).
 
 ## 핵심 기능 ↔ BFF 매핑
@@ -131,13 +131,11 @@ vibi-mobile/
 | 음원 분리 (영상 segment + BGM clip) | AudioSeparationSheet · `StartAudioSeparationUseCase` / `PollSeparationUseCase` | `POST /api/v2/separate` → poll → `POST /api/v2/separate/{id}/mix` |
 | 구간 선택 | UnifiedTimelineBar (인라인) | (로컬 Room) |
 | 음원 삽입 (파일 + 즉시 녹음 + BGM trim) | `AudioPicker` / `AudioRecorder` · BgmTrimSheet | (로컬 BgmClip) |
-| 채팅 어시스턴트 | ChatPanel · ChatViewModel · ChatToolDispatcher · ProjectContextBuilder | `POST /api/v2/chat` (Gemini function calling) |
 | 익스포트 (단일 + multi-variant) | ExportVariantPickerSheet · `EnsureLatestRenderUseCase` · `SaveAllVariantsUseCase` | `POST /api/v2/render/inputs` → `POST /api/v2/render` (× variants, `inputId` 재사용) → poll → `GET /download` |
 
 ## 외부 의존 (BFF 경유, 클라이언트가 직접 호출하지 않음)
 
 - **Perso AI** — 음원 분리
-- **Gemini** — 채팅 function calling
 - **Google tokeninfo / Apple JWKS** — ID Token 검증 (모바일은 native SDK 가 ID Token 만 받아 BFF 에 전달)
 
 API 키는 모두 BFF env 에만 보관.

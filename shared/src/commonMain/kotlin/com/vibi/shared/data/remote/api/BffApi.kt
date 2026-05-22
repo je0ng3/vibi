@@ -2,15 +2,7 @@ package com.vibi.shared.data.remote.api
 
 import com.vibi.shared.data.remote.dto.AppleAuthRequestDto
 import com.vibi.shared.data.remote.dto.AuthResponseDto
-import com.vibi.shared.data.remote.dto.ChatRequestDto
-import com.vibi.shared.data.remote.dto.ChatResponseDto
 import com.vibi.shared.data.remote.dto.GoogleAuthRequestDto
-import com.vibi.shared.data.remote.dto.AutoDubJobResponse
-import com.vibi.shared.data.remote.dto.AutoDubSpec
-import com.vibi.shared.data.remote.dto.AutoDubStatusResponse
-import com.vibi.shared.data.remote.dto.LanguageListResponse
-import com.vibi.shared.data.remote.dto.LipSyncResponse
-import com.vibi.shared.data.remote.dto.LipSyncStatusResponse
 import com.vibi.shared.data.remote.dto.MixJobResponse
 import com.vibi.shared.data.remote.dto.MixRequest
 import com.vibi.shared.data.remote.dto.MixStatusResponse
@@ -21,10 +13,6 @@ import com.vibi.shared.data.remote.dto.RenderStatusResponse
 import com.vibi.shared.data.remote.dto.SeparationJobResponse
 import com.vibi.shared.data.remote.dto.SeparationSpec
 import com.vibi.shared.data.remote.dto.SeparationStatusResponse
-import com.vibi.shared.data.remote.dto.SubtitleJobResponse
-import com.vibi.shared.data.remote.dto.SubtitleRegenerateSpec
-import com.vibi.shared.data.remote.dto.SubtitleSpec
-import com.vibi.shared.data.remote.dto.SubtitleStatusResponse
 import com.vibi.shared.data.remote.dto.TestdataSeparationFolderDto
 import com.vibi.shared.data.remote.dto.AdminGrantRequest
 import com.vibi.shared.data.remote.dto.CreditBalanceResponse
@@ -39,7 +27,6 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.readRawBytes
-import io.ktor.client.request.headers
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
@@ -110,45 +97,9 @@ class BffApi(
             setBody(request)
         }.body()
 
-    /** 지원 타깃 언어 목록 — Perso 가 지원하는 언어를 BFF 가 프록시. */
-    suspend fun getLanguages(): LanguageListResponse =
-        client.get("api/v2/languages").body()
-
     /** 음성분리 mock 데이터 — testdata/<startSec>-<endSec>/ 폴더 목록 + 그 안의 stem 이름. */
     suspend fun listSeparationTestdata(): List<TestdataSeparationFolderDto> =
         client.get("api/v2/testdata/separation/list").body()
-
-    /** 자연어 편집 어시스턴트 — Gemini function calling 라우팅. */
-    suspend fun chat(request: ChatRequestDto): ChatResponseDto =
-        client.post("api/v2/chat") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }.body()
-
-    suspend fun requestLipSync(
-        video: BinaryPart,
-        audio: BinaryPart,
-        startMs: Long,
-        durationMs: Long
-    ): LipSyncResponse =
-        client.post("api/v2/lipsync") {
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        append(video)
-                        append(audio)
-                        append("startMs", startMs.toString())
-                        append("durationMs", durationMs.toString())
-                    }
-                )
-            )
-        }.body()
-
-    suspend fun getLipSyncStatus(jobId: String): LipSyncStatusResponse =
-        client.get("api/v2/lipsync/$jobId/status").body()
-
-    suspend fun downloadLipSyncResult(jobId: String): ByteArray =
-        client.get("api/v2/lipsync/$jobId/download").readRawBytes()
 
     /**
      * Multi-variant export 시 video/audios 를 한 번만 업로드하기 위한 캐시 endpoint.
@@ -244,80 +195,6 @@ class BffApi(
         client.get("api/v2/separate/mix/$mixJobId").body()
 
     suspend fun downloadMix(tokenizedUrl: String): ByteArray =
-        client.get(tokenizedUrl).readRawBytes()
-
-    // Auto subtitles (Perso STT + Gemini translate)
-
-    /**
-     * @param file null 이면 multipart `file` part 자체를 생략 — spec.editedRenderJobId 활용 흐름.
-     */
-    suspend fun submitSubtitleJob(
-        file: BinaryPart?,
-        spec: SubtitleSpec
-    ): SubtitleJobResponse =
-        client.post("api/v2/subtitles") {
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        file?.let { append(it) }
-                        append("spec", json.encodeToString(SubtitleSpec.serializer(), spec))
-                    }
-                )
-            )
-        }.body()
-
-    /**
-     * 사용자가 수정한 SRT 텍스트를 source 로 다른 언어 자막 재생성. 영상/오디오 업로드 없음 — Gemini
-     * 만 호출. 응답 jobId 는 기존 [getSubtitleStatus] / [downloadSrt] 로 폴링·다운로드 가능.
-     */
-    suspend fun regenerateSubtitleJob(
-        srtFile: BinaryPart,
-        spec: SubtitleRegenerateSpec
-    ): SubtitleJobResponse =
-        client.post("api/v2/subtitles/regenerate") {
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        append(srtFile)
-                        append("spec", json.encodeToString(SubtitleRegenerateSpec.serializer(), spec))
-                    }
-                )
-            )
-        }.body()
-
-    suspend fun getSubtitleStatus(jobId: String): SubtitleStatusResponse =
-        client.get("api/v2/subtitles/$jobId").body()
-
-    suspend fun downloadSrt(tokenizedUrl: String): ByteArray =
-        client.get(tokenizedUrl).readRawBytes()
-
-    // Auto dubbing (Perso translate, no lipsync)
-
-    /**
-     * @param file null 이면 multipart `file` part 자체를 생략 — spec.editedRenderJobId 활용 흐름.
-     */
-    suspend fun submitAutoDubJob(
-        file: BinaryPart?,
-        spec: AutoDubSpec
-    ): AutoDubJobResponse =
-        client.post("api/v2/autodub") {
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        file?.let { append(it) }
-                        append("spec", json.encodeToString(AutoDubSpec.serializer(), spec))
-                    }
-                )
-            )
-        }.body()
-
-    suspend fun getAutoDubStatus(jobId: String): AutoDubStatusResponse =
-        client.get("api/v2/autodub/$jobId").body()
-
-    suspend fun downloadDubbedAudio(tokenizedUrl: String): ByteArray =
-        client.get(tokenizedUrl).readRawBytes()
-
-    suspend fun downloadDubbedVideo(tokenizedUrl: String): ByteArray =
         client.get(tokenizedUrl).readRawBytes()
 }
 

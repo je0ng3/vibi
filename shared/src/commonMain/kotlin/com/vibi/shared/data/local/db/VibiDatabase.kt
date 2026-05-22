@@ -5,43 +5,33 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
 import com.vibi.shared.data.local.db.dao.BgmClipDao
-import com.vibi.shared.data.local.db.dao.DubClipDao
 import com.vibi.shared.data.local.db.dao.EditProjectDao
 import com.vibi.shared.data.local.db.dao.ImageClipDao
 import com.vibi.shared.data.local.db.dao.SegmentDao
 import com.vibi.shared.data.local.db.dao.SeparationDirectiveDao
-import com.vibi.shared.data.local.db.dao.SubtitleClipDao
 import com.vibi.shared.data.local.db.dao.TextOverlayDao
 import com.vibi.shared.data.local.db.entity.BgmClipEntity
-import com.vibi.shared.data.local.db.entity.DubClipEntity
 import com.vibi.shared.data.local.db.entity.EditProjectEntity
 import com.vibi.shared.data.local.db.entity.ImageClipEntity
 import com.vibi.shared.data.local.db.entity.SegmentEntity
 import com.vibi.shared.data.local.db.entity.SeparationDirectiveEntity
-import com.vibi.shared.data.local.db.entity.SubtitleClipEntity
 import com.vibi.shared.data.local.db.entity.TextOverlayEntity
 
 @Database(
     entities = [
         EditProjectEntity::class,
-        DubClipEntity::class,
-        SubtitleClipEntity::class,
         ImageClipEntity::class,
         SegmentEntity::class,
         TextOverlayEntity::class,
         BgmClipEntity::class,
         SeparationDirectiveEntity::class
     ],
-    // v4 — SeparationDirectiveEntity.sourceOffsetMs 추가 (영상 range delete 시 directive split 지원).
-    // v5 — BgmClipEntity.sourceTrimStartMs/EndMs 추가 (영상보다 긴 음원의 BgmTrimSheet trim 선택 보존).
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @ConstructedBy(VibiDatabaseConstructor::class)
 abstract class VibiDatabase : RoomDatabase() {
     abstract fun editProjectDao(): EditProjectDao
-    abstract fun dubClipDao(): DubClipDao
-    abstract fun subtitleClipDao(): SubtitleClipDao
     abstract fun imageClipDao(): ImageClipDao
     abstract fun segmentDao(): SegmentDao
     abstract fun textOverlayDao(): TextOverlayDao

@@ -5,22 +5,19 @@ import androidx.room.useWriterConnection
 import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.local.db.VibiDatabase
 import com.vibi.shared.data.local.db.dao.BgmClipDao
-import com.vibi.shared.data.local.db.dao.DubClipDao
 import com.vibi.shared.data.local.db.dao.EditProjectDao
 import com.vibi.shared.data.local.db.dao.ImageClipDao
 import com.vibi.shared.data.local.db.dao.SegmentDao
 import com.vibi.shared.data.local.db.dao.SeparationDirectiveDao
-import com.vibi.shared.data.local.db.dao.SubtitleClipDao
 import com.vibi.shared.data.local.db.dao.TextOverlayDao
 import com.vibi.shared.data.local.db.entity.EditProjectEntity
 import com.vibi.shared.data.local.db.entity.SegmentEntity
-import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.Segment
+import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.platform.currentTimeMillis
-import com.vibi.shared.platform.deleteLocalFile
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -34,8 +31,6 @@ class EditProjectRepositoryImpl constructor(
     private val database: VibiDatabase,
     private val dao: EditProjectDao,
     private val segmentDao: SegmentDao,
-    private val dubClipDao: DubClipDao,
-    private val subtitleClipDao: SubtitleClipDao,
     private val imageClipDao: ImageClipDao,
     private val textOverlayDao: TextOverlayDao,
     private val bgmClipDao: BgmClipDao,
@@ -96,13 +91,8 @@ class EditProjectRepositoryImpl constructor(
     }
 
     private suspend fun cascadeDeleteProject(projectId: String) {
-        // 프로젝트 소유 파일 (BFF 가 이 프로젝트용으로 렌더한 더빙 mp3/mp4) — DB 삭제 전에 path 수집 후 unlink.
-        // segment/bgm/image 의 sourceUri 는 picker_media (다른 프로젝트와 공유 가능) 라 삭제하지 않음.
-        runCatching { dao.getById(projectId)?.toDomain()?.deleteOwnedFiles() }
         // 자식 row 들 — Room FK ON DELETE CASCADE 미설정 환경에서 명시 cleanup.
         runCatching { segmentDao.deleteByProjectId(projectId) }
-        runCatching { dubClipDao.deleteByProjectId(projectId) }
-        runCatching { subtitleClipDao.deleteByProjectId(projectId) }
         runCatching { imageClipDao.deleteByProjectId(projectId) }
         runCatching { textOverlayDao.deleteByProjectId(projectId) }
         runCatching { bgmClipDao.deleteByProjectId(projectId) }
@@ -110,46 +100,17 @@ class EditProjectRepositoryImpl constructor(
         dao.deleteById(projectId)
     }
 
-    private fun EditProject.deleteOwnedFiles() {
-        val paths = buildList {
-            dubbedAudioPath?.let { add(it) }
-            addAll(dubbedAudioPaths.values)
-            addAll(dubbedVideoPaths.values)
-        }
-        paths.forEach { runCatching { deleteLocalFile(it) } }
-    }
-
     private fun EditProjectEntity.toDomain() = EditProject(
         projectId = projectId,
         createdAt = createdAt,
         updatedAt = updatedAt,
         title = title,
-        pendingReviewTargetLangsCsv = pendingReviewTargetLangsCsv,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
         backgroundColorHex = backgroundColorHex,
         videoScale = videoScale,
         videoOffsetXPct = videoOffsetXPct,
         videoOffsetYPct = videoOffsetYPct,
-        targetLanguageCode = targetLanguageCode,
-        targetLanguageCodes = decodeLanguageCodes(targetLanguageCodesJson),
-        enableAutoDubbing = enableAutoDubbing,
-        enableAutoSubtitles = enableAutoSubtitles,
-        showSubtitlesOnPreview = showSubtitlesOnPreview,
-        showDubbingOnPreview = showDubbingOnPreview,
-        numberOfSpeakers = numberOfSpeakers,
-        dubbedAudioPath = dubbedAudioPath,
-        dubbedAudioPaths = decodeStringMap(dubbedAudioPathsJson),
-        dubbedVideoPaths = decodeStringMap(dubbedVideoPathsJson),
-        autoDubStatusByLang = decodeStringMap(autoDubStatusByLangJson)
-            .mapValues { (_, v) -> parseStatus(v) },
-        autoDubJobIdByLang = decodeStringMap(autoDubJobIdByLangJson),
-        autoSubtitleStatus = parseStatus(autoSubtitleStatus),
-        autoDubStatus = parseStatus(autoDubStatus),
-        autoSubtitleJobId = autoSubtitleJobId,
-        autoDubJobId = autoDubJobId,
-        autoSubtitleError = autoSubtitleError,
-        autoDubError = autoDubError,
         separationJobId = separationJobId,
         separationSegmentId = separationSegmentId,
         separationNumberOfSpeakers = separationNumberOfSpeakers,
@@ -170,31 +131,12 @@ class EditProjectRepositoryImpl constructor(
         createdAt = createdAt,
         updatedAt = updatedAt,
         title = title,
-        pendingReviewTargetLangsCsv = pendingReviewTargetLangsCsv,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
         backgroundColorHex = backgroundColorHex,
         videoScale = videoScale,
         videoOffsetXPct = videoOffsetXPct,
         videoOffsetYPct = videoOffsetYPct,
-        targetLanguageCode = targetLanguageCode,
-        targetLanguageCodesJson = encodeLanguageCodes(targetLanguageCodes),
-        enableAutoDubbing = enableAutoDubbing,
-        enableAutoSubtitles = enableAutoSubtitles,
-        showSubtitlesOnPreview = showSubtitlesOnPreview,
-        showDubbingOnPreview = showDubbingOnPreview,
-        numberOfSpeakers = numberOfSpeakers,
-        dubbedAudioPath = dubbedAudioPath,
-        dubbedAudioPathsJson = encodeStringMap(dubbedAudioPaths),
-        dubbedVideoPathsJson = encodeStringMap(dubbedVideoPaths),
-        autoDubStatusByLangJson = encodeStringMap(autoDubStatusByLang.mapValues { it.value.name }),
-        autoDubJobIdByLangJson = encodeStringMap(autoDubJobIdByLang),
-        autoSubtitleStatus = autoSubtitleStatus.name,
-        autoDubStatus = autoDubStatus.name,
-        autoSubtitleJobId = autoSubtitleJobId,
-        autoDubJobId = autoDubJobId,
-        autoSubtitleError = autoSubtitleError,
-        autoDubError = autoDubError,
         separationJobId = separationJobId,
         separationSegmentId = separationSegmentId,
         separationNumberOfSpeakers = separationNumberOfSpeakers,
@@ -206,48 +148,6 @@ class EditProjectRepositoryImpl constructor(
         currentVideoRenderJobId = currentVideoRenderJobId,
         isRenderStale = isRenderStale,
     )
-
-    /** {key:value, ...} 단순 직렬화. value 에 콤마/콜론/따옴표 없는 경로·jobId 가정. */
-    private fun encodeStringMap(map: Map<String, String>): String {
-        if (map.isEmpty()) return ""
-        return map.entries.joinToString(prefix = "{", postfix = "}", separator = ",") { (k, v) ->
-            "\"${escape(k)}\":\"${escape(v)}\""
-        }
-    }
-
-    private fun decodeStringMap(json: String): Map<String, String> {
-        if (json.isBlank()) return emptyMap()
-        val body = json.trim().removePrefix("{").removeSuffix("}")
-        if (body.isBlank()) return emptyMap()
-        return body.split(",")
-            .mapNotNull { entry ->
-                val parts = entry.split(":", limit = 2)
-                if (parts.size != 2) null else {
-                    val k = unescape(parts[0].trim().removeSurrounding("\""))
-                    val v = unescape(parts[1].trim().removeSurrounding("\""))
-                    if (k.isEmpty()) null else k to v
-                }
-            }
-            .toMap()
-    }
-
-    private fun escape(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
-    private fun unescape(s: String) = s.replace("\\\"", "\"").replace("\\\\", "\\")
-
-    /** JSON array of strings 직렬화. 빈 리스트면 빈 문자열로 저장 (구 데이터와 동등). */
-    private fun encodeLanguageCodes(codes: List<String>): String {
-        if (codes.isEmpty()) return ""
-        return codes.joinToString(prefix = "[", postfix = "]", separator = ",") { "\"${it.replace("\"", "\\\"")}\"" }
-    }
-
-    private fun decodeLanguageCodes(json: String): List<String> {
-        if (json.isBlank()) return emptyList()
-        // 단순 파서 — kotlinx.serialization Json 의존을 굳이 매퍼에 끌어오지 않기 위함.
-        return json.trim().removePrefix("[").removeSuffix("]")
-            .split(",")
-            .map { it.trim().removePrefix("\"").removeSuffix("\"").replace("\\\"", "\"") }
-            .filter { it.isNotEmpty() }
-    }
 
     private fun parseStatus(name: String): AutoJobStatus =
         runCatching { AutoJobStatus.valueOf(name) }.getOrDefault(AutoJobStatus.IDLE)

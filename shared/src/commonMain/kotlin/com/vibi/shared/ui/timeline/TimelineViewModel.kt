@@ -7,11 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.vibi.shared.platform.currentTimeMillis
 import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
-import com.vibi.shared.domain.model.DubClip
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.model.EditProject
-import com.vibi.shared.domain.model.clearAutoSubtitleDub
-import com.vibi.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
@@ -19,24 +16,18 @@ import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.addProcessingSeparation
 import com.vibi.shared.domain.model.removeProcessingSeparation
-import com.vibi.shared.domain.model.SubtitleClip
 import com.vibi.shared.domain.model.BgmClip
-import com.vibi.shared.domain.model.SubtitlePosition
-import com.vibi.shared.domain.model.SubtitleSource
 import com.vibi.shared.platform.generateId
-import com.vibi.shared.domain.model.TargetLanguage
 import com.vibi.shared.domain.model.TextOverlay
 import com.vibi.shared.domain.model.clearSeparation
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
-import com.vibi.shared.domain.repository.DubClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
-import com.vibi.shared.domain.repository.SubtitleClipRepository
 import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.model.SeparationMediaType
 import com.vibi.shared.data.remote.api.BffApi
@@ -55,21 +46,13 @@ import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
 import com.vibi.shared.domain.usecase.share.ShareSheetLauncher
-import com.vibi.shared.domain.usecase.subtitle.AddSubtitleClipUseCase
-import com.vibi.shared.domain.usecase.subtitle.GenerateAutoDubUseCase
-import com.vibi.shared.domain.usecase.subtitle.GenerateAutoSubtitlesUseCase
-import com.vibi.shared.domain.usecase.subtitle.GenerateOriginalScriptUseCase
-import com.vibi.shared.domain.usecase.subtitle.RegenerateSubtitlesUseCase
-import com.vibi.shared.domain.usecase.subtitle.SrtParser
-import com.vibi.shared.domain.usecase.subtitle.UndoRedoManager
+import com.vibi.shared.domain.util.UndoRedoManager
 import com.vibi.shared.domain.usecase.text.AddTextOverlayUseCase
 import com.vibi.shared.domain.usecase.text.DuplicateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.text.UpdateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.timeline.AddImageSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.AddVideoSegmentUseCase
-import com.vibi.shared.domain.usecase.timeline.DeleteDubClipUseCase
 import com.vibi.shared.domain.usecase.timeline.DuplicateSegmentRangeUseCase
-import com.vibi.shared.domain.usecase.timeline.MoveDubClipUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.SplitSegmentUseCase
@@ -85,13 +68,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -142,13 +123,9 @@ sealed class ExportVariantPickerState {
 }
 
 /**
- * 타임라인 작업 단계 — 사용자에게 보이는 2 step stepper 의 모델.
- * EditAudio (편집·음원, 기본 진입 — 영상 segment 편집 + BGM 삽입/조정 + 음원분리) ↔
- * SubtitleDub (자막/더빙).
- * 단계 이동은 산출물·undo 모두 보존하는 양방향 자유 이동. EditAudio 안에서 segment 구간 액션은
- * BGM 에도 ripple/split 로 동시 적용되므로 단계 commit 시 BGM 일괄 wipe 불필요.
+ * 타임라인 작업 단계 — 자막/더빙 제거 후 단일 단계만 남음. 향후 stepper 부활 여지 위해 enum 유지.
  */
-enum class TimelineStep { EditAudio, SubtitleDub }
+enum class TimelineStep { EditAudio }
 
 /**
  * 백그라운드 폴링 중인 음원분리 1건. 동시에 여러 구간을 분리할 수 있도록
@@ -215,31 +192,19 @@ data class TimelineUiState(
     val trimStartMs: Long = 0L,
     val trimEndMs: Long = 0L,
     val showAppendSheet: Boolean = false,
-    val dubClips: List<DubClip> = emptyList(),
-    val subtitleClips: List<SubtitleClip> = emptyList(),
     val imageClips: List<ImageClip> = emptyList(),
     val playbackPositionMs: Long = 0L,
     val isPlaying: Boolean = false,
     /**
      * directive range 안에서 stem 재생 중일 때 video player 의 원본 audio 만 mute 하는 ephemeral 플래그.
-     * segment.volumeScale 을 건드리지 않아 사용자가 설정한 segment 볼륨·파형 amplitude 가 보존된다.
-     * 진입/이탈은 [muteVideoSegmentsForDirective] 가 토글 — DB persist 안 함.
      */
     val runtimeVideoMutedForDirective: Boolean = false,
-    val selectedDubClipId: String? = null,
-    val selectedSubtitleClipId: String? = null,
     val selectedImageClipId: String? = null,
-    val showSubtitleSheet: Boolean = false,
-    /** my_plan: 편집 화면에 자막을 띄울지. */
-    val showSubtitlesOnPreview: Boolean = true,
-    /** my_plan: 편집 화면에 더빙을 띄울지. */
-    val showDubbingOnPreview: Boolean = true,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val isVideoSelected: Boolean = false,
     val videoVolume: Float = 1.0f,
     val showVideoVolumeSlider: Boolean = false,
-    val showDubVolumeSlider: Boolean = false,
     val isTrimming: Boolean = false,
     val pendingTrimStartMs: Long = 0L,
     val pendingTrimEndMs: Long = 0L,
@@ -250,17 +215,7 @@ data class TimelineUiState(
     val showRangeActionSheet: Boolean = false,
     val pendingRangeVolume: Float = 1.0f,
     val pendingRangeSpeed: Float = 1.0f,
-    /**
-     * 영상 위 우상단 연필 버튼 진입 — segment 편집(복제/삭제/볼륨/속도) 전용 mode.
-     * `isRangeSelecting` 와 동시에 true 가 되며, range slider 확정 시 액션 시트(복제/삭제/속도/볼륨)를
-     * 띄움. 음성분리 진입과 명확히 분리하기 위한 플래그.
-     */
     val isSegmentEditMode: Boolean = false,
-    /**
-     * 다듬기 모드에서 액션이 적용될 트랙. 진입 시 호출자가 default 지정 (영상 다듬기 hero →
-     * `{Video}`, SoundCard 의 다듬기 진입 → 해당 트랙만). UI 칩 row 로 사용자가 변경 가능.
-     * 모드 종료 시 비움.
-     */
     val editTargets: Set<EditTarget> = setOf(EditTarget.Video),
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
@@ -291,115 +246,26 @@ data class TimelineUiState(
     val selectedBgmClipId: String? = null,
     val isAddingBgm: Boolean = false,
     val bgmError: String? = null,
-    /**
-     * 음원 선택 시 길이가 영상보다 길어 BgmTrimSheet 로 trim 입력을 받아야 하는 pending 상태.
-     * non-null = 시트 노출. confirm/cancel 시 null 로 클리어.
-     */
     val bgmTrimRequest: BgmTrimRequest? = null,
-    /**
-     * BGM 영역의 lane 개수. 사용자가 하단 drag handle 로 명시적 확장/축소.
-     * BGM clip 의 vertical drag 는 0..bgmLaneCount-1 로 clamp — 영역 밖으로 못 옮김.
-     * 더 아래 lane 이 필요하면 사용자가 영역을 먼저 늘리고 옮겨야 함. 영속화 X (UI 한정).
-     */
     val bgmLaneCount: Int = 3,
     val audioSeparation: AudioSeparationUiState? = null,
-    /** AudioSeparationSheet 표시 여부 — audioSeparation (데이터) 과 분리해 자동 팝업 회피. */
     val showAudioSeparationSheet: Boolean = false,
-    /**
-     * 백그라운드에서 폴링 중인 음원분리 잡들. 동시에 여러 구간을 분리할 수 있도록 리스트.
-     * - timeline 의 progress overlay 는 이 리스트를 순회해 각각 그린다.
-     * - free-interval / range slider 가 새 분리 시작 시 이 리스트의 range 도 occupied 로 취급.
-     * - 잡이 Ready/Failed/Consumed 가 되면 해당 entry 는 즉시 리스트에서 제거.
-     */
     val processingSeparations: List<ProcessingSeparation> = emptyList(),
-    /** Phase 1 commit 후 timeline 재생 시 stem mixer 가 사용. */
     val separationDirectives: List<SeparationDirective> = emptyList(),
-    /** EditProject.separationStatus 미러 — 백그라운드 진행/완료 상태 표면화. */
     val separationStatus: AutoJobStatus = AutoJobStatus.IDLE,
-    val targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
-    val enableAutoDubbing: Boolean = false,
-    val enableAutoSubtitles: Boolean = false,
-    val numberOfSpeakers: Int = 1,
     val showExportOptionsSheet: Boolean = false,
-    val autoSubtitleStatus: AutoJobStatus = AutoJobStatus.IDLE,
-    val autoDubStatus: AutoJobStatus = AutoJobStatus.IDLE,
-    /** my_plan: 언어별 자동 더빙 상태 (en→RUNNING, jp→READY 등). */
-    val autoDubStatusByLang: Map<String, AutoJobStatus> = emptyMap(),
-    val targetLanguageCodes: List<String> = emptyList(),
-    val autoSubtitleError: String? = null,
-    val autoDubError: String? = null,
-    /** Phase B: 사용자 수정된 자막 → 다른 언어 재생성 진행 상태. */
-    val regenerateSubtitleStatus: AutoJobStatus = AutoJobStatus.IDLE,
-    val regenerateSubtitleError: String? = null,
-    /** 상세 편집 모드 — timeline 위에 자막 cue list + 스타일 panel 노출. */
+    /** 상세 편집 모드 (현재 자막/더빙 제거 후 사용처 거의 없음 — 향후 정리 여지). */
     val showDetailEdit: Boolean = false,
-    val detailEditLang: String? = null,
-    // ── 자막/더빙 생성 패널 ─────────────────────────────────────────────────
-    val localizationOpen: Boolean = false,
-    /** "subtitle" | "dub" */
-    val localizationMode: String = "subtitle",
-    val localizationLangs: Set<String> = emptySet(),
-    /**
-     * 자막 모드 한정 — true 면 "원본 언어 (스크립트만)" : BFF 에 targetLanguageCodes=[] 로 호출,
-     * STT 결과 originalSrt 만 받고 번역은 skip. false 면 기존 흐름 (사용자가 lang chip 으로 번역 langs 선택).
-     * dub 모드에선 사용 안 함 (현재 dropdown 그대로).
-     */
-    /** 자막 생성 전 STT 스크립트 검토·수정 단계 활성화 여부. dub 모드는 미지원 (BFF 추가 필요). */
-    val reviewScriptBeforeGenerate: Boolean = false,
-    /** STT only 결과 cue 들. 검토 sheet 의 데이터 source. null = STT 미실행 또는 검토 완료. */
-    val pendingReviewCues: List<com.vibi.shared.domain.usecase.subtitle.ParsedSrtCue>? = null,
-    /** 검토 후 진행할 target 언어 코드들 — STT 시작 시 사용자 선택값을 보존. */
-    val pendingReviewTargetLangs: List<String> = emptyList(),
-    val showScriptReviewSheet: Boolean = false,
-    /** STT only 진행 상태 — RUNNING 시 chip spinner. */
-    val sttPreflightStatus: AutoJobStatus = AutoJobStatus.IDLE,
-    val sttPreflightError: String? = null,
-    /**
-     * STT review-mode 로 시작했고 사용자가 검토 confirm 안 한 상태.
-     * `EditProject.pendingReviewTargetLangsCsv != null` 와 동기화 — 빈 string 도 review pending
-     * (= original-only review). UI 가 "스크립트 생성 완료" 진입 버튼 표시 여부 결정.
-     */
-    val subtitleReviewPending: Boolean = false,
-    /**
-     * 원본 자막 (lang="" SubtitleClip) 이 chip / export variant 에 노출 가능한지.
-     * SSOT — [hasConfirmedOriginalSubtitle] 결과를
-     * observeProject 에서 set. UI 와 export use case 가 같은 헬퍼를 보므로 갈라질 일 없음.
-     */
-    val hasOriginalSubtitleVariant: Boolean = false,
-    /** null = 원본, 그 외 = 미리보기로 볼 언어 코드. 비디오 소스 swap 은 미구현 (UI 선택만). */
-    val previewLangCode: String? = null,
-    /** 언어 코드 → 더빙된 audio mp3 local path. (legacy / export 합성용) */
-    val dubbedAudioPaths: Map<String, String> = emptyMap(),
-    /** 언어 코드 → BFF 가 video+dubAudio mux 한 mp4 local path. 미리보기 swap source. */
-    val dubbedVideoPaths: Map<String, String> = emptyMap(),
-    /** Timeline 헤더 "저장" 버튼이 트리거하는 multi-variant 갤러리 저장의 진행 상태. */
     val saveStatus: SaveStatus = SaveStatus.IDLE,
-    /** 공유 흐름 진행 상태 — 저장과 별도. 공유는 프로젝트 보존, navigate 안 함. */
     val shareStatus: ShareStatus = ShareStatus.IDLE,
     /**
-     * 자막/더빙/분리 시작 직전 EnsureLatestRenderUseCase 가 BFF 에 편집 영상 render 잡을 보내고
-     * 폴링 중일 때의 진행률(0..100). null = 진행 중 아님 (또는 무편집 → render skip).
-     * UI 가 "편집 영상 준비 중… (xx%)" 노출.
+     * 음원분리 시작 직전 EnsureLatestRenderUseCase 가 BFF 에 편집 영상 render 잡을 보내고
+     * 폴링 중일 때의 진행률(0..100). null = 진행 중 아님.
      */
     val editedVideoRenderProgress: Int? = null,
-    /**
-     * 저장/공유 흐름 진입 시 사용자가 어떤 variant 를 출력할지 고르는 picker sheet state.
-     * null = picker 미노출 (variant 1개라 즉시 동작 중이거나 흐름 idle).
-     */
     val exportVariantPicker: ExportVariantPickerState? = null,
-    /**
-     * 현재 사용자가 보고 있는 타임라인 단계.
-     * 영상 선택 후 진입 시 편집·음원 단계가 기본 — 영상 segment 편집 + BGM 삽입/조정 + 음원분리를
-     * 한 화면에서 처리. 자막/더빙은 별도 단계.
-     */
     val currentStep: TimelineStep = TimelineStep.EditAudio,
-    /**
-     * stepper 이동을 사용자에게 한 번 더 확인받기 위한 보류 경고 상태. null = 경고 없음.
-     * UserPreferencesStore 의 don't-ask-again 플래그가 set 되어 있으면 onSelectStep 가 처음부터
-     * 경고 생성을 건너뛰고 즉시 이동한다.
-     */
-    val pendingStepWarning: StepTransitionWarning? = null,
-    /** Sound Deck A/B 미리듣기 모드. 기본 [PreviewMode.MIX] — 사용자가 만든 mix 들림. */
+    /** Sound Deck A/B 미리듣기 모드. */
     val previewMode: PreviewMode = PreviewMode.MIX,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
@@ -409,38 +275,11 @@ data class TimelineUiState(
         } else 0f
 }
 
-/**
- * stepper 전환 시 한 번 더 확인받는 경고 상태.
- *
- * - [LocalizationLock]: 음원 → 자막/더빙 이동 — 자막/더빙 생성 후 음원분리 수정이 잠금됨을 안내.
- * - [EditReset]: 어떤 단계에서든 영상편집 단계로 되돌아갈 때 — 기존 음원/자막/더빙/분리 산출물이
- *   영상편집 commit 시점에 초기화될 수 있음을 안내.
- *
- * 둘 다 don't-ask-again 옵션 (UserPreferencesStore) 가 있고, 한 번 끄면 같은 종류의 경고는 다시
- * 안 뜸. target 은 사용자가 확인 시 그대로 이동할 목표 step.
- */
-sealed interface StepTransitionWarning {
-    val target: TimelineStep
-    data class LocalizationLock(override val target: TimelineStep) : StepTransitionWarning
-    data class EditReset(override val target: TimelineStep) : StepTransitionWarning
-}
-
-/** 자막/더빙/검토 흐름 중 어떤 잡이라도 진행 중인지 — 백 이동 가드 + UI 버튼 disabled 공용. */
-fun TimelineUiState.isLocalizationBusy(): Boolean =
-    autoSubtitleStatus == AutoJobStatus.RUNNING ||
-        autoDubStatus == AutoJobStatus.RUNNING ||
-        regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-        sttPreflightStatus == AutoJobStatus.RUNNING
-
 data class TimelineSnapshot(
     val segments: List<Segment>,
-    val dubClips: List<DubClip>,
-    val subtitleClips: List<SubtitleClip>,
     val imageClips: List<ImageClip>,
     val textOverlays: List<TextOverlay> = emptyList(),
     val bgmClips: List<BgmClip> = emptyList(),
-    // 영상 range delete 가 applyDirectiveRippleDelete 로 directive 를 split/truncate 하므로
-    // segments 와 함께 ripple 결과도 capture — 누락 시 undo 후 directive 만 영상과 mismatch.
     val separationDirectives: List<SeparationDirective> = emptyList(),
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
@@ -453,15 +292,10 @@ data class TimelineSnapshot(
 class TimelineViewModel constructor(
     private val projectId: String,
     private val segmentRepository: SegmentRepository,
-    private val dubClipRepository: DubClipRepository,
-    private val subtitleClipRepository: SubtitleClipRepository,
     private val imageClipRepository: ImageClipRepository,
     private val editProjectRepository: EditProjectRepository,
     private val textOverlayRepository: TextOverlayRepository,
     private val bgmClipRepository: BgmClipRepository,
-    private val moveDubClip: MoveDubClipUseCase,
-    private val deleteDubClip: DeleteDubClipUseCase,
-    private val addSubtitleClip: AddSubtitleClipUseCase,
     private val addImageClip: AddImageClipUseCase,
     private val updateImageClip: UpdateImageClipUseCase,
     private val updateSegmentTrim: UpdateSegmentTrimUseCase,
@@ -487,10 +321,6 @@ class TimelineViewModel constructor(
     private val startAudioSeparation: StartAudioSeparationUseCase,
     private val pollSeparation: PollSeparationUseCase,
     private val audioSeparationRepository: AudioSeparationRepository,
-    private val generateAutoSubtitles: GenerateAutoSubtitlesUseCase,
-    private val regenerateSubtitles: RegenerateSubtitlesUseCase,
-    private val generateOriginalScript: GenerateOriginalScriptUseCase,
-    private val generateAutoDub: GenerateAutoDubUseCase,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val bffBaseUrl: String,
     private val bffApi: BffApi,
@@ -510,25 +340,6 @@ class TimelineViewModel constructor(
      */
     private val _navigateBackHome = MutableSharedFlow<Unit>()
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
-
-    /**
-     * 채팅 패널에 비동기로 어시스턴트 메시지를 push 하기 위한 1회성 이벤트 채널.
-     *
-     * 동기: 채팅 dispatch 는 fire-and-forget — apply 메서드가 viewModelScope 에서 BFF 호출을
-     * 시작하지만 결과(예: STT 스크립트)는 수십 초~수 분 후. 결과를 사용자에게 보여주려면 ChatVM
-     * 으로 메시지를 흘려보내야 한다. ChatVM 을 직접 주입하면 KMP DI 사이클 + UI/도메인 결합 →
-     * SharedFlow 로 한 단계 풀고 [ChatPanel] 이 collect 후 ChatVM.pushAssistantMessage 호출.
-     *
-     * 사용처: [applyTranscribeForSubtitlesFromChat] STT 완료 시 SRT 본문 push.
-     */
-    // extraBufferCapacity + DROP_OLDEST: collector(ChatPanel)가 일시적으로 떨어져 있어도 emit 이
-    // suspend 로 멈추지 않게 — 자막 STT 완료 코루틴이 hang 되면 사용자가 panel 다시 열어도 영영
-    // 못 받음. 작은 버퍼면 충분.
-    private val _chatAssistantEvents = MutableSharedFlow<String>(
-        extraBufferCapacity = 4,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val chatAssistantEvents: SharedFlow<String> = _chatAssistantEvents.asSharedFlow()
 
     /**
      * 메인 timeline undo 스택 — 모든 편집(영상 segment / BGM / 자막 / 더빙 / 분리 directive / frame /
@@ -608,135 +419,22 @@ class TimelineViewModel constructor(
      */
     private fun markRenderStale() {
         if (renderStaleMarked) return
-        val current = _uiState.value
-        // generation 진행 중 — clip 정리는 race 위험. stale 만 마킹하고 자막/더빙 결과 정리는 보류.
-        if (current.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-            current.autoDubStatus == AutoJobStatus.RUNNING
-        ) {
-            viewModelScope.launch {
-                val project = editProjectRepository.getProject(projectId) ?: return@launch
-                if (!project.isRenderStale) {
-                    editProjectRepository.updateProject(
-                        project.copy(isRenderStale = true), touchActivity = false,
-                    )
-                }
-                renderStaleMarked = true
-            }
-            return
-        }
         viewModelScope.launch {
             val project = editProjectRepository.getProject(projectId) ?: return@launch
             if (project.isRenderStale) {
                 renderStaleMarked = true
                 return@launch
             }
-            invalidateGeneratedResults(project)
+            editProjectRepository.updateProject(
+                project.copy(isRenderStale = true), touchActivity = false,
+            )
             renderStaleMarked = true
         }
     }
 
-    /**
-     * timeline 편집으로 무효화된 자막/더빙 결과 정리 — clips 삭제 + project 의 dubbed paths /
-     * job ids / status 모두 IDLE 로 + render 캐시 두 슬롯 비움 + isRenderStale=true.
-     * separation 결과와 segment volume 은 건드리지 않음 (영상편집 commit 시 [resetTimelineDerivedResults]
-     * 가 별도 처리).
-     *
-     * 진행 중 코루틴 (generateAutoSubtitles / generateAutoDub) 이 있으면 race 가능 — [markRenderStale]
-     * 의 RUNNING 가드가 본 함수 호출 자체를 skip 하므로 본 함수 진입 시점엔 이미 IDLE/READY/FAILED.
-     */
-    private suspend fun invalidateGeneratedResults(project: EditProject) {
-        subtitleClipRepository.deleteAllClips(projectId)
-        dubClipRepository.deleteAllClips(projectId)
-        editProjectRepository.updateProject(project.clearAutoSubtitleDub())
-        subtitleGate = TriggerGate.ARMED
-        dubGate = TriggerGate.ARMED
-        reviewSheetGate = TriggerGate.ARMED
-        _uiState.value = _uiState.value.clearAutoSubtitleDubUiState()
-    }
-
-    /**
-     * 자막/더빙 무효화 시 UI state reset — sheet 닫기 + 검토 / 진행 표시 초기화.
-     * `invalidateGeneratedResults` (timeline mutation 트리거) 와 `resetTimelineDerivedResults`
-     * (영상편집 commit) 양쪽이 같은 UI 표면을 정리하므로 단일 helper.
-     */
-    private fun TimelineUiState.clearAutoSubtitleDubUiState(): TimelineUiState = copy(
-        sttPreflightStatus = AutoJobStatus.IDLE,
-        sttPreflightError = null,
-        regenerateSubtitleStatus = AutoJobStatus.IDLE,
-        regenerateSubtitleError = null,
-        pendingReviewCues = null,
-        pendingReviewTargetLangs = emptyList(),
-        // observeProject 가 한 프레임 뒤 DB(null csv) 보고 동기화하지만 즉시 false 로 — 라벨 깜빡임 방지.
-        subtitleReviewPending = false,
-        showScriptReviewSheet = false,
-        previewLangCode = null,
-    )
-
-    /**
-     * stepper 노드 탭 — 양방향 자유 이동. 산출물·undo 스택 모두 보존.
-     * 잡 가드: 자막/더빙 진행 중 또는 음원 분리 PROCESSING 중에는 무시.
-     * 빈 timeline 에서는 forward 이동 차단 — 빈 자막 sheet 가 뜨는 무의미한 흐름 방지.
-     *
-     * 산출물 wipe 는 오직 영상편집 모드의 ✓ commit 경로 — segment 자체가 바뀌어 downstream
-     * 산출물이 stale 이 되는 경우에만 발동.
-     */
-    fun onSelectStep(target: TimelineStep) {
-        val cur = _uiState.value
-        if (target == cur.currentStep) return
-        if (cur.isLocalizationBusy()) return
-        // 음원분리 진행 중에는 단계 이동 차단. 단일 sheet (audioSeparation PROCESSING — 거의 발생하지 않지만
-        // FAILED reopen 직전 한 순간) 와 다중 백그라운드 잡 (processingSeparations) 둘 다 가드.
-        if (cur.audioSeparation?.step == AudioSeparationStep.PROCESSING) return
-        if (cur.processingSeparations.isNotEmpty()) return
-        if (target.ordinal > cur.currentStep.ordinal && cur.segments.isEmpty()) return
-
-        // 사용자 경고 단계 — don't-ask-again 안 켜져 있으면 한 번 확인. 본 함수는 경고 state 만 set
-        // 하고 실제 이동은 [confirmStepTransition] 가 처리. 종류:
-        //   - 편집·음원(EditAudio) → 자막/더빙(SubtitleDub): 자막/더빙 생성 후 음원분리 수정 불가 안내
-        //   - 자막/더빙(SubtitleDub) → 편집·음원(EditAudio): 영상편집 commit 시 자막/더빙 산출물 초기화 안내
-        val warning = when {
-            cur.currentStep == TimelineStep.EditAudio &&
-                target == TimelineStep.SubtitleDub &&
-                !userPrefs.localizationLockSuppressed ->
-                StepTransitionWarning.LocalizationLock(target)
-
-            target == TimelineStep.EditAudio && !userPrefs.editResetSuppressed && (
-                cur.subtitleClips.isNotEmpty() ||
-                    cur.dubClips.isNotEmpty()
-                ) ->
-                StepTransitionWarning.EditReset(target)
-
-            else -> null
-        }
-
-        if (warning != null) {
-            _uiState.update { it.copy(pendingStepWarning = warning) }
-            return
-        }
-
-        applyStepTransition(target)
-    }
-
-    /**
-     * 경고 다이얼로그에서 확인 — [dontAskAgain] true 면 같은 종류의 경고는 다시 안 뜸.
-     * 보류 중인 target step 으로 즉시 이동.
-     */
-    fun confirmStepTransition(dontAskAgain: Boolean) {
-        val warning = _uiState.value.pendingStepWarning ?: return
-        if (dontAskAgain) {
-            when (warning) {
-                is StepTransitionWarning.LocalizationLock -> userPrefs.localizationLockSuppressed = true
-                is StepTransitionWarning.EditReset -> userPrefs.editResetSuppressed = true
-            }
-        }
-        _uiState.update { it.copy(pendingStepWarning = null) }
-        applyStepTransition(warning.target)
-    }
-
-    /** 경고 다이얼로그 취소 — 이동 없이 경고 state 만 정리. */
-    fun dismissStepTransitionWarning() {
-        if (_uiState.value.pendingStepWarning == null) return
-        _uiState.update { it.copy(pendingStepWarning = null) }
+    /** 자막/더빙 제거 후 stepper 는 단일 단계만 — no-op (TimelineScreen 호환 위해 시그니처 유지). */
+    fun onSelectStep(@Suppress("UNUSED_PARAMETER") target: TimelineStep) {
+        // no-op
     }
 
     private fun applyStepTransition(target: TimelineStep) {
@@ -748,15 +446,11 @@ class TimelineViewModel constructor(
                 rangeTargetSegmentId = null,
                 showRangeActionSheet = false,
                 selectedSegmentId = null,
-                localizationOpen = false,
                 showAudioSeparationSheet = false,
-                showSubtitleSheet = false,
-                showScriptReviewSheet = false,
                 showAppendSheet = false,
                 showDetailEdit = false,
                 showFrameSheet = false,
                 showTextOverlaySheet = false,
-                previewLangCode = null,
             )
         }
     }
@@ -846,13 +540,7 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             editProjectRepository.observeProject(projectId).collect { project ->
                 if (project != null) {
-                    // _uiState.update — concurrent observers (observeClips / observeBgmClips) 와의
-                    // race 방지를 위해 atomic CAS. helper 입력은 람다 안에서 최신 current 로부터.
                     _uiState.update { current ->
-                        val originalVariant = hasConfirmedOriginalSubtitle(
-                            subtitleClips = current.subtitleClips,
-                            pendingReviewTargetLangsCsv = project.pendingReviewTargetLangsCsv,
-                        )
                         current.copy(
                             frameWidth = project.frameWidth,
                             frameHeight = project.frameHeight,
@@ -860,34 +548,13 @@ class TimelineViewModel constructor(
                             videoScale = project.videoScale,
                             videoOffsetXPct = project.videoOffsetXPct,
                             videoOffsetYPct = project.videoOffsetYPct,
-                            targetLanguageCode = project.targetLanguageCode,
-                            enableAutoDubbing = project.enableAutoDubbing,
-                            enableAutoSubtitles = project.enableAutoSubtitles,
-                            numberOfSpeakers = project.numberOfSpeakers,
-                            autoSubtitleStatus = project.autoSubtitleStatus,
-                            autoDubStatus = project.autoDubStatus,
-                            autoDubStatusByLang = project.autoDubStatusByLang,
-                            targetLanguageCodes = project.effectiveTargetLanguages
-                                .filter { it != TargetLanguage.CODE_ORIGINAL && it.isNotBlank() },
-                            autoSubtitleError = project.autoSubtitleError,
-                            autoDubError = project.autoDubError,
-                            dubbedAudioPaths = project.dubbedAudioPaths,
-                            dubbedVideoPaths = project.dubbedVideoPaths,
                             separationStatus = project.separationStatus,
-                            // null = 검토 대기 없음. 빈 string 도 review pending (original-only review)
-                            // 이므로 isNullOrBlank 가 아니라 != null 로 판정.
-                            subtitleReviewPending = project.pendingReviewTargetLangsCsv != null,
-                            hasOriginalSubtitleVariant = originalVariant,
                         )
                     }
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
-                        // 첫 진입 — DB 의 현재 상태 baseline 만 push. mutation 아니라 stale 마킹 안 함.
                         pushUndoState(markStale = false)
                     }
-                    // Hot-path 가드 동기화 — DB 가 fresh (=EnsureLatestRender 가 새로 render 후 false 로
-                    // set 했거나 신규 프로젝트가 아직 mutation 없는 상태) 면 in-memory 플래그도 false 로
-                    // 풀어 다음 mutation 의 markRenderStale 가 정상 진입 가능.
                     if (!project.isRenderStale && renderStaleMarked) {
                         renderStaleMarked = false
                     }
@@ -897,21 +564,7 @@ class TimelineViewModel constructor(
         }
     }
 
-    /**
-     * Kicks off the BFF subtitle / dub jobs the first time we observe a
-     * project that has them enabled but in IDLE state. Each pipeline is
-     * gated by an in-memory flag so the trigger does not re-fire when the
-     * project flow re-emits during normal use.
-     */
     private fun maybeTriggerAutoPipelines(project: EditProject) {
-        if (shouldTriggerAutoSubtitle(project)) {
-            subtitleGate = TriggerGate.FIRED
-            launchAutoSubtitle(project)
-        }
-        if (shouldTriggerAutoDub(project)) {
-            dubGate = TriggerGate.FIRED
-            launchAutoDub(project)
-        }
         if (shouldResumeSeparation(project)) {
             separationGate = TriggerGate.FIRED
             resumeSeparationPolling(project)
@@ -920,25 +573,7 @@ class TimelineViewModel constructor(
             separationRefreshGate = TriggerGate.FIRED
             refreshSeparationFreshness(project)
         }
-        if (shouldShowPendingReview(project)) {
-            reviewSheetGate = TriggerGate.FIRED
-            val targets = project.pendingReviewTargetLangsCsv
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotBlank() }
-                ?: emptyList()
-            _uiState.value = _uiState.value.copy(
-                pendingReviewTargetLangs = targets,
-                showScriptReviewSheet = true,
-            )
-        }
     }
-
-    private fun shouldShowPendingReview(project: EditProject): Boolean =
-        reviewSheetGate == TriggerGate.ARMED &&
-            // null 검사 — 빈 string 은 original-only review (langs=[]) 의 pending 신호이므로 그대로 통과.
-            project.pendingReviewTargetLangsCsv != null &&
-            project.autoSubtitleStatus == AutoJobStatus.READY
 
     private fun shouldResumeSeparation(project: EditProject): Boolean =
         separationGate == TriggerGate.ARMED && (
@@ -1038,114 +673,7 @@ class TimelineViewModel constructor(
         }
     }
 
-    private fun shouldTriggerAutoSubtitle(project: EditProject): Boolean =
-        subtitleGate == TriggerGate.ARMED &&
-            project.enableAutoSubtitles &&
-            project.autoSubtitleStatus == AutoJobStatus.IDLE
-
-    private fun shouldTriggerAutoDub(project: EditProject): Boolean =
-        dubGate == TriggerGate.ARMED &&
-            project.enableAutoDubbing &&
-            project.autoDubStatus == AutoJobStatus.IDLE
-
-    private fun launchAutoSubtitle(project: EditProject) {
-        val source = _uiState.value.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) {
-            // Segments load asynchronously; re-arm so the next project
-            // emission with hydrated segments retries.
-            subtitleGate = TriggerGate.ARMED
-            return
-        }
-        val sourceLang = "auto"
-        val targetLang = project.targetLanguageCode
-            .takeIf { it != TargetLanguage.CODE_ORIGINAL }
-        viewModelScope.launch {
-            try {
-                val result = generateAutoSubtitles(
-                    projectId = projectId,
-                    sourceUri = source,
-                    mediaType = "VIDEO",
-                    sourceLanguageCode = sourceLang,
-                    targetLanguageCodes = listOfNotNull(targetLang),
-                    numberOfSpeakers = project.numberOfSpeakers,
-                    onRenderProgress = { p ->
-                        setRenderProgress(p)
-                    },
-                )
-                setRenderProgress(null)
-                // The use case wrote FAILED on its own; re-arm so a fresh
-                // retry path (button or status reset) can trigger again.
-                if (result.isFailure) subtitleGate = TriggerGate.ARMED
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                setRenderProgress(null)
-                subtitleGate = TriggerGate.ARMED
-                throw e
-            }
-        }
-    }
-
-    private fun launchAutoDub(project: EditProject) {
-        val source = _uiState.value.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) {
-            dubGate = TriggerGate.ARMED
-            return
-        }
-        // my_plan: 다중 더빙 — 사용자가 선택한 N개 언어 각각에 대해 자동 더빙 잡 발행.
-        // 결과 mp3 경로는 GenerateAutoDubUseCase 가 EditProject.dubbedAudioPath 단일 필드에
-        // 저장하지만 (legacy 호환), 향후 Map<lang, path> 갱신은 별도 작업.
-        val targets = project.effectiveTargetLanguages
-            .filter { it != TargetLanguage.CODE_ORIGINAL && it.isNotBlank() }
-        if (targets.isEmpty()) {
-            dubGate = TriggerGate.ARMED
-            return
-        }
-        viewModelScope.launch {
-            var anyFailure = false
-            targets.forEach { lang ->
-                try {
-                    val result = generateAutoDub(
-                        projectId = projectId,
-                        sourceUri = source,
-                        mediaType = "VIDEO",
-                        sourceLanguageCode = "auto",
-                        targetLanguageCode = lang,
-                        numberOfSpeakers = project.numberOfSpeakers,
-                        onRenderProgress = { p ->
-                            setRenderProgress(p)
-                        },
-                    )
-                    setRenderProgress(null)
-                    if (result.isFailure) anyFailure = true
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    setRenderProgress(null)
-                    dubGate = TriggerGate.ARMED
-                    throw e
-                }
-            }
-            if (anyFailure) dubGate = TriggerGate.ARMED
-        }
-    }
-
-    fun onRetryAutoSubtitles() {
-        viewModelScope.launch {
-            val project = editProjectRepository.getProject(projectId) ?: return@launch
-            // Reset to IDLE so the trigger gate sees a fresh chance.
-            editProjectRepository.updateProject(
-                project.copy(autoSubtitleStatus = AutoJobStatus.IDLE, autoSubtitleError = null)
-            )
-            subtitleGate = TriggerGate.ARMED
-        }
-    }
-
-    fun onRetryAutoDub() {
-        viewModelScope.launch {
-            val project = editProjectRepository.getProject(projectId) ?: return@launch
-            editProjectRepository.updateProject(
-                project.copy(autoDubStatus = AutoJobStatus.IDLE, autoDubError = null)
-            )
-            dubGate = TriggerGate.ARMED
-        }
-    }
+    // 자막/더빙 trigger 제거 — separation 만 유지.
 
     private fun observeTextOverlays() {
         viewModelScope.launch {
@@ -1216,30 +744,9 @@ class TimelineViewModel constructor(
 
     private fun observeClips() {
         viewModelScope.launch {
-            combine(
-                dubClipRepository.observeClips(projectId),
-                subtitleClipRepository.observeClips(projectId),
-                imageClipRepository.observeClips(projectId)
-            ) { dubs, subs, images -> Triple(dubs, subs, images) }
-                .collect { (dubs, subs, images) ->
-                    // _uiState.update — concurrent observers (observeProject / observeBgmClips) 와의 race
-                    // 방지를 위해 atomic CAS. 다른 observer 와 동일 패턴.
-                    _uiState.update { current ->
-                        // SSOT — UI chip / export variant picker 산출이 같은 헬퍼 결과를 본다.
-                        // subtitleReviewPending 은 observeProject 에서 set 되고 pendingReviewTargetLangsCsv != null 과 동기화.
-                        // helper 입력으로 sentinel csv ("pending") 를 넘기되 의미는 "review pending = csv != null 이면 false 반환".
-                        val originalVariant = hasConfirmedOriginalSubtitle(
-                            subtitleClips = subs,
-                            pendingReviewTargetLangsCsv = if (current.subtitleReviewPending) "pending" else null,
-                        )
-                        current.copy(
-                            dubClips = dubs,
-                            subtitleClips = subs,
-                            imageClips = images,
-                            hasOriginalSubtitleVariant = originalVariant,
-                        )
-                    }
-                }
+            imageClipRepository.observeClips(projectId).collect { images ->
+                _uiState.update { it.copy(imageClips = images) }
+            }
         }
     }
 
@@ -1255,8 +762,6 @@ class TimelineViewModel constructor(
         val s = _uiState.value
         return TimelineSnapshot(
             segments = s.segments,
-            dubClips = s.dubClips,
-            subtitleClips = s.subtitleClips,
             imageClips = s.imageClips,
             textOverlays = s.textOverlays,
             bgmClips = s.bgmClips,
@@ -1308,161 +813,23 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(isPlaying = !_uiState.value.isPlaying)
     }
 
-    /** my_plan: 편집 화면에 자막 오버레이 표시 토글. */
-    fun onToggleSubtitlesOnPreview() {
-        _uiState.value = _uiState.value.copy(showSubtitlesOnPreview = !_uiState.value.showSubtitlesOnPreview)
-    }
-
-    /** my_plan: 편집 화면에 더빙 표시 토글. */
-    fun onToggleDubbingOnPreview() {
-        _uiState.value = _uiState.value.copy(showDubbingOnPreview = !_uiState.value.showDubbingOnPreview)
-    }
-
-    fun onShowSubtitleSheet() {
-        _uiState.value = _uiState.value.copy(showSubtitleSheet = true)
-    }
-
-    fun onDismissSubtitleSheet() {
-        _uiState.value = _uiState.value.copy(showSubtitleSheet = false)
-    }
-
     fun onToggleDetailEdit() {
-        val s = _uiState.value
-        val nextOpen = !s.showDetailEdit
-        val firstLang = if (nextOpen) {
-            s.detailEditLang ?: s.subtitleClips.map { it.languageCode }
-                .firstOrNull { it.isNotBlank() }
-        } else null
-        _uiState.value = s.copy(
-            showDetailEdit = nextOpen,
-            detailEditLang = firstLang,
-            // 상세 편집 닫을 때 선택 해제.
-            selectedSubtitleClipId = if (nextOpen) s.selectedSubtitleClipId else null,
-        )
-    }
-
-    fun onSetDetailEditLang(lang: String) {
-        _uiState.value = _uiState.value.copy(
-            detailEditLang = lang,
-            selectedSubtitleClipId = null,
-        )
+        _uiState.value = _uiState.value.copy(showDetailEdit = !_uiState.value.showDetailEdit)
     }
 
     /**
-     * 자막 cue 의 텍스트를 사용자가 inline 편집한 결과 저장. EditSubtitleClipUseCase 로 위임.
-     * 빈 텍스트는 무시 (clip 자체 삭제는 별도 메서드에서 처리).
-     */
-    fun onUpdateSubtitleText(clipId: String, newText: String) {
-        viewModelScope.launch {
-            val clip = subtitleClipRepository.getClip(clipId) ?: return@launch
-            val trimmed = newText.trim()
-            if (trimmed.isEmpty() || trimmed == clip.text.trim()) return@launch
-            subtitleClipRepository.updateClip(clip.copy(text = trimmed))
-            // 자막 cue 자체 mutation — markStale=false. invalidateGeneratedResults 가 deleteAllClips 로
-            // 방금 수정한 자막을 즉시 지우는 self-deletion 회피. 자막 mutation 은 timeline 구조 변경이
-            // 아니므로 render 캐시도 보존 (다국어 재생성도 source 자막이 있어야 가능).
-            pushUndoState(markStale = false)
-        }
-    }
-
-    /**
-     * 사용자가 수정한 source 언어 자막을 기반으로 다른 언어 자막 재생성. BFF 가 Gemini 호출 →
-     * SRT 다운로드 → 해당 lang 자막 덮어쓰기. 진행률은 `regenerateSubtitleStatus` 로 표면화.
-     */
-    fun onRegenerateOtherLanguages(sourceLanguageCode: String, targetLanguageCodes: List<String>) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                regenerateSubtitleStatus = AutoJobStatus.RUNNING,
-                regenerateSubtitleError = null,
-            )
-            // EditProject.autoSubtitleStatus 도 같이 RUNNING — 미리보기 chip 등 모든 자막 진행 indicator 일관.
-            editProjectRepository.getProject(projectId)?.let { p ->
-                editProjectRepository.updateProject(
-                    p.copy(autoSubtitleStatus = AutoJobStatus.RUNNING, autoSubtitleError = null)
-                )
-            }
-            val result = regenerateSubtitles(
-                projectId = projectId,
-                sourceLanguageCode = sourceLanguageCode,
-                targetLanguageCodes = targetLanguageCodes,
-            ) { progress, _ ->
-                // 진행률 자체는 chip spinner 만 — 세부 % 노출 안 함.
-                if (progress >= 100) Unit
-            }
-            result.fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(regenerateSubtitleStatus = AutoJobStatus.IDLE)
-                    editProjectRepository.getProject(projectId)?.let { p ->
-                        editProjectRepository.updateProject(
-                            p.copy(autoSubtitleStatus = AutoJobStatus.READY, autoSubtitleError = null)
-                        )
-                    }
-                },
-                onFailure = { err ->
-                    _uiState.value = _uiState.value.copy(
-                        regenerateSubtitleStatus = AutoJobStatus.FAILED,
-                        regenerateSubtitleError = err.message,
-                    )
-                    editProjectRepository.getProject(projectId)?.let { p ->
-                        editProjectRepository.updateProject(
-                            p.copy(autoSubtitleStatus = AutoJobStatus.FAILED, autoSubtitleError = err.message)
-                        )
-                    }
-                }
-            )
-        }
-    }
-
-    fun onAddSubtitle(
-        text: String,
-        startMs: Long,
-        endMs: Long,
-        position: SubtitlePosition,
-        fontFamily: String = com.vibi.shared.domain.model.SubtitleClip.DEFAULT_FONT_FAMILY,
-        fontSizeSp: Float = com.vibi.shared.domain.model.SubtitleClip.DEFAULT_FONT_SIZE_SP,
-        colorHex: String = com.vibi.shared.domain.model.SubtitleClip.DEFAULT_COLOR_HEX,
-        backgroundColorHex: String = com.vibi.shared.domain.model.SubtitleClip.DEFAULT_BACKGROUND_COLOR_HEX,
-    ) {
-        viewModelScope.launch {
-            addSubtitleClip(
-                projectId, text, startMs, endMs, position,
-                fontFamily, fontSizeSp, colorHex, backgroundColorHex,
-            )
-            _uiState.value = _uiState.value.copy(showSubtitleSheet = false)
-            // 자막 추가 — markStale=false. 자동 생성 자막(`dubbedAudioPaths` / autoSubtitleStatus) 의
-            // stale 여부와 무관 + 이미 생성된 cue 들을 invalidateGeneratedResults 가 지우지 않도록.
-            pushUndoState(markStale = false)
-        }
-    }
-
-    fun onMoveDubClip(clipId: String, newStartMs: Long) {
-        viewModelScope.launch {
-            val clip = _uiState.value.dubClips.find { it.id == clipId } ?: return@launch
-            moveDubClip(clip, newStartMs, _uiState.value.videoDurationMs)
-            // 더빙 clip 위치 변경 — markStale=false. DubClip 행은 사용자 추가 더빙으로 timeline 구조와
-            // 별개 (자동 더빙 결과는 project.dubbedAudioPaths 맵에 따로 저장). 이동만으로 render 캐시
-            // 무효화 + 자동 더빙 결과 삭제는 과도.
-            pushUndoState(markStale = false)
-        }
-    }
-
-    /**
-     * Single-selection model: at any moment at most one of segment / dub /
-     * subtitle / image / text-overlay / bgm may be selected. This helper
-     * applies a tap-toggle on the chosen target while clearing every other
-     * selected*Id, so each handler is a one-line wrapper.
+     * Single-selection model: at any moment at most one of segment / image / text-overlay / bgm
+     * may be selected. This helper applies a tap-toggle on the chosen target while clearing
+     * every other selected*Id.
      */
     private enum class SelectionTarget {
-        Segment, Dub, Subtitle, Image, TextOverlay, Bgm
+        Segment, Image, TextOverlay, Bgm
     }
 
     private fun selectExclusively(target: SelectionTarget, id: String?) {
         val state = _uiState.value
-        // Tap-toggle: tapping the already-selected element clears it.
         val current = when (target) {
             SelectionTarget.Segment -> state.selectedSegmentId
-            SelectionTarget.Dub -> state.selectedDubClipId
-            SelectionTarget.Subtitle -> state.selectedSubtitleClipId
             SelectionTarget.Image -> state.selectedImageClipId
             SelectionTarget.TextOverlay -> state.selectedTextOverlayId
             SelectionTarget.Bgm -> state.selectedBgmClipId
@@ -1470,52 +837,22 @@ class TimelineViewModel constructor(
         val next = if (id != null && id == current) null else id
         _uiState.value = state.copy(
             selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
-            selectedDubClipId = if (target == SelectionTarget.Dub) next else null,
-            selectedSubtitleClipId = if (target == SelectionTarget.Subtitle) next else null,
             selectedImageClipId = if (target == SelectionTarget.Image) next else null,
             selectedTextOverlayId = if (target == SelectionTarget.TextOverlay) next else null,
             selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
-            showDubVolumeSlider = false
         )
     }
 
-    fun onSelectDubClip(clipId: String?) = selectExclusively(SelectionTarget.Dub, clipId)
-
-    fun onSelectSubtitleClip(clipId: String?) = selectExclusively(SelectionTarget.Subtitle, clipId)
-
     fun onSelectImageClip(clipId: String?) = selectExclusively(SelectionTarget.Image, clipId)
-
-    fun onUpdateDubClipVolume(clipId: String, volume: Float) {
-        viewModelScope.launch {
-            val clip = _uiState.value.dubClips.find { it.id == clipId } ?: return@launch
-            val clamped = volume.coerceIn(0f, 2f)
-            if (clamped == clip.volume) return@launch
-            dubClipRepository.updateClip(clip.copy(volume = clamped))
-            // 더빙 clip 볼륨 변경 — markStale=false (자막/더빙 clip mutation 정책).
-            pushUndoState(markStale = false)
-        }
-    }
 
     fun onDeleteSelectedClip() {
         viewModelScope.launch {
             val state = _uiState.value
-            // 자막/더빙 클립 삭제는 자동 생성 결과 stale 여부에 영향 없음 → markStale=false.
-            // image clip (overlay) 은 timeline structure 변경이라 markStale=true 필요 → mixed 시점은
-            // 실제 삭제된 카테고리에 따라 분기.
             val deletedImage = state.selectedImageClipId != null
-            state.selectedDubClipId?.let { dubClipId ->
-                deleteDubClip(dubClipId)
-                subtitleClipRepository.deleteClipsBySourceDubClipId(dubClipId)
-            }
-            state.selectedSubtitleClipId?.let { subtitleClipRepository.deleteClip(it) }
             state.selectedImageClipId?.let { imageClipRepository.deleteClip(it) }
-            _uiState.value = _uiState.value.copy(
-                selectedDubClipId = null,
-                selectedSubtitleClipId = null,
-                selectedImageClipId = null
-            )
+            _uiState.value = _uiState.value.copy(selectedImageClipId = null)
             pushUndoState(markStale = deletedImage)
         }
     }
@@ -1641,98 +978,7 @@ class TimelineViewModel constructor(
         }
     }
 
-    fun onUpdateSubtitlePosition(
-        clipId: String,
-        xPct: Float,
-        yPct: Float,
-        widthPct: Float,
-        heightPct: Float
-    ) {
-        viewModelScope.launch {
-            val clip = subtitleClipRepository.getClip(clipId) ?: return@launch
-            subtitleClipRepository.updateClip(
-                clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
-            )
-            // 자막 위치 변경 — markStale=false (자막 clip mutation 정책).
-            pushUndoState(markStale = false)
-        }
-    }
-
-    /**
-     * 한 언어의 모든 자막에 스타일 일괄 적용. 사용자가 편집 sheet 의 스타일 슬라이더/chip 을
-     * 조작했을 때 호출. applyToAllLanguages=true 면 같은 cue 시점의 다른 언어 자막에도 동일 스타일
-     * 미러 (다국어 일관성).
-     */
-    fun onUpdateSubtitleStyleForLanguage(
-        lang: String,
-        fontFamily: String? = null,
-        fontSizeSp: Float? = null,
-        colorHex: String? = null,
-        backgroundColorHex: String? = null,
-        applyToAllLanguages: Boolean = true,
-    ) {
-        viewModelScope.launch {
-            val all = _uiState.value.subtitleClips
-            val targetClips = if (applyToAllLanguages) all else all.filter { it.languageCode == lang }
-            // applyToAllLanguages=false 면 lang 만, true 면 전체 — UX 단순화 차원에서 같은 시점 매칭
-            // 안 하고 그냥 전체 자막을 동일 스타일로 통일.
-            for (clip in targetClips) {
-                subtitleClipRepository.updateClip(
-                    clip.copy(
-                        fontFamily = fontFamily ?: clip.fontFamily,
-                        fontSizeSp = fontSizeSp ?: clip.fontSizeSp,
-                        colorHex = colorHex ?: clip.colorHex,
-                        backgroundColorHex = backgroundColorHex ?: clip.backgroundColorHex,
-                    )
-                )
-            }
-            // 자막 스타일 일괄 변경 — markStale=false (자막 clip mutation 정책).
-            pushUndoState(markStale = false)
-        }
-    }
-
-    /**
-     * 자막 스타일(폰트/크기/색/배경색) 업데이트. 단일 필드만 바꾸려면 다른 인자에 null 전달.
-     * 다국어 동시 편집 정책: 같은 cue 시점의 다른 언어 자막에도 동일 스타일 일괄 적용 (UX 일관성).
-     */
-    fun onUpdateSubtitleStyle(
-        clipId: String,
-        fontFamily: String? = null,
-        fontSizeSp: Float? = null,
-        colorHex: String? = null,
-        backgroundColorHex: String? = null,
-        applyToAllLanguages: Boolean = true,
-    ) {
-        viewModelScope.launch {
-            val clip = subtitleClipRepository.getClip(clipId) ?: return@launch
-            val updated = clip.copy(
-                fontFamily = fontFamily ?: clip.fontFamily,
-                fontSizeSp = fontSizeSp ?: clip.fontSizeSp,
-                colorHex = colorHex ?: clip.colorHex,
-                backgroundColorHex = backgroundColorHex ?: clip.backgroundColorHex,
-            )
-            subtitleClipRepository.updateClip(updated)
-            // 같은 cue 시점의 다른 언어 자막도 같이 갱신 — 사용자가 언어별로 따로 스타일 맞추는 일은 드묾.
-            if (applyToAllLanguages) {
-                val all = _uiState.value.subtitleClips.filter { sib ->
-                    sib.id != clip.id &&
-                        sib.startMs == clip.startMs && sib.endMs == clip.endMs
-                }
-                all.forEach { sib ->
-                    subtitleClipRepository.updateClip(
-                        sib.copy(
-                            fontFamily = updated.fontFamily,
-                            fontSizeSp = updated.fontSizeSp,
-                            colorHex = updated.colorHex,
-                            backgroundColorHex = updated.backgroundColorHex,
-                        )
-                    )
-                }
-            }
-            // 자막 스타일 변경 — markStale=false (자막 clip mutation 정책).
-            pushUndoState(markStale = false)
-        }
-    }
+    // 자막 위치/스타일 메서드 제거 — 자막 기능 삭제.
 
     fun onUndo() {
         viewModelScope.launch {
@@ -1755,10 +1001,6 @@ class TimelineViewModel constructor(
 
     private suspend fun restoreSnapshot(snapshot: TimelineSnapshot) {
         // N+1 insert 회피 — DAO insertAll 한 번 IPC.
-        dubClipRepository.deleteAllClips(projectId)
-        dubClipRepository.addClips(snapshot.dubClips)
-        subtitleClipRepository.deleteAllClips(projectId)
-        subtitleClipRepository.addClips(snapshot.subtitleClips)
         imageClipRepository.deleteAllClips(projectId)
         imageClipRepository.addClips(snapshot.imageClips)
         segmentRepository.deleteAllByProjectId(projectId)
@@ -1799,8 +1041,6 @@ class TimelineViewModel constructor(
         } else {
             _uiState.value = _uiState.value.copy(
                 isVideoSelected = true,
-                selectedDubClipId = null,
-                selectedSubtitleClipId = null,
                 selectedImageClipId = null
             )
         }
@@ -1812,10 +1052,6 @@ class TimelineViewModel constructor(
 
     fun onToggleVideoVolumeSlider() {
         _uiState.value = _uiState.value.copy(showVideoVolumeSlider = !_uiState.value.showVideoVolumeSlider)
-    }
-
-    fun onToggleDubVolumeSlider() {
-        _uiState.value = _uiState.value.copy(showDubVolumeSlider = !_uiState.value.showDubVolumeSlider)
     }
 
     fun onUpdateVideoVolume(volume: Float) {
@@ -1917,7 +1153,6 @@ class TimelineViewModel constructor(
                 _uiState.value = _uiState.value.copy(
                     // Picker 와 다른 sheet 의 z-order 충돌 방지 — picker open 직전에 동시 열려있을 수 있는
                     // sheet flag 들 하향.
-                    showScriptReviewSheet = false,
                     exportVariantPicker = ExportVariantPickerState.Save(
                         variants = variants,
                         selected = variants.map { it.key }.toSet(),
@@ -2023,7 +1258,6 @@ class TimelineViewModel constructor(
                 _uiState.value = _uiState.value.copy(
                     // Picker 와 다른 sheet 의 z-order 충돌 방지 — picker open 직전에 동시 열려있을 수 있는
                     // sheet flag 들 하향. (RUNNING 가드는 위에서 통과했으므로 진행 중 흐름은 영향 없음.)
-                    showScriptReviewSheet = false,
                     exportVariantPicker = ExportVariantPickerState.Share(
                         variants = variants,
                         selected = setOf(defaultKey),
@@ -2276,11 +1510,7 @@ class TimelineViewModel constructor(
             pendingRangeVolume = seg.volumeScale,
             pendingRangeSpeed = seg.speedScale,
             isPlaying = false,
-            previewLangCode = null,
             showAudioSeparationSheet = false,
-            showSubtitleSheet = false,
-            showScriptReviewSheet = false,
-            localizationOpen = false,
             showDetailEdit = false,
             showAppendSheet = false,
         )
@@ -2443,39 +1673,28 @@ class TimelineViewModel constructor(
             rangeTargetSegmentId = null,
             showRangeActionSheet = false,
             selectedSegmentId = null,
-            previewLangCode = null,
         )
-        // 메인 스택 baseline 재시드.
         pushUndoState()
     }
 
     /**
-     * 영상편집 commit 후 stale 가 된 downstream 산출물 정리. 자막/더빙 결과는 segment 가 바뀌면
-     * 항상 stale 이므로 wipe. 음원분리 directive 도 segment 좌표 기반이라 wipe.
-     * BGM 은 구간 액션 시 ripple/split 로 영상과 동기 갱신되므로 보존.
+     * 영상편집 commit 후 stale 가 된 downstream 산출물 정리. 음원분리 directive 는 segment 좌표
+     * 기반이라 wipe. BGM 은 구간 액션 시 ripple/split 로 영상과 동기 갱신되므로 보존.
      */
     private suspend fun resetTimelineDerivedResults() {
         _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
         _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
             .forEach { updateSegmentVolume(it.id, 1f) }
-        // 진행 중 잡 전부 취소 — segment 자체가 바뀌므로 결과가 stale.
         separationJobs.values.forEach { it.cancel() }
         separationJobs.clear()
         bgmSeparationJob?.cancel()
         bgmSeparationJob = null
         separationGate = TriggerGate.ARMED
-
-        subtitleClipRepository.deleteAllClips(projectId)
-        dubClipRepository.deleteAllClips(projectId)
-        subtitleGate = TriggerGate.ARMED
-        dubGate = TriggerGate.ARMED
-        reviewSheetGate = TriggerGate.ARMED
         renderStaleMarked = true
 
         editProjectRepository.getProject(projectId)?.let { p ->
-            // 영상편집 commit — 동시 분리 list 전체 비움 + legacy 단일 슬롯 클리어.
             editProjectRepository.updateProject(
-                p.clearAutoSubtitleDub().clearSeparation().copy(processingSeparations = emptyList())
+                p.clearSeparation().copy(processingSeparations = emptyList())
             )
         }
 
@@ -2486,9 +1705,7 @@ class TimelineViewModel constructor(
                 separationDirectives = emptyList(),
                 processingSeparations = emptyList(),
                 separationStatus = AutoJobStatus.IDLE,
-            ).clearAutoSubtitleDubUiState().copy(
                 showDetailEdit = false,
-                localizationOpen = false,
             )
         }
     }
@@ -3094,470 +2311,6 @@ class TimelineViewModel constructor(
         toDelete.forEach { separationDirectiveRepository.delete(it) }
     }
 
-    // ── 채팅 dispatcher 전용 code-path ────────────────────────────────────────────
-    // UI 슬라이더용 onSetPendingRangeStart/End 는 입력값을 현 pendingRange 와 mode bounds 에 맞춰
-    // clamp 해버려서, range 모드가 아닌 상태에서 dispatcher 가 startMs/endMs 를 그대로 넘기면
-    // 0 으로 깎이는 버그가 있었다. 본 그룹 메서드들은 UI state 를 거치지 않고 use case 를 직접
-    // 호출 — chat tool 이 자연어로 받은 [start, end] 를 그대로 적용. range 모드 진입/종료 부수효과 0.
-
-    /**
-     * 입력 [start, end] 가 timeline 안에 들어가고 최소 길이 충족하는지 검증해 slice. 잘못된 입력은
-     * IllegalArgumentException — dispatcher 가 [DispatchResult.Failure] 로 노출, 사용자에게 가시화.
-     */
-    private fun chatRangeSlices(start: Long, end: Long): List<SegmentRangeSlice> {
-        val total = _uiState.value.videoDurationMs.coerceAtLeast(0L)
-        if (start < 0L || end > total || end - start < MIN_RANGE_MS) {
-            throw IllegalArgumentException(
-                "range 가 유효하지 않습니다 (start=$start, end=$end, total=$total)"
-            )
-        }
-        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
-        if (slices.isEmpty()) {
-            throw IllegalArgumentException("range 가 video segment 와 겹치지 않습니다")
-        }
-        return slices
-    }
-
-    fun applyDeleteRangeFromChat(start: Long, end: Long) {
-        val slices = chatRangeSlices(start, end)
-        viewModelScope.launch {
-            slices.forEach { sl -> removeSegmentRange(sl.segmentId, sl.localStart, sl.localEnd) }
-            refreshSegmentsStateFromDb()
-            pushUndoState()
-        }
-    }
-
-    fun applyDuplicateRangeFromChat(start: Long, end: Long) {
-        val slices = chatRangeSlices(start, end)
-        viewModelScope.launch {
-            slices.forEach { sl -> duplicateSegmentRange(sl.segmentId, sl.localStart, sl.localEnd) }
-            refreshSegmentsStateFromDb()
-            pushUndoState()
-        }
-    }
-
-    fun applyVolumeRangeFromChat(start: Long, end: Long, value: Float) {
-        val slices = chatRangeSlices(start, end)
-        val v = value.coerceIn(0f, 2f)
-        viewModelScope.launch {
-            slices.forEach { sl ->
-                val r = splitSegment(sl.segmentId, sl.localStart, sl.localEnd)
-                updateSegmentVolume(r.middle.id, v)
-            }
-            refreshSegmentsStateFromDb()
-            pushUndoState()
-        }
-    }
-
-    fun applySpeedRangeFromChat(start: Long, end: Long, value: Float) {
-        val slices = chatRangeSlices(start, end)
-        val v = value.coerceIn(0.25f, 4f)
-        viewModelScope.launch {
-            slices.forEach { sl ->
-                val r = splitSegment(sl.segmentId, sl.localStart, sl.localEnd)
-                updateSegmentSpeed(r.middle.id, v)
-            }
-            refreshSegmentsStateFromDb()
-            pushUndoState()
-        }
-    }
-
-    /**
-     * 채팅 dispatcher 전용 음원분리. UI sheet 진입 없이 audioSeparation state 만 직접 시드해
-     * [onStartSeparation] 백그라운드 잡 흐름에 합류 — 진행은 timeline directive 막대로 노출.
-     *
-     * BGM 대상이면 [onStartBgmSeparation] 으로 위임 (전체 클립 단위라 range 무관).
-     * Video 대상이면 trim 범위가 있을 때만 [AudioSeparationUiState.rangeStartMs/EndMs] 에 반영.
-     */
-    suspend fun applySeparateRangeFromChat(
-        segmentId: String?,
-        bgmClipId: String?,
-        trimStartMs: Long?,
-        trimEndMs: Long?,
-    ) {
-        if (bgmClipId != null) {
-            val bgm = _uiState.value.bgmClips.firstOrNull { it.id == bgmClipId }
-                ?: throw IllegalArgumentException("bgmClipId 가 projectContext.bgmClips 에 없습니다")
-            onStartBgmSeparation(bgm.id)
-            watchBgmSeparationForChat()
-            awaitBgmSeparationCompleteForChat()
-            return
-        }
-        val segId = segmentId
-            ?: throw IllegalArgumentException("segmentId 또는 bgmClipId 중 하나는 필수입니다")
-        val seg = _uiState.value.segments.firstOrNull { it.id == segId }
-            ?: throw IllegalArgumentException("segmentId 가 projectContext.segments 에 없습니다")
-        if (seg.type != SegmentType.VIDEO) {
-            throw IllegalArgumentException("video segment 만 음원분리 가능합니다")
-        }
-        val rs = trimStartMs
-        val re = trimEndMs
-        val (rangeStart, rangeEnd) = if (rs != null && re != null && re > rs) rs to re else null to null
-        // 동시 분리 모델에서 video 분리 결과는 directive 로 자동 commit + processingSeparations 에서 사라짐.
-        // 시작 직전 directive id snapshot 으로 새로 추가된 directive 를 식별한다.
-        val priorDirectiveIds = _uiState.value.separationDirectives.map { it.id }.toSet()
-        val priorProcessingTokens = _uiState.value.processingSeparations.map { it.clientToken }.toSet()
-        // numberOfSpeakers 는 Perso audio-separation 전용 endpoint 가 받지 않는 dead 인자
-        // (BFF SeparationSpec 에 남아있긴 하나 PersoClient.submitAudioSeparation 에 미전달).
-        // chat 경로는 default 1 로 채움 — UI sheet 경로의 호환성 위해 필드 자체는 유지.
-        _uiState.value = _uiState.value.copy(
-            audioSeparation = AudioSeparationUiState(
-                segmentId = segId,
-                step = AudioSeparationStep.SETUP,
-                numberOfSpeakers = 1,
-                rangeStartMs = rangeStart,
-                rangeEndMs = rangeEnd,
-            ),
-            showAudioSeparationSheet = false,
-            isPlaying = false,
-        )
-        onStartSeparation()
-        // onStartSeparation 이 audioSeparation 을 null 로 비우고 processingSeparations 에 entry 를 추가했다.
-        // priorProcessingTokens 와 비교해 새로 추가된 token 을 찾는다 — 그 잡의 완료/실패를 추적.
-        val newToken = _uiState.value.processingSeparations
-            .firstOrNull { it.clientToken !in priorProcessingTokens }
-            ?.clientToken
-            ?: return  // 시작이 즉시 실패해 entry 가 안 만들어진 케이스 — handleSeparationFailure 가 audioSeparation FAILED 로 마킹.
-        watchVideoSeparationForChat(newToken, priorDirectiveIds)
-        awaitVideoSeparationCompleteForChat(newToken, priorDirectiveIds)
-    }
-
-    /**
-     * Video 분리 (chat 경로) 의 terminal 상태 대기 — token 이 processingSeparations 에서 사라질 때까지.
-     * 종료 시점의 audioSeparation 을 반환 (FAILED 면 non-null, 성공이면 null 또는 직전 상태). 호출자가 분기.
-     */
-    private suspend fun awaitVideoSeparationTerminal(
-        clientToken: String,
-        priorDirectiveIds: Set<String>,
-    ): AudioSeparationUiState? {
-        return _uiState
-            .map { Triple(it.processingSeparations, it.separationDirectives, it.audioSeparation) }
-            .distinctUntilChanged()
-            .first { (processing, dirs, sep) ->
-                val stillRunning = processing.any { it.clientToken == clientToken }
-                if (stillRunning) return@first false
-                val hasNewDirective = dirs.any { it.id !in priorDirectiveIds }
-                val failedSheet = sep?.step == AudioSeparationStep.FAILED
-                hasNewDirective || failedSheet
-            }
-            .third
-    }
-
-    private suspend fun awaitVideoSeparationCompleteForChat(
-        clientToken: String,
-        priorDirectiveIds: Set<String>,
-    ) {
-        val sep = awaitVideoSeparationTerminal(clientToken, priorDirectiveIds)
-        if (sep?.step == AudioSeparationStep.FAILED) {
-            throw IllegalStateException(sep.errorMessage ?: "음원 분리 실패")
-        }
-    }
-
-    private fun watchVideoSeparationForChat(clientToken: String, priorDirectiveIds: Set<String>) {
-        viewModelScope.launch {
-            val sep = awaitVideoSeparationTerminal(clientToken, priorDirectiveIds)
-            if (sep?.step == AudioSeparationStep.FAILED) {
-                val err = sep.errorMessage ?: "알 수 없는 오류"
-                _chatAssistantEvents.emit("⚠ 음원 분리에 실패했습니다: $err")
-            } else {
-                _chatAssistantEvents.emit("음원 분리가 완료됐습니다 — timeline 의 stem 막대를 확인하세요.")
-            }
-        }
-    }
-
-    /**
-     * BGM 분리 (chat 경로) 의 완료/실패 대기. audioSeparation 싱글 state 기반 — 기존 video 흐름이
-     * 사용하던 로직 그대로 (video 흐름은 processingSeparations 로 분리됐다).
-     */
-    private suspend fun awaitBgmSeparationCompleteForChat() {
-        val terminal = _uiState
-            .map { it.audioSeparation }
-            .distinctUntilChanged()
-            .first { sep ->
-                // BGM 흐름: PICK_STEMS 에서 onConfirmBgmStemMix 가 audioSeparation=null 로 만들고 BGM 클립을 교체.
-                // 그래서 "audioSeparation 가 null 로 변함 + 직전엔 PICK_STEMS/PROCESSING 였음" = 성공.
-                // FAILED 단계 도달 = 실패.
-                sep?.step == AudioSeparationStep.FAILED || sep == null
-            }
-        if (terminal?.step == AudioSeparationStep.FAILED) {
-            throw IllegalStateException(terminal.errorMessage ?: "음원 분리 실패")
-        }
-    }
-
-    /**
-     * BGM 분리 (chat 경로) 결과를 채팅 thread 로 push.
-     */
-    private fun watchBgmSeparationForChat() {
-        viewModelScope.launch {
-            val terminal = _uiState
-                .mapNotNull { it.audioSeparation?.step }
-                .filter { it == AudioSeparationStep.PICK_STEMS || it == AudioSeparationStep.FAILED }
-                .first()
-            when (terminal) {
-                AudioSeparationStep.PICK_STEMS ->
-                    _chatAssistantEvents.emit("음원 분리가 완료됐습니다 — timeline 의 stem 막대를 확인하세요.")
-                AudioSeparationStep.FAILED -> {
-                    val err = _uiState.value.audioSeparation?.errorMessage ?: "알 수 없는 오류"
-                    _chatAssistantEvents.emit("⚠ 음원 분리에 실패했습니다: $err")
-                }
-                else -> {}
-            }
-        }
-    }
-
-    /**
-     * 채팅 dispatcher 전용 stem 볼륨 변경. UI 의 [onUpdateStemVolume] 은 sheet 가 열려있고
-     * (`audioSeparation != null`) 편집 모드에 진입한 상태(`editingDirectiveId != null`)에만
-     * 동작하는 silent return 가 3중으로 걸려 있어서, 채팅으로 호출하면 아무 일도 안 일어남.
-     *
-     * 본 메서드는 UI state 와 무관하게 [SeparationDirective.selections] 를 직접 갱신해
-     * persist — export render 가 새 볼륨으로 amix 한다. sheet 가 열려있다면 in-memory
-     * 미러도 함께 갱신해 즉시 preview 반영.
-     *
-     * stemId 가 어느 directive 에도 없으면 throw — dispatcher 가 사용자에게 가시화한다.
-     */
-    suspend fun applyUpdateStemVolumeFromChat(stemId: String, volume: Float) {
-        val clamped = volume.coerceIn(0f, 2f)
-        val directive = _uiState.value.separationDirectives.firstOrNull { d ->
-            d.selections.any { it.stemId == stemId }
-        } ?: throw IllegalArgumentException(
-            "stemId '$stemId' 에 해당하는 분리 결과가 없습니다 — 음원분리를 먼저 진행하세요"
-        )
-        val updatedSelections = directive.selections.map { sel ->
-            if (sel.stemId == stemId) sel.copy(volume = clamped) else sel
-        }
-        separationDirectiveRepository.add(directive.copy(selections = updatedSelections))
-        // sheet 가 열려있으면 in-memory state 도 동기화 — 사용자가 sheet 안에서 chat 호출한 경우
-        // slider 값이 즉시 반영되도록.
-        val sep = _uiState.value.audioSeparation
-        if (sep != null) {
-            val current = sep.selections[stemId]
-            if (current != null) {
-                val nextSelections = sep.selections + (stemId to current.copy(volume = clamped))
-                updateSeparation { it.copy(selections = nextSelections) }
-            }
-        }
-    }
-
-    /**
-     * 채팅 dispatcher 전용 — 자막 흐름의 1단계 (transcribe_for_subtitles). STT 만 실행해서
-     * 원본 스크립트를 lang="" SubtitleClip 으로 저장한 뒤, SRT 본문을 [chatAssistantEvents]
-     * 로 push 한다. 사용자는 채팅에서 그 스크립트를 보고 confirm 또는 수정 요청 → Gemini 가
-     * `apply_subtitles_with_script` 로 [applyApplySubtitlesWithScriptFromChat] 호출.
-     *
-     * 기존 [GenerateOriginalScriptUseCase] 를 그대로 재사용 — UI 의 "스크립트 생성" 버튼과
-     * 동일한 영속화. 사용자가 채팅 외에 timeline UI 로 스크립트를 추가 편집해도 정합.
-     */
-    suspend fun applyTranscribeForSubtitlesFromChat(targetLanguageCodes: List<String>) {
-        val source = _uiState.value.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) {
-            throw IllegalStateException("source video 없음 — timeline 에 영상을 먼저 올리세요")
-        }
-        val targets = targetLanguageCodes.filter { it.isNotBlank() }.distinct()
-        if (targets.isEmpty()) {
-            throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
-        }
-        val r = generateOriginalScript(
-            projectId = projectId,
-            sourceUri = source,
-            mediaType = "VIDEO",
-            onRenderProgress = { p -> setRenderProgress(p) },
-        )
-        setRenderProgress(null)
-        if (r.isFailure) {
-            val err = "스크립트 생성 실패"
-            _chatAssistantEvents.emit("⚠ 스크립트 생성에 실패했습니다: $err")
-            throw IllegalStateException(err)
-        }
-        // 저장된 lang="" 클립을 SRT 로 직렬화 → 채팅에 사람-친화 포맷으로 push.
-        val clips = subtitleClipRepository.observeClips(projectId).first()
-            .filter { it.languageCode.isBlank() }
-            .sortedBy { it.startMs }
-        if (clips.isEmpty()) {
-            _chatAssistantEvents.emit("⚠ STT 결과가 비어있습니다 — 영상에 음성이 없을 수 있습니다.")
-            throw IllegalStateException("STT 결과 비어있음")
-        }
-        val script = formatScriptForChat(clips)
-        val targetLabel = targets.joinToString(", ")
-        _chatAssistantEvents.emit(
-            "스크립트가 준비됐습니다 (${clips.size}줄):\n\n$script\n\n" +
-                "이대로 [$targetLabel] 자막을 만들까요? 수정 사항이 있으면 알려주세요 " +
-                "(예: \"3번째 줄을 X로 바꿔\")."
-        )
-    }
-
-    /**
-     * 채팅 dispatcher 전용 — 자막 흐름의 2단계 (apply_subtitles_with_script). 1단계에서 저장된
-     * lang="" 클립 (사용자가 수정한 SRT 가 있으면 그것으로 교체) 을 source 로 다국어 자막 생성.
-     *
-     * @param srt 사용자가 수정 요청을 했고 Gemini 가 수정된 SRT 를 보낸 경우 — lang="" 클립을
-     *            이 SRT 의 cue 들로 교체. null 이면 1단계에서 저장된 클립 그대로 사용.
-     * @param targetLanguageCodes 번역 대상. 1단계의 targets 와 같아야 정상이지만 검증 안 함 (Gemini 책임).
-     */
-    suspend fun applyApplySubtitlesWithScriptFromChat(srt: String?, targetLanguageCodes: List<String>) {
-        val targets = targetLanguageCodes.filter { it.isNotBlank() }.distinct()
-        if (targets.isEmpty()) {
-            throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
-        }
-        // 1) srt 인자가 있으면 lang="" 클립 교체. 없으면 1단계 결과 그대로 사용.
-        if (!srt.isNullOrBlank()) {
-            val cues = runCatching { SrtParser.parse(srt) }.getOrElse {
-                _chatAssistantEvents.emit("⚠ 수정된 SRT 파싱 실패: ${it.message}")
-                throw IllegalStateException("SRT 파싱 실패: ${it.message}")
-            }
-            if (cues.isEmpty()) {
-                _chatAssistantEvents.emit("⚠ 수정된 SRT 에 cue 가 없습니다.")
-                throw IllegalStateException("SRT 에 cue 가 없음")
-            }
-            val existing = subtitleClipRepository.observeClips(projectId).first()
-                .filter { it.languageCode.isBlank() }
-            existing.forEach { subtitleClipRepository.deleteClip(it.id) }
-            val rows = cues.map { cue ->
-                SubtitleClip(
-                    id = generateId(),
-                    projectId = projectId,
-                    text = cue.text,
-                    startMs = cue.startMs,
-                    endMs = cue.endMs,
-                    position = SubtitlePosition(),
-                    source = SubtitleSource.AUTO,
-                    languageCode = "",
-                )
-            }
-            subtitleClipRepository.addClips(rows)
-        }
-
-        // 프로젝트 targetLanguageCodes 에 신규 lang merge — UI preview 토글 등에서 사용.
-        editProjectRepository.getProject(projectId)?.let { p ->
-            val merged = (p.targetLanguageCodes + targets).distinct()
-            if (merged != p.targetLanguageCodes) {
-                editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
-            }
-        }
-
-        // 2) lang="" 를 source 로 다국어 자막 생성.
-        val r = regenerateSubtitles(
-            projectId = projectId,
-            sourceLanguageCode = "",
-            targetLanguageCodes = targets,
-        )
-        if (r.isFailure) {
-            val err = "자막 생성 실패"
-            _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
-            throw IllegalStateException(err)
-        }
-        // chat 흐름은 원본 자막을 export variant 로 노출하려는 의도가 아님 — source 역할만 한
-        // lang="" 클립이 살아있으면 hasConfirmedOriginalSubtitle 이 true 가 되어 SAVE picker 에
-        // KEY_ORIGINAL_SUBTITLE 변종이 자동 포함되고 default 체크되어 "원본 자막 영상" 까지 생성됨.
-        // target 생성이 끝났으므로 source 는 정리.
-        val sourceClips = subtitleClipRepository.observeClips(projectId).first()
-            .filter { it.languageCode.isBlank() }
-        sourceClips.forEach { subtitleClipRepository.deleteClip(it.id) }
-
-        val current = _uiState.value.previewLangCode
-        if (current == null || current !in _uiState.value.targetLanguageCodes) {
-            _uiState.value = _uiState.value.copy(previewLangCode = targets.first())
-        }
-        _chatAssistantEvents.emit("자막이 준비됐습니다 — [${targets.joinToString(", ")}]")
-    }
-
-    /**
-     * SubtitleClip 들을 채팅 표시용으로 포맷. 정식 SRT (timestamp + index + text) 가 아니라
-     * 1-based 번호 + 텍스트만 — 사용자가 "3번째 줄 바꿔줘" 같이 가리키기 쉬운 형태.
-     * Gemini 는 직전 turn 에 이 포맷을 보고 수정 요청 응답 시 SRT 를 새로 생성한다.
-     */
-    private fun formatScriptForChat(clips: List<SubtitleClip>): String {
-        val sb = StringBuilder()
-        clips.forEachIndexed { idx, c ->
-            sb.append(idx + 1).append(". ").append(c.text.trim().replace('\n', ' '))
-            if (idx < clips.size - 1) sb.append('\n')
-        }
-        return sb.toString()
-    }
-
-    /**
-     * 채팅 dispatcher 전용 자막 생성. UI flow(onSetLocalizationMode/onToggleLocalizationLang/
-     * onStartLocalization) 우회 — review-mode 우회, silent return 분기 throw 로 가시화.
-     * 동기 검증(throw)은 dispatcher 가 즉시 받고, BFF 호출은 기존 apply…FromChat 들과
-     * 동일하게 viewModelScope.launch 로 fire-and-forget.
-     */
-    suspend fun applyGenerateSubtitlesFromChat(targetLanguageCodes: List<String>) {
-        val source = _uiState.value.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) {
-            throw IllegalStateException("source video 없음 — timeline 에 영상을 먼저 올리세요")
-        }
-        val langs = targetLanguageCodes.filter { it.isNotBlank() }.distinct()
-        if (langs.isEmpty()) {
-            throw IllegalArgumentException("targetLanguageCodes 가 비었습니다")
-        }
-        editProjectRepository.getProject(projectId)?.let { p ->
-            val merged = (p.targetLanguageCodes + langs).distinct()
-            if (merged != p.targetLanguageCodes) {
-                editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
-            }
-        }
-        val r = generateAutoSubtitles(
-            projectId = projectId,
-            sourceUri = source,
-            mediaType = "VIDEO",
-            sourceLanguageCode = "auto",
-            targetLanguageCodes = langs,
-            numberOfSpeakers = 1,
-            onRenderProgress = { p -> setRenderProgress(p) },
-            includeOriginalLanguage = false,
-        )
-        setRenderProgress(null)
-        if (r.isSuccess) {
-            val current = _uiState.value.previewLangCode
-            if (current == null || current !in _uiState.value.targetLanguageCodes) {
-                _uiState.value = _uiState.value.copy(previewLangCode = langs.first())
-            }
-            _chatAssistantEvents.emit("자막이 준비됐습니다 — [${langs.joinToString(", ")}]")
-        } else {
-            val err = "자막 생성 실패"
-            _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
-            throw IllegalStateException(err)
-        }
-    }
-
-    /**
-     * 채팅 dispatcher 전용 더빙 생성. UI flow 우회 — silent return 분기 throw 로 가시화.
-     * tool def 가 single lang 이라 1회만 호출.
-     */
-    suspend fun applyGenerateDubFromChat(targetLanguageCode: String) {
-        val source = _uiState.value.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) {
-            throw IllegalStateException("source video 없음 — timeline 에 영상을 먼저 올리세요")
-        }
-        val lang = targetLanguageCode.takeIf { it.isNotBlank() }
-            ?: throw IllegalArgumentException("targetLanguageCode 가 비었습니다")
-        editProjectRepository.getProject(projectId)?.let { p ->
-            val merged = (p.targetLanguageCodes + lang).distinct()
-            if (merged != p.targetLanguageCodes) {
-                editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
-            }
-        }
-        val result = runCatching {
-            generateAutoDub(
-                projectId = projectId,
-                sourceUri = source,
-                mediaType = "VIDEO",
-                sourceLanguageCode = "auto",
-                targetLanguageCode = lang,
-                numberOfSpeakers = 1,
-                onRenderProgress = { p -> setRenderProgress(p) },
-            )
-        }
-        setRenderProgress(null)
-        result.onSuccess {
-            _chatAssistantEvents.emit("더빙이 준비됐습니다 — [$lang]")
-        }.onFailure {
-            val err = "알 수 없는 오류"
-            _chatAssistantEvents.emit("⚠ 더빙 생성에 실패했습니다: $err")
-            throw IllegalStateException(err)
-        }
-    }
-
     /** segment edit mode 종료 ("저장" 버튼) — range/segment 상태를 모두 정리하고 기본 timeline 으로. */
     fun onFinishSegmentEdit() {
         _uiState.value = _uiState.value.copy(
@@ -4103,52 +2856,6 @@ class TimelineViewModel constructor(
         }
     }
 
-    /**
-     * BGM 클립을 source 로 자막 자동 생성. 영상 segment 흐름과 동일한 GenerateAutoSubtitlesUseCase
-     * 재사용 — mediaType=AUDIO 만 다름. invalidation 책임은 use case 가 EditProject autoSubtitleStatus
-     * 기록 + 자막 클립 갱신으로 이미 처리.
-     */
-    fun onGenerateAutoSubtitlesForBgmClip(clipId: String, targetLanguageCodes: List<String>) {
-        viewModelScope.launch {
-            val bgm = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return@launch
-            val r = generateAutoSubtitles(
-                projectId = projectId,
-                sourceUri = bgm.sourceUri,
-                mediaType = "AUDIO",
-                sourceLanguageCode = "auto",
-                targetLanguageCodes = targetLanguageCodes,
-                numberOfSpeakers = 1,
-            )
-            if (r.isFailure) {
-                _uiState.value = _uiState.value.copy(
-                    autoSubtitleError = "자막 생성 실패",
-                )
-            }
-        }
-    }
-
-    /**
-     * BGM 클립을 source 로 더빙 자동 생성. mediaType=AUDIO. 단일 lang per call (영상 흐름과 동등).
-     */
-    fun onGenerateAutoDubForBgmClip(clipId: String, targetLanguageCode: String) {
-        viewModelScope.launch {
-            val bgm = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return@launch
-            val r = generateAutoDub(
-                projectId = projectId,
-                sourceUri = bgm.sourceUri,
-                mediaType = "AUDIO",
-                sourceLanguageCode = "auto",
-                targetLanguageCode = targetLanguageCode,
-                numberOfSpeakers = 1,
-            )
-            if (r.isFailure) {
-                _uiState.value = _uiState.value.copy(
-                    autoDubError = "더빙 생성 실패",
-                )
-            }
-        }
-    }
-
     fun onUpdateBgmSpeed(clipId: String, newSpeed: Float) {
         viewModelScope.launch {
             try {
@@ -4169,32 +2876,6 @@ class TimelineViewModel constructor(
                 _uiState.value = _uiState.value.copy(bgmError = e.message)
             }
         }
-    }
-
-    /**
-     * 채팅 전용 — BGM 클립을 timeline range 에 정렬. trim 된 sub-range 음원이라면 그 길이가 baseline.
-     * `speedScale` 로 stretch. UseCase 가 [BgmClip.MIN_SPEED, BgmClip.MAX_SPEED] 로 silent clamp
-     * 하므로 out-of-range 일 때 dispatcher 가 Success 반환 후 BGM 이 어긋나는 사고 방지 위해 사전 throw.
-     */
-    suspend fun applyUpdateBgmRangeFromChat(clipId: String, newStartMs: Long, newEndMs: Long) {
-        require(newEndMs > newStartMs) {
-            "끝 지점(${newEndMs}ms)은 시작 지점(${newStartMs}ms)보다 커야 해요."
-        }
-        val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId }
-            ?: throw IllegalArgumentException("BGM 클립을 찾을 수 없어요 (id=$clipId).")
-        val desiredDuration = newEndMs - newStartMs
-        val effSource = clip.effectiveSourceDurationMs.coerceAtLeast(1L)
-        val newSpeed = effSource.toFloat() / desiredDuration.toFloat()
-        require(newSpeed in BgmClip.MIN_SPEED..BgmClip.MAX_SPEED) {
-            "요청한 길이(${desiredDuration}ms)는 BGM 속도 한계(${BgmClip.MIN_SPEED}~${BgmClip.MAX_SPEED}x)를 " +
-                "벗어나요. 음원 길이 ${effSource}ms 기준으로 가능한 범위로 다시 알려주세요."
-        }
-        updateBgmClip(
-            clipId = clipId,
-            startMs = newStartMs.coerceAtLeast(0L),
-            speedScale = newSpeed,
-        )
-        pushUndoState()
     }
 
     fun onDeleteBgmClip(clipId: String) {
@@ -4447,245 +3128,7 @@ class TimelineViewModel constructor(
         )
     }
 
-    // ── 자막/더빙 생성 패널 ──────────────────────────────────────────────────
-    fun onShowLocalization() {
-        _uiState.value = _uiState.value.copy(localizationOpen = true)
-    }
-
-    fun onToggleReviewScriptBeforeGenerate() {
-        _uiState.value = _uiState.value.copy(
-            reviewScriptBeforeGenerate = !_uiState.value.reviewScriptBeforeGenerate
-        )
-    }
-
-    fun onDismissScriptReviewSheet() {
-        // 검토 취소 — pending state 그대로 두고 sheet 만 닫음. 사용자가 다시 열 수 있음.
-        _uiState.value = _uiState.value.copy(showScriptReviewSheet = false)
-    }
-
-    /**
-     * "스크립트 생성 완료" 버튼(자막 패널) 클릭 시 review sheet 다시 열기.
-     * subtitleReviewPending 이 true 일 때만 동작 — 그렇지 않으면 사용자가 이미 confirm 한 상태라 no-op.
-     *
-     * timeline 재진입 시 자동 sheet 복귀 (`maybeTriggerAutoPipelines` → `shouldShowPendingReview`)
-     * 가 작동하지 않거나 사용자가 sheet 를 dismiss 한 뒤 다시 열어야 할 때의 explicit 진입점.
-     *
-     * pendingReviewTargetLangs 는 observeProject 가 csv 에서 hydrate 한 값을 그대로 둔다.
-     */
-    fun onReopenScriptReviewSheet() {
-        val s = _uiState.value
-        if (!s.subtitleReviewPending) return
-        // pendingReviewTargetLangs 가 비어 있을 수 있음 (timeline 재진입 직후 in-memory copy 만 비어 있고
-        // csv 는 영속화돼 있는 경우). 영속화된 csv 에서 다시 hydrate.
-        viewModelScope.launch {
-            val project = editProjectRepository.getProject(projectId)
-            val targets = project?.pendingReviewTargetLangsCsv
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotBlank() }
-                ?: emptyList()
-            _uiState.value = _uiState.value.copy(
-                showScriptReviewSheet = true,
-                pendingReviewTargetLangs = targets,
-            )
-        }
-    }
-
-    /**
-     * 사용자 검토 완료 — 저장된 source lang clips 을 source 로 RegenerateSubtitlesUseCase 호출하여
-     * target 언어 자막 일괄 생성. cue 의 텍스트 수정은 이미 SubtitleEditSheet/inline 편집으로 DB 에 반영됨.
-     */
-    /**
-     * 검토 sheet 가 유지하고 있는 cue id → 수정된 text map 을 일괄 저장 후 regenerate.
-     * sheet 의 inline DisposableEffect 저장은 unmount 타이밍 race 가 있어 의존하지 않는다.
-     */
-    fun onConfirmScriptReview(edits: Map<String, String> = emptyMap()) {
-        val state = _uiState.value
-        val targets = state.pendingReviewTargetLangs
-        reviewSheetGate = TriggerGate.ARMED
-        _uiState.value = state.copy(showScriptReviewSheet = false)
-        viewModelScope.launch {
-            // 사용자가 수정한 cue 들 동기 저장 — regenerate 가 SRT 만들 때 최신 text 보이도록.
-            edits.forEach { (clipId, newText) ->
-                val clip = subtitleClipRepository.getClip(clipId) ?: return@forEach
-                val trimmed = newText.trim()
-                if (trimmed.isNotEmpty() && trimmed != clip.text.trim()) {
-                    subtitleClipRepository.updateClip(clip.copy(text = trimmed))
-                }
-            }
-            // 검토 대기 마킹 클리어.
-            editProjectRepository.getProject(projectId)?.let { p ->
-                editProjectRepository.updateProject(
-                    p.copy(pendingReviewTargetLangsCsv = null)
-                )
-            }
-            // observeProject 가 다시 emit 하면서 subtitleReviewPending = false 로 동기화되지만,
-            // 즉시 UI 라벨이 "스크립트 생성 완료" 에서 "생성 시작" 으로 돌아가도록 explicit set.
-            _uiState.value = _uiState.value.copy(subtitleReviewPending = false)
-            if (targets.isEmpty()) {
-                _uiState.value = _uiState.value.copy(
-                    pendingReviewTargetLangs = emptyList(),
-                    sttPreflightStatus = AutoJobStatus.IDLE,
-                )
-                return@launch
-            }
-            // edits 저장 완료 후에만 regenerate 호출 — RegenerateSubtitlesUseCase 의 observeClips.first()
-            // 가 최신 text 를 보고 SRT 를 만든다.
-            onRegenerateOtherLanguages(sourceLanguageCode = "", targetLanguageCodes = targets)
-        }
-    }
-    fun onDismissLocalization() {
-        _uiState.value = _uiState.value.copy(localizationOpen = false)
-    }
-    fun onSetLocalizationMode(mode: String) {
-        // 더빙 모드 전환 시 자막 모드의 "원본" sentinel ("") 을 정리. 잔존 시 startEnabled 는 true 인데
-        // 더빙 모드에선 "원본" chip 미노출 + onStartLocalization 가드가 silent return → 사용자 막힘.
-        val current = _uiState.value.localizationLangs
-        val cleaned = if (mode == "dub") current - "" else current
-        _uiState.value = _uiState.value.copy(localizationMode = mode, localizationLangs = cleaned)
-    }
-    fun onToggleLocalizationLang(code: String) {
-        val current = _uiState.value.localizationLangs
-        val next = if (code in current) current - code else current + code
-        _uiState.value = _uiState.value.copy(localizationLangs = next)
-    }
-    fun onStartLocalization() {
-        val s = _uiState.value
-        val source = s.segments.firstOrNull()?.sourceUri
-        if (source.isNullOrBlank()) return
-        val mode = s.localizationMode
-        // 자막 모드의 "원본" chip = "" sentinel — 다른 lang 과 함께 다중 선택 가능.
-        // 더빙 모드는 UI 에서 원본 chip 안 띄우므로 sentinel 도 안 들어옴.
-        // Defense-in-depth — 이미 결과 있는 lang 은 UI 에서 chip disabled 지만 stale state 로 들어와도
-        // 호출 단계에서 한번 더 거름 (중복 BFF 호출 방지).
-        val rawSelected = s.localizationLangs.toList()
-        val selected = rawSelected.filter { code ->
-            when (mode) {
-                "subtitle" -> {
-                    if (code.isEmpty()) {
-                        // 원본 chip — 이미 원본 자막이 확정돼 있으면 skip.
-                        !s.hasOriginalSubtitleVariant
-                    } else {
-                        s.subtitleClips.none { it.languageCode == code }
-                    }
-                }
-                "dub" -> {
-                    val done = s.dubbedAudioPaths.containsKey(code) ||
-                        s.dubbedVideoPaths.containsKey(code)
-                    val running = s.autoDubStatusByLang[code] == AutoJobStatus.RUNNING
-                    !done && !running
-                }
-                else -> true
-            }
-        }
-        val translationLangs = selected.filter { it.isNotBlank() }
-        val includesOriginalSubtitle = mode == "subtitle" && "" in selected
-        // 자막 모드: 원본만 OR 번역 1개+ → 진행. 둘 다 없으면 abort.
-        // 더빙 모드: 번역 1개+ → 진행.
-        val isSubtitleOriginalOnly = mode == "subtitle" && includesOriginalSubtitle && translationLangs.isEmpty()
-        if (translationLangs.isEmpty() && !isSubtitleOriginalOnly) return
-        val langs = translationLangs
-        viewModelScope.launch {
-            // 사용자가 패널에서 고른 langs 를 project 에 persist — observeProject flow 가 다시 emit 하면서
-            // dropdown chip 에 추가됨. (in-memory copy 만 하면 다음 project emit 에 덮어써짐.)
-            editProjectRepository.getProject(projectId)?.let { p ->
-                val merged = (p.targetLanguageCodes + langs).distinct()
-                if (merged != p.targetLanguageCodes) {
-                    editProjectRepository.updateProject(p.copy(targetLanguageCodes = merged))
-                }
-            }
-            when (mode) {
-                "subtitle" -> if (s.reviewScriptBeforeGenerate) {
-                    // 검토 모드: STT only → review sheet → 사용자 수정 → regenerate.
-                    _uiState.value = _uiState.value.copy(
-                        sttPreflightStatus = AutoJobStatus.RUNNING,
-                        sttPreflightError = null,
-                        pendingReviewTargetLangs = langs,
-                    )
-                    // 검토 대기 영속화 — timeline 떠났다 와도 sheet 자동 복귀.
-                    editProjectRepository.getProject(projectId)?.let { p ->
-                        editProjectRepository.updateProject(
-                            p.copy(pendingReviewTargetLangsCsv = langs.joinToString(","))
-                        )
-                    }
-                    val r = generateOriginalScript(
-                        projectId = projectId,
-                        sourceUri = source,
-                        mediaType = "VIDEO",
-                        onRenderProgress = { p ->
-                            setRenderProgress(p)
-                        },
-                    )
-                    setRenderProgress(null)
-                    if (r.isSuccess) {
-                        reviewSheetGate = TriggerGate.FIRED
-                        _uiState.value = _uiState.value.copy(
-                            sttPreflightStatus = AutoJobStatus.IDLE,
-                            showScriptReviewSheet = true,
-                            subtitleReviewPending = true,
-                        )
-                    } else {
-                        _uiState.value = _uiState.value.copy(
-                            sttPreflightStatus = AutoJobStatus.FAILED,
-                            sttPreflightError = r.exceptionOrNull()?.message,
-                            pendingReviewTargetLangs = emptyList(),
-                        )
-                    }
-                } else {
-                    // 1회 호출로 N langs 모두 처리 — 영상 업로드 / STT 1번만, Gemini 번역 N번.
-                    // sourceLanguageCode="auto" — Perso STT 가 자동 감지.
-                    val r = generateAutoSubtitles(
-                        projectId = projectId,
-                        sourceUri = source,
-                        mediaType = "VIDEO",
-                        sourceLanguageCode = "auto",
-                        targetLanguageCodes = langs,
-                        numberOfSpeakers = 1,
-                        onRenderProgress = { p ->
-                            setRenderProgress(p)
-                        },
-                        includeOriginalLanguage = includesOriginalSubtitle,
-                    )
-                    // render 진행 표시 reset — STT/번역 단계로 넘어갔거나 실패.
-                    setRenderProgress(null)
-                    // 미리보기 chip 자동 전환 — source=auto 이므로 originalSrt 는 저장 안 됨.
-                    // 현재 미리보기가 null("기본") 이거나 새로 추가된 langs 와 무관할 때만 첫 lang 으로 전환
-                    // (사용자가 일부러 다른 lang 을 보고 있으면 유지).
-                    if (r.isSuccess && langs.isNotEmpty()) {
-                        val current = _uiState.value.previewLangCode
-                        if (current == null || current !in _uiState.value.targetLanguageCodes) {
-                            _uiState.value = _uiState.value.copy(previewLangCode = langs.first())
-                        }
-                    }
-                }
-                "dub" -> langs.forEach { lang ->
-                    runCatching {
-                        generateAutoDub(
-                            projectId = projectId,
-                            sourceUri = source,
-                            mediaType = "VIDEO",
-                            sourceLanguageCode = "auto",
-                            targetLanguageCode = lang,
-                            numberOfSpeakers = 1,
-                            onRenderProgress = { p ->
-                                setRenderProgress(p)
-                            },
-                        )
-                    }
-                    // 첫 dub 성공 후 cache hit 으로 render skip 되는 langs 도 있음 — 매 lang 끝에 reset.
-                    setRenderProgress(null)
-                }
-                else -> Unit
-            }
-        }
-        // 호출 직후 panel 닫음 + 선택 chip 비움 — 사용자가 다시 열었을 때 stale selection 으로 이미
-        // 시작된 lang 이 다시 선택돼 보이는 사고 방지. 결과 / 진행 상태는 이미 생성된 클립 (subtitleClips /
-        // dubbedAudioPaths) 또는 autoDubStatusByLang 등으로 chip 표시.
-        _uiState.value = s.copy(localizationOpen = false, localizationLangs = emptySet())
-    }
-    fun onSelectPreviewLang(code: String?) {
-        _uiState.value = _uiState.value.copy(previewLangCode = code)
-    }
+    // 자막/더빙 localization 패널 메서드 제거.
 
     /**
      * BGM 분리 polling Job — 단일 잡 (BGM 한 번에 1개만). video segment 분리 다중 잡과 분리.
@@ -5216,28 +3659,6 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(showExportOptionsSheet = false)
     }
 
-    fun onUpdateExportOptions(
-        targetLanguageCode: String,
-        enableAutoSubtitles: Boolean,
-        enableAutoDubbing: Boolean,
-        numberOfSpeakers: Int
-    ) {
-        viewModelScope.launch {
-            val current = editProjectRepository.getProject(projectId) ?: return@launch
-            val isOriginal = targetLanguageCode == TargetLanguage.CODE_ORIGINAL
-            editProjectRepository.updateProject(
-                current.copy(
-                    targetLanguageCode = targetLanguageCode,
-                    // 번역 대상 언어가 원본이면 자막/더빙 파이프라인은 의미가 없으므로 강제 OFF.
-                    enableAutoSubtitles = if (isOriginal) false else enableAutoSubtitles,
-                    enableAutoDubbing = if (isOriginal) false else enableAutoDubbing,
-                    numberOfSpeakers = numberOfSpeakers.coerceIn(1, 10),
-                    updatedAt = currentTimeMillis()
-                )
-            )
-            _uiState.value = _uiState.value.copy(showExportOptionsSheet = false)
-        }
-    }
 }
 
 enum class FramePreset(val ratioW: Int, val ratioH: Int, val label: String) {

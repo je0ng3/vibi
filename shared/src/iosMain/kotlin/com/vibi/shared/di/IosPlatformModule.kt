@@ -1,8 +1,6 @@
 package com.vibi.shared.di
 
 import com.vibi.shared.data.repository.IosAudioMetadataExtractor
-import com.vibi.shared.data.repository.IosAutoDubRepositoryImpl
-import com.vibi.shared.data.repository.IosAutoSubtitleRepositoryImpl
 import com.vibi.shared.data.repository.IosGallerySaver
 import com.vibi.shared.data.repository.IosImageMetadataExtractor
 import com.vibi.shared.data.repository.IosMediaJobUploader
@@ -19,8 +17,6 @@ import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.russhwolf.settings.NSUserDefaultsSettings
 import com.russhwolf.settings.Settings
 import platform.Foundation.NSUserDefaults
-import com.vibi.shared.domain.repository.AutoDubRepository
-import com.vibi.shared.domain.repository.AutoSubtitleRepository
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
 import com.vibi.shared.domain.usecase.input.ImageMetadataExtractor
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
@@ -34,7 +30,7 @@ import org.koin.dsl.module
  * iOS 측 platform module.
  */
 val iosPlatformModule = module {
-    single<ExportPlatformAdapter> { IosExportPlatformAdapter(exportWithDubbing = get()) }
+    single<ExportPlatformAdapter> { IosExportPlatformAdapter() }
     single<GallerySaver> { IosGallerySaver() }
     single<ShareSheetLauncher> { IosShareSheetLauncher() }
     single<VideoMetadataExtractor> { IosVideoMetadataExtractor() }
@@ -42,8 +38,6 @@ val iosPlatformModule = module {
     single<AudioMetadataExtractor> { IosAudioMetadataExtractor() }
     single<ImageMetadataExtractor> { IosImageMetadataExtractor() }
     single { IosMediaJobUploader() }
-    single<AutoDubRepository> { IosAutoDubRepositoryImpl(api = get(), uploader = get()) }
-    single<AutoSubtitleRepository> { IosAutoSubtitleRepositoryImpl(api = get(), uploader = get()) }
 
     // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
     // 호출 시 별도 module 로 주입.

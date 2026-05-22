@@ -1,4 +1,4 @@
-package com.vibi.shared.domain.usecase.subtitle
+package com.vibi.shared.domain.util
 
 class UndoRedoManager<T>(private val maxHistory: Int = 50) {
 

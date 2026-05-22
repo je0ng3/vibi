@@ -1,7 +1,6 @@
 package com.vibi.shared.ui.export
 
 import android.content.Context
-import com.vibi.shared.domain.usecase.export.ExportWithDubbingUseCase
 
 /**
  * v1 stub — vibi 는 iOS 우선 배포라 Android 런타임 사용 X.
@@ -9,7 +8,6 @@ import com.vibi.shared.domain.usecase.export.ExportWithDubbingUseCase
  */
 class AndroidExportPlatformAdapter(
     @Suppress("unused") private val context: Context,
-    @Suppress("unused") private val exportWithDubbing: ExportWithDubbingUseCase,
 ) : ExportPlatformAdapter {
 
     override suspend fun executeExport(

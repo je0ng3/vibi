@@ -3,15 +3,19 @@
 package com.vibi.shared.ui.export
 
 import com.vibi.shared.domain.model.Segment
-import com.vibi.shared.domain.usecase.export.ExportWithDubbingUseCase
+import com.vibi.shared.domain.usecase.export.BgmClipMixInput
+import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
+import com.vibi.shared.domain.usecase.export.toExportInput
 import com.vibi.shared.platform.resolveStoredUriToPath
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
@@ -20,22 +24,18 @@ import platform.Foundation.dataWithContentsOfURL
 import platform.Foundation.writeToFile
 
 /**
- * iOS Export 어댑터 — Android 와 동등하게 [ExportWithDubbingUseCase] 에 위임.
- *
- * 실제 합성은 현재 BFF `/api/v2/render` 가 처리. 본 어댑터는 임시 디렉터리 생성과
- * 출력 경로 발급만 담당. iOS-전용 AVAssetExportSession 자체 합성으로의 마이그레이션은
- * Phase 2 에서 진행 (Phase 1 은 export 페이로드 정리).
+ * iOS Export 어댑터 — BFF [FfmpegExecutor] (= RemoteRenderExecutor) 에 직접 위임.
+ * 자막/더빙 제거 후 ExportWithDubbingUseCase 가 없어졌으므로 어댑터가 segment/bgm 변환만 담당.
  */
-class IosExportPlatformAdapter(
-    private val exportWithDubbing: ExportWithDubbingUseCase
-) : ExportPlatformAdapter {
+class IosExportPlatformAdapter : ExportPlatformAdapter, KoinComponent {
+
+    private val executor: FfmpegExecutor by inject()
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     override suspend fun executeExport(
         request: ExportRequest,
         onProgress: (percent: Int) -> Unit
     ): Result<String> = runCatching {
-        // iOS 의 임시 디렉터리. 앱 종료 시 자동 정리.
         val tmpRoot = NSTemporaryDirectory()
         val cacheDir = "$tmpRoot/vibi_export_${Clock.System.now().toEpochMilliseconds()}"
         NSFileManager.defaultManager.createDirectoryAtPath(
@@ -45,8 +45,6 @@ class IosExportPlatformAdapter(
             error = null
         )
 
-        // segment 의 sourceUri 가 file:// 또는 절대 경로 — content URI 개념이 iOS 엔 없으므로 그대로 사용.
-        // PHPickerViewController 가 반환한 file:// URI 도 [NSData.dataWithContentsOfURL] 로 읽힘.
         val segmentInputs = request.segments.map { segment ->
             val localPath = resolveSegmentSource(segment, cacheDir)
                 ?: error("Failed to read segment source: ${segment.sourceUri}")
@@ -63,29 +61,38 @@ class IosExportPlatformAdapter(
             )
         } else null
 
-        val audioOverride = request.audioOverridePath?.takeIf { fileExists(it) }
+        val bgmInputs = request.bgmClips.mapNotNull { clip ->
+            val localPath = copyUriToCache(clip.sourceUri, cacheDir, prefix = "bgm")
+                ?: return@mapNotNull null
+            BgmClipMixInput(
+                audioFilePath = localPath,
+                startMs = clip.startMs,
+                volume = clip.volumeScale,
+                speed = clip.speedScale,
+                sourceTrimStartMs = clip.sourceTrimStartMs,
+                sourceTrimEndMs = clip.sourceTrimEndMs,
+            )
+        }
 
-        val result = exportWithDubbing.execute(
+        val directives = request.separationDirectives.mapNotNull { it.toExportInput() }
+
+        val result = executor.renderProject(
             segments = segmentInputs,
-            dubClips = request.dubClips,
+            dubClips = emptyList(),
             outputPath = outputPath,
             frame = frame,
-            bgmClips = request.bgmClips,
-            audioOverridePath = audioOverride,
-            separationDirectives = request.separationDirectives,
+            bgmClips = bgmInputs,
+            audioOverridePath = null,
+            separationDirectives = directives,
             preUploadedInputId = request.preUploadedInputId,
-            resolveAudioPath = { uri -> copyUriToCache(uri, cacheDir, prefix = "bgm") },
-            onProgress = onProgress
+            onProgress = onProgress,
         )
-
         result.getOrThrow()
     }
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     private suspend fun resolveSegmentSource(segment: Segment, cacheDir: String): String? {
         val uri = segment.sourceUri
-        // resolver 가 상대경로 / 절대경로 / file:// / 옛 UUID remap 모두 처리하고 현재 valid path 반환.
-        // resolver 가 처리 가능한 형태면 (= local file path) 그대로 사용. 아니면 (HTTP 등) cache 로 download.
         val resolved = resolveStoredUriToPath(uri)
         if (resolved != null && NSFileManager.defaultManager.fileExistsAtPath(resolved)) {
             return resolved
@@ -100,7 +107,6 @@ class IosExportPlatformAdapter(
         prefix: String
     ): String? = withContext(Dispatchers.Default) {
         try {
-            // local path 형태(절대/상대/file://) 면 resolver 로 path 만 추출 후 그대로 반환.
             if (uri.startsWith("/") || uri.startsWith("file://") ||
                 !uri.contains("://")
             ) {
@@ -118,9 +124,6 @@ class IosExportPlatformAdapter(
             null
         }
     }
-
-    private fun fileExists(path: String): Boolean =
-        NSFileManager.defaultManager.fileExistsAtPath(path)
 
     private fun Segment.toInput(localPath: String) = SegmentInput(
         sourceFilePath = localPath,

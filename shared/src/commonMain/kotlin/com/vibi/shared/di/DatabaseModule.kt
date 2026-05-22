@@ -7,8 +7,6 @@ import org.koin.dsl.module
 val databaseModule = module {
     single<VibiDatabase> { createVibiDatabase() }
     single { get<VibiDatabase>().editProjectDao() }
-    single { get<VibiDatabase>().dubClipDao() }
-    single { get<VibiDatabase>().subtitleClipDao() }
     single { get<VibiDatabase>().imageClipDao() }
     single { get<VibiDatabase>().segmentDao() }
     single { get<VibiDatabase>().textOverlayDao() }

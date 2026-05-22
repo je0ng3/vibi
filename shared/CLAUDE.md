@@ -28,32 +28,26 @@ shared/
 └── src/
     ├── commonMain/kotlin/com/vibi/shared/
     │   ├── domain/
-    │   │   ├── model/                       # DubClip, Segment, Stem, EditProject, BgmClip,
-    │   │   │                                # SubtitleClip, ImageClip, TextOverlay, AuthUser,
+    │   │   ├── model/                       # Segment, Stem, EditProject, BgmClip,
+    │   │   │                                # ImageClip, TextOverlay, AuthUser,
     │   │   │                                # VideoInfo, ImageInfo, ValidationResult,
-    │   │   │                                # SeparationDirective, SeparationMediaType,
-    │   │   │                                # TargetLanguage, SupportedLanguage, SubtitlePosition
-    │   │   ├── repository/                  # 인터페이스 — AudioSeparation, BgmClip, DubClip,
-    │   │   │                                # ImageClip, Segment, EditProject, SubtitleClip,
-    │   │   │                                # TextOverlay, SeparationDirective, Language, Render,
-    │   │   │                                # AutoSubtitle*, AutoDub*, LipSync* (※ 후 3개는 BFF
-    │   │   │                                # surface 절단 후 dead — 호출 시 404)
-    │   │   ├── chat/                        # ChatToolDispatcher · ProjectContextBuilder
-    │   │   ├── usecase/                     # 카테고리: input/separation/timeline/text/bgm/image/save/draft/export/subtitle/lipsync
-    │   │   └── util/                        # LanePacking, ColorValidation
+    │   │   │                                # SeparationDirective, SeparationMediaType
+    │   │   ├── repository/                  # 인터페이스 — AudioSeparation, BgmClip, EditProject,
+    │   │   │                                # ImageClip, Segment, TextOverlay,
+    │   │   │                                # SeparationDirective, Render
+    │   │   ├── usecase/                     # 카테고리: input/separation/timeline/text/bgm/image/save/draft/export
+    │   │   └── util/                        # LanePacking, ColorValidation, UndoRedoManager
     │   ├── data/
     │   │   ├── remote/api/BffApi.kt         # Ktor Client multiplatform.
-    │   │   │                                # 현행: auth/google · auth/apple · languages ·
-    │   │   │                                #      render(+inputs) · separate(+mix) · chat · testdata.
-    │   │   │                                # 잔존(404): submitSubtitleJob · regenerateSubtitleJob ·
-    │   │   │                                #          submitAutoDubJob · requestLipSync.
-    │   │   ├── remote/dto/                  # kotlinx.serialization DTO (Auth/Chat/Render/Separation/Subtitle/AutoDub/LipSync)
+    │   │   │                                # 현행: auth/google · auth/apple ·
+    │   │   │                                #      render(+inputs) · separate(+mix) · testdata.
+    │   │   ├── remote/dto/                  # kotlinx.serialization DTO (Auth/Render/Separation)
     │   │   ├── remote/HttpClientFactory.kt  # expect/actual — Authorization 헤더 인젝션, Json 설정
-    │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF) + ChatRepository + AuthRepository + RemoteRenderExecutor
+    │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF) + AuthRepository + RemoteRenderExecutor
     │   │   ├── local/db/                    # Room v5 — VibiDatabase, 8 entity + 8 DAO,
     │   │   │                                # fallbackToDestructiveMigration(dropAllTables=true)
     │   │   └── local/                       # AuthTokenStore · UserSession · JwtSubject · UserPreferencesStore (Multiplatform Settings)
-    │   ├── ui/                              # ViewModel — InputVM, TimelineVM, ChatVM, LoginVM
+    │   ├── ui/                              # ViewModel — InputVM, TimelineVM, LoginVM
     │   ├── platform/                        # expect — FileSystem, VideoThumbnailExtractor, TimeFormat,
     │   │                                    # GoogleSignInClient, AppleSignInClient
     │   └── di/                              # Koin 모듈 (DatabaseModule, NetworkModule, RepositoryModule, UseCaseModule, ViewModelModule)
@@ -93,16 +87,13 @@ shared/
 - **리포지토리 함수가 일회성이면 Flow 반환 금지** — `suspend fun login(): Result<User>` 가 `Flow<Result<User>>` 보다 명확. Flow 는 "값이 시간에 따라 바뀜" 의미라 일회성에 쓰면 의미 오염 + collect 강제·취소 처리·디바운스 부담.
 - **Flow 반환 함수는 보통 non-suspend** — `fun observeUser(): Flow<User>` 는 cold flow 빌더라 호출 시점에 작업 시작 안 함. `suspend fun observeUser(): Flow<User>` 는 호출자가 collect 도 못 시작하는 어색한 API.
 
-## Timeline stepper 동작 규약
+## Timeline 동작 규약
 
-`TimelineViewModel` 의 **2단계 stepper (`EditAudio` ↔ `SubtitleDub`)** 전환 시 적용되는 규약. 음원이 메인 작업이라 영상 선택 직후 `EditAudio` 가 기본 진입.
+자막/더빙 제거 후 `TimelineStep` 은 `EditAudio` 단일 값. 영상 segment 편집 + BGM 삽입/조정 + 음원분리 + 텍스트 오버레이가 한 화면에 통합.
 
-- **단계 이동은 산출물 보존** — `onSelectStep` 은 `currentStep` 만 변경. BGM/separation/자막/더빙 결과는 다른 단계 갔다 와도 유지. 사용자가 좌(EditAudio) ↔ 우(SubtitleDub) 를 자유롭게 오가는 흐름이 일반적이라 보존이 기본.
-- **`commitSegmentEdit` 만 산출물 wipe** — 사용자가 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation/자막/더빙을 정리. segment 가 바뀌면 downstream 산출물이 stale 이라 어쩔 수 없음.
-- **Undo/redo 단일 스택** — 과거 step-별 분리에서 통합 (commit `a6c3580 refactor(timeline): undo 스택을 step 무관 단일 인스턴스로 통합`). text overlay / image clip / audio edit 모두 같은 `UndoRedoManager` 공유. segment edit 모드만 별도 `editModeUndoRedoManager`.
-- **잡 진행 중 이동 가드** — `isLocalizationBusy()` 또는 `audioSeparation.step == PROCESSING` 일 때는 stepper 이동 무시.
-- **전환 경고** — `StepTransitionWarning` (LocalizationLock / EditReset) 로 사용자에게 한 번 더 확인. `userPrefs.editResetSuppressed` 로 EditReset 경고 영구 끄기 가능.
-- **EnsureLatestRender 시점은 lazy** — stepper 이동 시점이 아니라 export/dub 생성 등 산출물이 필요한 시점에 `EnsureLatestRenderUseCase` 가 BFF 에 단일 영상 render 잡 제출 (BGM atrim+amix 포함). stepper UX 만 보고 "이동 시 합성됨" 으로 오해 금지.
+- **`commitSegmentEdit` 만 산출물 wipe** — 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation 을 정리.
+- **Undo/redo 단일 스택** — text overlay / image clip / audio edit 모두 같은 `UndoRedoManager` 공유. segment edit 모드만 별도 `editModeUndoRedoManager`.
+- **EnsureLatestRender 시점은 lazy** — export 등 산출물이 필요한 시점에 `EnsureLatestRenderUseCase` 가 BFF 에 단일 영상 render 잡 제출 (BGM atrim+amix 포함).
 
 ## Auth 흐름 요약
 

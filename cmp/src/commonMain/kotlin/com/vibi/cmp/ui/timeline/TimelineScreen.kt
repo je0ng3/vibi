@@ -62,8 +62,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
@@ -82,7 +80,6 @@ import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.rememberStemMixer
-import com.vibi.cmp.ui.chat.ChatPanel
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.hasNonTrivialEdits
 import com.vibi.shared.ui.timeline.AudioSeparationStep
@@ -121,18 +118,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.VideoPlayer
-import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.timeline.EditTarget
 import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
 import com.vibi.shared.ui.timeline.hasBgm
-import com.vibi.shared.ui.timeline.StepTransitionWarning
 import com.vibi.shared.ui.timeline.PreviewMode
 import com.vibi.shared.ui.timeline.TimelineStep
 import com.vibi.shared.ui.timeline.TimelineViewModel
-import com.vibi.shared.ui.timeline.isLocalizationBusy
 import org.koin.compose.koinInject
-import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
 /**
@@ -161,33 +154,10 @@ fun TimelineScreen(
     val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
     val state by viewModel.uiState.collectAsState()
 
-    // unified mode 게이트 — stepper UI 가 숨겨지면 5~8단계가 한 스크롤에 모두 노출. AudioSources /
-    // SubtitleDub 전용 분기는 본 두 boolean 으로 묶어 stepper-on 경로도 동시에 유지.
+    // 자막/더빙 제거 후 단일 단계만 — stepper 분기 비활성. showSubtitleDubContent 는 false 고정.
     val unifiedScroll = com.vibi.cmp.platform.RuntimeFlags.stepperHidden
-    val showAudioSourcesContent = unifiedScroll || state.currentStep == TimelineStep.EditAudio
-    val showSubtitleDubContent = unifiedScroll || state.currentStep == TimelineStep.SubtitleDub
-
-    // ChatVM — FAB unread badge 와 panel 양쪽이 같은 인스턴스 공유. bindProject / bindTimelineEvents
-    // 를 panel 가시성과 무관하게 호출해 panel 닫힌 상태에서도 chatAssistantEvents 수신 → unread 토글.
-    val chatViewModel: ChatViewModel = koinViewModel()
-    val chatState by chatViewModel.state.collectAsState()
-    LaunchedEffect(projectId) {
-        chatViewModel.bindProject(projectId)
-    }
-    LaunchedEffect(viewModel) {
-        chatViewModel.bindTimelineEvents(viewModel.chatAssistantEvents)
-    }
-
-    // 자연어 confirm 흐름 — Gemini 가 채팅으로 동의를 받은 후 emit 한 proposal 을 자동으로 dispatch.
-    // 적용/수정/취소 버튼이 없으므로 panel 가시성과 무관하게 본 화면에서 트리거.
-    val chatDispatcher: com.vibi.shared.domain.chat.ChatToolDispatcher = koinInject()
-    LaunchedEffect(chatState.pending) {
-        val proposal = chatState.pending ?: return@LaunchedEffect
-        chatViewModel.applyProposal(proposal.steps, chatDispatcher, viewModel)
-    }
-
-    // 채팅 패널 토글 — FAB (헤더 우측) 로 열고 ModalBottomSheet 가 자체적으로 dismiss 처리.
-    var chatSheetVisible by remember { mutableStateOf(false) }
+    val showAudioSourcesContent = true
+    val showSubtitleDubContent = false
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. 드롭다운 두 항목이 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
@@ -307,15 +277,6 @@ fun TimelineScreen(
 
     // 자막/더빙 단계 진입 시 생성 패널 자동 열기. 사용자가 닫으면 같은 단계 안에서 다시 열리지 않고,
     // 다른 단계 갔다 돌아오면 다시 열림 (currentStep 키 변경으로 재발화).
-    // stepper 가 숨겨진 unified 모드(RuntimeFlags.stepperHidden) 에선 명시적 진입(SubtitleDubCard
-    // 버튼)으로만 열림 — 자동 열기 비활성. 상세는 RuntimeFlags 주석 참조.
-    LaunchedEffect(state.currentStep) {
-        if (com.vibi.cmp.platform.RuntimeFlags.stepperHidden) return@LaunchedEffect
-        if (state.currentStep == TimelineStep.SubtitleDub && !state.localizationOpen) {
-            viewModel.onShowLocalization()
-        }
-    }
-
     // 구간 모드 진입 + 선택 있는 경우만 재생 위치 정렬 (zero-width 선택 = 자유 재생 허용).
     LaunchedEffect(state.isRangeSelecting) {
         if (state.isRangeSelecting && state.pendingRangeEndMs > state.pendingRangeStartMs) {
@@ -421,24 +382,11 @@ fun TimelineScreen(
         }
     }
 
-    // playerItems 를 hoist — 인라인 프리뷰 + 전체화면 Dialog 양쪽에서 공유. previewMuxUri 가 있으면
-    // BFF mux 결과 단일 item, 아니면 segments 를 playlist 로 변환.
-    val previewMuxUri = state.previewLangCode?.let { state.dubbedVideoPaths[it] }
     val videoSegs = state.segments.filter {
         it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
     }
     val playerItems: List<com.vibi.cmp.platform.VideoPlayerItem> = if (state.videoUri.isEmpty()) {
         emptyList()
-    } else if (previewMuxUri != null) {
-        listOf(
-            com.vibi.cmp.platform.VideoPlayerItem(
-                sourceUri = previewMuxUri,
-                trimStartMs = 0L,
-                trimEndMs = 0L,
-                speedScale = 1f,
-                volumeScale = 1f,
-            )
-        )
     } else {
         videoSegs.map { seg ->
             com.vibi.cmp.platform.VideoPlayerItem(
@@ -479,12 +427,8 @@ fun TimelineScreen(
         // 헤더: 뒤로 + 단계 타이틀 + 공유/저장. 백그라운드 잡 진행 중이면 저장 disabled.
         // 저장 버튼이 자체적으로 모든 variant 렌더 → 갤러리 저장 → EditProject 삭제 → InputScreen 복귀를
         // 호출하므로 별도 ExportScreen 으로 이동하는 흐름은 폐기됐다.
-        val saveAnyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-            state.autoDubStatus == AutoJobStatus.RUNNING ||
-            state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.processingSeparations.isNotEmpty() ||
-            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-            state.sttPreflightStatus == AutoJobStatus.RUNNING
+        val saveAnyJobRunning = state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
+            state.processingSeparations.isNotEmpty()
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
@@ -525,10 +469,6 @@ fun TimelineScreen(
                     sharing -> "${sharingPercent}%"
                     state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
                         state.processingSeparations.isNotEmpty() -> "음원분리 중"
-                    state.autoSubtitleStatus == AutoJobStatus.RUNNING -> "자막 생성 중"
-                    state.regenerateSubtitleStatus == AutoJobStatus.RUNNING -> "자막 재생성 중"
-                    state.autoDubStatus == AutoJobStatus.RUNNING -> "더빙 중"
-                    state.sttPreflightStatus == AutoJobStatus.RUNNING -> "준비 중"
                     else -> "Export"
                 }
                 Text(label, style = typo.bodySm, color = tokens.onBackgroundPrimary)
@@ -548,93 +488,6 @@ fun TimelineScreen(
             }
         }
 
-
-        // 3단계 stepper — RuntimeFlags.stepperHidden 가 false 일 때만 노출. unified Sound Deck UI
-        // 에서는 5~8단계가 한 스크롤에 모두 보이므로 stepper 가 불필요.
-        // 클릭 차단은 VM 의 onSelectStep 가 처리 (in-flight job 등). 채팅 dispatcher 실행 중이면 stepper
-        // 이동 차단 — 처리 중 step 이 바뀌면 UI 가 새 step 의 진입 sheet 를 띄워 dispatch 결과 화면이 가려진다.
-        if (!com.vibi.cmp.platform.RuntimeFlags.stepperHidden) {
-            TimelineStepperRow(
-                currentStep = state.currentStep,
-                onStepClick = { target ->
-                    if (chatState.isApplying) return@TimelineStepperRow
-                    viewModel.onSelectStep(target)
-                },
-            )
-        }
-
-        // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
-        // "" sentinel = 원본 자막 (lang="" 클립). review 완료 후에만 chip 노출.
-        // SSOT — TimelineViewModel 이 hasConfirmedOriginalSubtitle 헬퍼로 set. export variant
-        // 산출 (SaveAllVariantsUseCase.computeAllVariantKeys) 도 같은 헬퍼를 본다.
-        val hasOriginalSubtitleChip = state.hasOriginalSubtitleVariant
-        // chip 라벨 prefix: 더빙 있는 lang → "DUB_", 자막만 있는 lang → "SUB_", 원본 자막 → "SUB_ORIGINAL".
-        // 같은 lang 에 자막+더빙 둘 다 있어도 더빙 우선 (BFF 가 자막 함께 burn).
-        val langsWithDub = state.dubbedAudioPaths.keys + state.dubbedVideoPaths.keys
-        val langsWithSubtitle = state.subtitleClips.map { it.languageCode }.filter { it.isNotBlank() }.toSet()
-        val versions = buildList<Pair<String?, String>> {
-            add(null to "기본")
-            if (hasOriginalSubtitleChip) add("" to "SUB_ORIGINAL")
-            state.targetLanguageCodes.forEach { code ->
-                val label = when {
-                    code in langsWithDub -> "DUB_${code.uppercase()}"
-                    code in langsWithSubtitle -> "SUB_${code.uppercase()}"
-                    else -> code.uppercase()
-                }
-                add(code to label)
-            }
-        }
-        val isJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-            state.autoDubStatus == AutoJobStatus.RUNNING ||
-            state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING
-        // 변종 선택은 자막/더빙 단계에서만 의미 있음 (Edit·음원 단계에선 "기본" 만 존재).
-        // unified 모드에선 stepper 가 없으므로 실제로 변종이 둘 이상일 때만 노출.
-        val showVersionPicker = if (unifiedScroll) versions.size > 1
-                                else state.currentStep == TimelineStep.SubtitleDub
-        if (showVersionPicker) Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            var menuOpen by remember { mutableStateOf(false) }
-            val currentLabel = versions.firstOrNull { it.first == state.previewLangCode }?.second ?: "기본"
-            Box {
-                Row(
-                    modifier = Modifier
-                        .clip(VibiShape.pill)
-                        .background(tokens.chipBg)
-                        .clickable(enabled = !isJobRunning) { menuOpen = true }
-                        .padding(horizontal = 14.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(currentLabel, color = tokens.onBackgroundPrimary, style = typo.bodySm)
-                    if (isJobRunning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(VibiSpacing.sm),
-                            color = tokens.onBackgroundPrimary,
-                            strokeWidth = 1.5.dp,
-                        )
-                    } else {
-                        Text("▾", color = tokens.onBackgroundPrimary, style = typo.bodySm)
-                    }
-                }
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { menuOpen = false },
-                ) {
-                    versions.forEach { (code, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                viewModel.onSelectPreviewLang(code)
-                                menuOpen = false
-                            },
-                        )
-                    }
-                }
-            }
-        }
 
         // 비디오 프리뷰 (inline)
         Box(
@@ -660,41 +513,6 @@ fun TimelineScreen(
             } else if (state.videoUri.isEmpty()) {
                 // 영상 Box bg 가 항상 검정이므로 라이트 모드에서도 흰색 텍스트 유지.
                 Text("비디오 없음", color = Color.White)
-            }
-
-            // 자막 overlay — 비디오 위 하단에 오버레이. Compose 의 Box 스택. previewLangCode 의
-            // 자막만 싱크 맞춰 표시. (iOS UIKitView z-order 한계로 Android 에서만 시각적으로 정확히
-            // 영상 위에 그려지고, iOS 는 Swift bridge 도입 시까지 가시성 제한적.)
-            // previewLangCode null = "기본" (자막 X). "" = "원본 자막" chip (lang="" 매칭). "ko"/"en" = 해당 lang.
-            val activeSubtitleClip = run {
-                val lang = state.previewLangCode
-                if (lang == null) null
-                else state.subtitleClips
-                    .filter { it.languageCode == lang }
-                    .firstOrNull { clip -> state.playbackPositionMs in clip.startMs..clip.endMs }
-            }
-            if (activeSubtitleClip != null) {
-                val anchor = activeSubtitleClip.position.anchor
-                val align = when (anchor) {
-                    com.vibi.shared.domain.model.Anchor.TOP -> Alignment.TopCenter
-                    com.vibi.shared.domain.model.Anchor.MIDDLE -> Alignment.Center
-                    com.vibi.shared.domain.model.Anchor.BOTTOM -> Alignment.BottomCenter
-                }
-                Box(
-                    modifier = Modifier
-                        .align(align)
-                        .fillMaxWidth()
-                        .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm)
-                        .background(parseArgbHexColor(activeSubtitleClip.backgroundColorHex), VibiShape.sm)
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = activeSubtitleClip.text,
-                        color = parseArgbHexColor(activeSubtitleClip.colorHex),
-                        fontSize = activeSubtitleClip.fontSizeSp.sp,
-                    )
-                }
             }
 
         }
@@ -933,19 +751,11 @@ fun TimelineScreen(
 
         // 자막/더빙 진행 상태는 상단 버전 chip 의 spinner 로만 표시.
 
-        // 진입점 버튼들 (음성 분리 + 자막/더빙 생성)
+        // 진입점 버튼들 (음원 분리 + 음원 삽입)
         val firstSegId = state.segments.firstOrNull()?.id
-        // 백그라운드 잡 진행 중 — 새 잡 시작/내보내기 막기 위한 게이팅 플래그.
-        val anyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-            state.autoDubStatus == AutoJobStatus.RUNNING ||
-            state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.processingSeparations.isNotEmpty() ||
-            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-            state.sttPreflightStatus == AutoJobStatus.RUNNING
-        // segment edit 모드 (isSegmentEditMode=true) 일 때도 isRangeSelecting 이 true 라
-        // 음원분리 단독 range mode (isSegmentEditMode=false) 일 때만 숨김.
-        // 영상편집 진입은 SoundDeck 의 "영상 다듬기" 카드, 종료는 SegmentEditActionPanel cancel.
-        if ((!state.isRangeSelecting || state.isSegmentEditMode) && !state.localizationOpen) {
+        val anyJobRunning = state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
+            state.processingSeparations.isNotEmpty()
+        if (!state.isRangeSelecting || state.isSegmentEditMode) {
             // 음원 단계 — 음원분리/음원삽입 두 버튼을 weight(1f) 로 균등 분배.
             // 진행 상태는 timeline accent overlay 가 표시 — 버튼 라벨은 새 분리 진입점으로 고정.
             // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
@@ -1029,8 +839,7 @@ fun TimelineScreen(
                         )
                     }
                     val deckDisabled = state.audioSeparation?.step ==
-                        com.vibi.shared.ui.timeline.AudioSeparationStep.PROCESSING ||
-                        state.isLocalizationBusy()
+                        com.vibi.shared.ui.timeline.AudioSeparationStep.PROCESSING
                     Spacer(Modifier.height(VibiSpacing.xs))
                     com.vibi.cmp.ui.timeline.sounddeck.SoundDeck(
                         groups = deckGroups,
@@ -1072,181 +881,6 @@ fun TimelineScreen(
         // BGM panel 은 inline list 가 아닌, lane 의 막대 탭 → ModalBottomSheet 로 전환.
         // 아래 `state.selectedBgmClipId` 분기가 sheet 를 띄움.
 
-        // 상세 편집 패널 — lang chip 으로 lang 필터 + cue list + 선택 cue 의 스타일/텍스트 조정.
-        // 영상 미리보기 위에 자막 overlay 가 즉시 반영되어 사용자가 보면서 조정 가능.
-        if (showSubtitleDubContent &&
-            state.showDetailEdit && !state.isRangeSelecting && !state.localizationOpen) {
-            DetailEditPanel(
-                state = state,
-                onSelectLang = { viewModel.onSetDetailEditLang(it) },
-                onSelectClip = { viewModel.onSelectSubtitleClip(it) },
-                onUpdateText = { id, text -> viewModel.onUpdateSubtitleText(id, text) },
-                onUpdateStyle = { id, size, color, bg ->
-                    viewModel.onUpdateSubtitleStyle(
-                        clipId = id,
-                        fontSizeSp = size,
-                        colorHex = color,
-                        backgroundColorHex = bg,
-                        applyToAllLanguages = false,
-                    )
-                },
-                onSeekToClip = { viewModel.onUpdatePlaybackPosition(it) },
-            )
-        }
-
-        // 자막/더빙 생성 인라인 패널 — 자막/더빙 단계 + 영상편집 모드 아닐 때.
-        if (showSubtitleDubContent &&
-            state.localizationOpen && !state.isSegmentEditMode) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(tokens.panelBg, VibiShape.lg)
-                    .padding(VibiSpacing.sm),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("자막/더빙 생성", style = typo.titleSm, color = tokens.onBackgroundPrimary)
-                // 모드 선택 (자막 / 더빙 — 둘 중 하나)
-                Row(horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                    FilterChip(
-                        selected = state.localizationMode == "subtitle",
-                        onClick = { viewModel.onSetLocalizationMode("subtitle") },
-                        label = { Text("자막") }
-                    )
-                    FilterChip(
-                        selected = state.localizationMode == "dub",
-                        onClick = { viewModel.onSetLocalizationMode("dub") },
-                        label = { Text("더빙") }
-                    )
-                }
-
-                // 원본 언어는 Perso STT 가 자동 감지함 — 사용자 선택 불필요.
-
-                // 자막 모드일 때 chip row 의 첫 항목에 "원본" chip 추가 (lang code "" sentinel).
-                // 다른 lang chip 과 함께 다중 선택 가능 — 원본만 선택 시 STT only, 다른 lang 도 선택 시 번역 + 원본.
-                // 더빙 모드는 원본 더빙 미지원 (Perso 가 source==target 안 받음) 이라 원본 chip 안 보임.
-                Text("자막/더빙 언어 (다중)", style = typo.bodySm, color = tokens.mutedText)
-                // chip enable/disable 정책: 이미 생성된 lang(자막 clip 또는 더빙 mp3/mp4 존재) 또는
-                // 진행 중인 lang 은 chip 자체를 disabled + ✓ 아이콘으로 표시 → 중복 호출 차단.
-                // 자막 모드의 RUNNING 신호는 per-lang 추적이 없어 보수적으로 "어떤 자막 잡이라도 RUNNING"
-                // 이면 모든 자막 lang chip disabled (race 회피). 더빙은 autoDubStatusByLang 로 per-lang 식별.
-                val anySubtitleRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-                    state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-                    state.sttPreflightStatus == AutoJobStatus.RUNNING
-                // "" sentinel = 원본 자막 — 변환된 lang clip 들도 default languageCode="" 로 만들어질 수
-                // 있어 단순 any { languageCode == "" } 가 false-positive. SSOT 인 hasOriginalSubtitleVariant
-                // (observeProject 가 hasConfirmedOriginalSubtitle 결과로 set) 로 판정.
-                fun isChipBlocked(code: String): Boolean = when (state.localizationMode) {
-                    "subtitle" -> {
-                        val alreadyDone = if (code.isEmpty()) state.hasOriginalSubtitleVariant
-                            else state.subtitleClips.any { it.languageCode == code }
-                        alreadyDone || anySubtitleRunning
-                    }
-                    "dub" -> {
-                        val alreadyDone = state.dubbedAudioPaths.containsKey(code) ||
-                            state.dubbedVideoPaths.containsKey(code)
-                        val running = state.autoDubStatusByLang[code] == AutoJobStatus.RUNNING
-                        alreadyDone || running
-                    }
-                    else -> false
-                }
-                fun isChipDone(code: String): Boolean = when (state.localizationMode) {
-                    "subtitle" -> if (code.isEmpty()) state.hasOriginalSubtitleVariant
-                        else state.subtitleClips.any { it.languageCode == code }
-                    "dub" -> state.dubbedAudioPaths.containsKey(code) ||
-                        state.dubbedVideoPaths.containsKey(code)
-                    else -> false
-                }
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
-                ) {
-                    if (state.localizationMode == "subtitle") {
-                        val originalBlocked = isChipBlocked("")
-                        val originalDone = isChipDone("")
-                        LangFilterChip(
-                            label = "원본",
-                            selected = "" in state.localizationLangs || originalDone,
-                            enabled = !originalBlocked,
-                            onClick = { viewModel.onToggleLocalizationLang("") },
-                        )
-                    }
-                    listOf(
-                        "en" to "English",
-                        "ko" to "한국어",
-                        "ja" to "日本語",
-                        "zh" to "中文",
-                        "es" to "Español",
-                        "fr" to "Français",
-                        "de" to "Deutsch"
-                    ).forEach { (code, label) ->
-                        val blocked = isChipBlocked(code)
-                        val done = isChipDone(code)
-                        LangFilterChip(
-                            label = label,
-                            selected = code in state.localizationLangs || done,
-                            enabled = !blocked,
-                            onClick = { viewModel.onToggleLocalizationLang(code) },
-                        )
-                    }
-                }
-                // 자막 모드 한정: STT 결과 미리 검토 후 다국어 자막 생성. dub 는 BFF 추가 필요해 현재 미지원.
-                if (state.localizationMode == "subtitle") {
-                    FilterChip(
-                        selected = state.reviewScriptBeforeGenerate,
-                        onClick = { viewModel.onToggleReviewScriptBeforeGenerate() },
-                        label = { Text("📝 스크립트 먼저 검토") }
-                    )
-                }
-                // "생성 시작" enable 조건: 자막/번역 lang 1개 이상 선택 (자막 모드면 "원본" chip 도 포함).
-                val startEnabled = state.localizationLangs.isNotEmpty()
-                // 진행 단계별 라벨 (단일 버튼 내):
-                //  편집 영상 render 중 → "편집 영상 준비 중 (XX%)"
-                //  STT/번역/더빙 진행 중 → "자막/더빙 생성 중"
-                //  자막 review pending (script ready) → "스크립트 생성 완료" → review sheet 재오픈
-                //  idle → "생성 시작"
-                val renderProgress = state.editedVideoRenderProgress
-                val isJobRunning = state.sttPreflightStatus == AutoJobStatus.RUNNING ||
-                    state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-                    state.autoDubStatus == AutoJobStatus.RUNNING
-                val isGenerating = renderProgress != null || isJobRunning
-                val showReviewReady = state.localizationMode == "subtitle" &&
-                    state.subtitleReviewPending &&
-                    !isGenerating
-                val (buttonLabel, buttonEnabled, buttonOnClick) = when {
-                    renderProgress != null -> Triple<String, Boolean, () -> Unit>(
-                        "편집 영상 준비 중 ($renderProgress%)",
-                        false,
-                        { /* no-op */ },
-                    )
-                    isJobRunning -> Triple<String, Boolean, () -> Unit>(
-                        "자막/더빙 생성 중",
-                        false,
-                        { /* no-op */ },
-                    )
-                    showReviewReady -> Triple<String, Boolean, () -> Unit>(
-                        "스크립트 생성 완료",
-                        true,
-                        { viewModel.onReopenScriptReviewSheet() },
-                    )
-                    else -> Triple<String, Boolean, () -> Unit>(
-                        "생성 시작",
-                        startEnabled,
-                        { viewModel.onStartLocalization() },
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                    Button(
-                        modifier = Modifier.weight(1f),
-                        enabled = buttonEnabled,
-                        onClick = buttonOnClick
-                    ) { Text(buttonLabel) }
-                    OutlinedButton(onClick = { viewModel.onDismissLocalization() }) {
-                        Text("닫기")
-                    }
-                }
-            }
-        }
-
         Spacer(Modifier.height(VibiSpacing.xs))
 
         // 편집 영상 render 진행률 + 자막/더빙 생성 진행 상태는 위 "생성 시작" 버튼 라벨에 통합.
@@ -1263,50 +897,6 @@ fun TimelineScreen(
             else -> Unit
         }
     }
-
-    // 채팅 어시스턴트 FAB — 일단 숨김 (사용자 요청). 재노출 시 아래 블록 주석 해제.
-    // 가시성 가드, BadgedBox, FloatingActionButton 모두 보존돼 있어 그대로 되돌릴 수 있음.
-    /*
-    val chatFabVisible = (unifiedScroll || state.currentStep != TimelineStep.SubtitleDub) &&
-        !state.isSegmentEditMode &&
-        !state.isRangeSelecting &&
-        !state.localizationOpen &&
-        !state.showDetailEdit &&
-        !state.showAudioSeparationSheet &&
-        !state.showSubtitleSheet &&
-        !state.showScriptReviewSheet &&
-        !state.showAppendSheet &&
-        !state.showFrameSheet &&
-        !state.showTextOverlaySheet &&
-        !chatSheetVisible
-    if (chatFabVisible) {
-        val fabBottomPadding = VibiSpacing.md
-        BadgedBox(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .navigationBarsPadding()
-                .padding(start = VibiSpacing.md, end = VibiSpacing.md, top = VibiSpacing.md, bottom = fabBottomPadding),
-            badge = {
-                if (chatState.hasUnreadMessages) {
-                    Box(
-                        modifier = Modifier
-                            .size(VibiSpacing.base)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.error),
-                    )
-                }
-            },
-        ) {
-            FloatingActionButton(
-                onClick = { chatSheetVisible = true },
-                containerColor = tokens.accent,
-                contentColor = tokens.backgroundPrimary,
-            ) {
-                Text("Chat", fontSize = 22.sp)
-            }
-        }
-    }
-    */
 
     // A/B (원본/내믹스) 미리듣기 바는 UI 에서 일단 제거 — 추후 재추가 예정. VM 의 [state.previewMode] +
     // [TimelineViewModel.onTogglePreviewMode] + [sounddeck/ABPreviewBar.kt] composable 은 그대로 두어
@@ -1467,85 +1057,6 @@ fun TimelineScreen(
     )
     } // close Box wrapper
 
-    // STT 스크립트 검토 sheet — review 모드에서 STT 완료 후 표시. 영상편집 모드 진행 중엔 숨김.
-    if (state.showScriptReviewSheet && !state.isSegmentEditMode) {
-        val sourceClips = remember(state.subtitleClips) {
-            state.subtitleClips.filter { it.languageCode.isBlank() }
-        }
-        // confirm 시 일괄 저장하기 위해 outer 에서 hoist — text/confirmButton 두 슬롯이 같은 map 공유.
-        val scriptReviewEdits = remember(sourceClips.map { it.id }) {
-            androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
-                sourceClips.forEach { put(it.id, it.text) }
-            }
-        }
-        AlertDialog(
-            onDismissRequest = { viewModel.onDismissScriptReviewSheet() },
-            title = { Text("스크립트 검토") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                    Text(
-                        "STT 결과를 확인하고 잘못 인식된 부분을 수정하세요. 확인 후 ${state.pendingReviewTargetLangs.joinToString(", ") { it.uppercase() }} 자막이 생성됩니다.",
-                        style = typo.bodySm
-                    )
-                    androidx.compose.foundation.lazy.LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-                        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
-                    ) {
-                        items(items = sourceClips, key = { it.id }) { clip ->
-                            val draft = scriptReviewEdits[clip.id] ?: clip.text
-                            Row(
-                                verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
-                            ) {
-                                Text(
-                                    text = "${clip.startMs / 1000}s\n${clip.endMs / 1000}s",
-                                    style = typo.caption,
-                                    modifier = Modifier.heightIn(min = 56.dp)
-                                )
-                                OutlinedTextField(
-                                    value = draft,
-                                    onValueChange = { scriptReviewEdits[clip.id] = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    viewModel.onConfirmScriptReview(scriptReviewEdits.toMap())
-                }) { Text("자막 생성") }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.onDismissScriptReviewSheet() }) { Text("취소") }
-            }
-        )
-    }
-
-
-    // 자막 sheet — 자막/더빙 단계 + 영상편집 모드 아닐 때만.
-    if (showSubtitleDubContent &&
-        state.showSubtitleSheet && !state.isSegmentEditMode) {
-        InsertSubtitleSheet(
-            playbackPositionMs = state.playbackPositionMs,
-            videoDurationMs = state.videoDurationMs,
-            onConfirm = { text, startMs, endMs, position, style ->
-                viewModel.onAddSubtitle(
-                    text = text,
-                    startMs = startMs,
-                    endMs = endMs,
-                    position = position,
-                    fontFamily = style.fontFamily,
-                    fontSizeSp = style.fontSizeSp,
-                    colorHex = style.colorHex,
-                    backgroundColorHex = style.backgroundColorHex,
-                )
-            },
-            onDismiss = { viewModel.onDismissSubtitleSheet() }
-        )
-    }
-
     // BGM trim 시트 — 영상보다 긴 음원 선택 시 onPickBgmAudio 가 bgmTrimRequest 를 set.
     state.bgmTrimRequest?.let { req ->
         BgmTrimSheet(
@@ -1600,33 +1111,11 @@ fun TimelineScreen(
         )
     }
 
-    // stepper 단계 전환 경고 다이얼로그 — onSelectStep 가 set 한 보류 경고를 사용자에게 보여줌.
-    // "다시 묻지 않기" 체크 시 UserPreferencesStore 에 영속 → 다음 세션에도 안 뜸.
-    state.pendingStepWarning?.let { warning ->
-        StepTransitionWarningDialog(
-            warning = warning,
-            onConfirm = { dontAskAgain ->
-                viewModel.confirmStepTransition(dontAskAgain)
-            },
-            onDismiss = { viewModel.dismissStepTransitionWarning() },
-        )
-    }
-
-    // 채팅 어시스턴트 sheet — 영상편집 모드와 무관하게 띄울 수 있지만 위 FAB 가 모드 중엔 숨김.
-    if (chatSheetVisible) {
-        ChatPanel(
-            timelineState = state,
-            onDismiss = { chatSheetVisible = false },
-            chatVm = chatViewModel,
-        )
-    }
-
 }
 
 private val TimelineStep.label: String
     get() = when (this) {
         TimelineStep.EditAudio -> "편집·음원"
-        TimelineStep.SubtitleDub -> "자막/더빙"
     }
 
 /**
@@ -1641,8 +1130,7 @@ private fun TimelineStepperRow(
 ) {
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
-    // 자막/더빙 탭 숨김 — 기능 비활성화.
-    val steps = TimelineStep.entries.filterNot { it == TimelineStep.SubtitleDub }
+    val steps = TimelineStep.entries.toList()
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = VibiSpacing.xxs),
         verticalAlignment = Alignment.CenterVertically,
@@ -3547,55 +3035,6 @@ private fun BgmTrimHandle(
     ) {
         ChevronThumb(side = side, height = height, handleColor = handleColor, gripColor = gripColor)
     }
-}
-
-/**
- * stepper 단계 전환 경고 다이얼로그. 음원→자막/더빙 (LocalizationLock) 또는 →영상편집 (EditReset)
- * 진입 시 한 번 확인. "다시 묻지 않기" 체크박스 → UserPreferencesStore 영속화.
- */
-@Composable
-private fun StepTransitionWarningDialog(
-    warning: StepTransitionWarning,
-    onConfirm: (dontAskAgain: Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val typo = LocalVibiTypography.current
-    var dontAskAgain by remember { mutableStateOf(false) }
-    val (title, body) = when (warning) {
-        is StepTransitionWarning.LocalizationLock ->
-            "자막/더빙 단계로 이동" to
-                "자막 또는 더빙을 생성하면 이전 단계의 음원 분리(분리 결과·stem 선택) 를 더 이상 수정할 수 없습니다. 음원 작업을 마무리했는지 확인해 주세요."
-        is StepTransitionWarning.EditReset ->
-            "영상 편집 단계로 이동" to
-                "영상 편집(구간 삭제/복제/속도 변경 등)을 적용하면 기존에 생성한 음원 분리·자막·더빙·BGM 배치가 모두 초기화됩니다. 그래도 진행하시겠어요?"
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm)) {
-                Text(body, style = typo.bodyMd)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { dontAskAgain = !dontAskAgain },
-                ) {
-                    Checkbox(
-                        checked = dontAskAgain,
-                        onCheckedChange = { dontAskAgain = it },
-                    )
-                    Text("다시 묻지 않기", style = typo.bodySm)
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onConfirm(dontAskAgain) }) { Text("계속") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("취소") }
-        },
-    )
 }
 
 /** ARGB hex (#AARRGGBB or #RRGGBB) → Compose Color. 잘못된 입력은 white fallback. */

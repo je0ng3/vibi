@@ -1,87 +1,43 @@
 package com.vibi.shared.domain.usecase.save
 
 import com.vibi.shared.data.remote.api.BffApi
-import com.vibi.shared.data.remote.api.BinaryPart
-import com.vibi.shared.domain.model.DubClip
-import com.vibi.shared.domain.model.EditProject
-import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
-import com.vibi.shared.domain.model.SubtitleClip
-import com.vibi.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.vibi.shared.domain.repository.BgmClipRepository
-import com.vibi.shared.domain.repository.DubClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
-import com.vibi.shared.domain.repository.SubtitleClipRepository
 import com.vibi.shared.domain.usecase.share.GallerySaver
-import com.vibi.shared.platform.readFileBytes
 import com.vibi.shared.ui.export.ExportPlatformAdapter
 import com.vibi.shared.ui.export.ExportRequest
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 
 /**
- * 저장 흐름 — 사용자가 timeline 헤더의 "저장" 버튼을 누르면 BG 에서 호출.
+ * 저장 흐름 — 자막/더빙 제거 후 단일 variant (원본 영상) 만 처리.
  *
- * 동작:
- *  1. variant 결정: `original` + (subtitleClips ∪ dubClips ∪ project.dubbedAudioPaths) 안의 lang.
- *  2. 변종 2+ 면 BFF input cache 1회 업로드 후 모든 variant 가 inputId 재사용.
- *  3. variant 마다 [ExportPlatformAdapter.executeExport] 병렬 실행 → 결과 파일 path.
- *  4. 결과 파일을 [GallerySaver.saveVideo] 로 갤러리에 저장.
- *  5. 한 건이라도 실패하면 message 와 함께 Result.failure (호출자가 EditProject 보존 결정).
- *
- * 진행 상태 (0..100) 는 [onProgress] 로 보고. 모든 variant 의 평균 percent.
- *
- * [selectedVariantKeys] = null 이면 모든 variant (기존 동작). non-null 이면 그 안에 든 키만 렌더.
+ * 1. 편집 없음 (BGM 0, separation 0, segment 1 + trim 0) → 원본 파일 그대로 갤러리 저장.
+ * 2. 편집 있음 → BFF render 후 결과 갤러리 저장.
  */
 class SaveAllVariantsUseCase(
     private val platformAdapter: ExportPlatformAdapter,
     private val gallerySaver: GallerySaver,
     private val editProjectRepository: EditProjectRepository,
-    private val dubClipRepository: DubClipRepository,
-    private val subtitleClipRepository: SubtitleClipRepository,
     private val segmentRepository: SegmentRepository,
     private val bgmClipRepository: BgmClipRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
-    private val bffApi: BffApi,
+    @Suppress("UNUSED_PARAMETER") private val bffApi: BffApi,
 ) {
 
     suspend operator fun invoke(
         projectId: String,
         onProgress: (percent: Int) -> Unit,
         saveToGallery: Boolean = true,
-        selectedVariantKeys: Set<String>? = null,
+        @Suppress("UNUSED_PARAMETER") selectedVariantKeys: Set<String>? = null,
     ): Result<List<SavedVariant>> = runCatching {
-        // 명시적 방어 — ViewModel 단에서 빈 set 막아야 하지만 use case 도 입구 체크.
-        require(selectedVariantKeys == null || selectedVariantKeys.isNotEmpty()) {
-            "selectedVariantKeys must be null or non-empty"
-        }
-
         val project = editProjectRepository.getProject(projectId)
             ?: error("Project not found: $projectId")
         val segments = segmentRepository.getByProjectId(projectId)
         require(segments.isNotEmpty()) { "Project has no segments" }
 
-        val allSubtitleClips = subtitleClipRepository.observeClips(projectId).first()
-        // 갤러리 저장 단계의 displayName 분기 (DUB / SUB / DUBSUB) 에서만 사용 — variant 키 산출은
-        // computeAllVariantKeys 가 내부에서 자체 호출하므로 여기서는 별도 산출 불필요.
-        val langsWithSubtitle = collectLangsWithSubtitle(allSubtitleClips)
-        // selectedVariantKeys != null → picker open 시점에 freeze 된 키들. 그 사이 timeline mutation
-        // (자동더빙 결과 도착, 자막 클립 삭제 등) 으로 computeAllVariantKeys 가 다른 set 을 반환하더라도
-        // 사용자가 confirm 한 의도를 우선. selected 키가 더 이상 valid 하지 않은 케이스 (예: "ko" 자막이
-        // 삭제됨) 는 정상 처리됨 — variantSubtitles 가 emptyList 면 자막 없는 영상 burn,
-        // audioOverridePath lookup 결과 null 이면 원본 오디오 사용.
-        val targetLanguages: List<String> = if (selectedVariantKeys != null) {
-            selectedVariantKeys.toList()
-        } else {
-            computeAllVariantKeys(project, allSubtitleClips)
-        }
-        require(targetLanguages.isNotEmpty()) { "No variants selected" }
-
-        val dubClips = dubClipRepository.observeClips(projectId).first()
         val bgmClips = bgmClipRepository.observeClips(projectId).first()
         val separationDirectives = separationDirectiveRepository.getByProject(projectId)
 
@@ -89,176 +45,36 @@ class SaveAllVariantsUseCase(
             separationDirectives.isEmpty() && segments.size == 1 &&
             segments[0].trimStartMs == 0L && segments[0].trimEndMs == 0L
 
-        val renderVariantCount = targetLanguages.count { lang ->
-            !(lang == ExportVariant.KEY_ORIGINAL && noEdits)
-        }
-        val preUploadedInputId: String? = if (renderVariantCount >= 2) {
-            runCatching { uploadInputCacheOnce(segments, dubClips) }.getOrNull()
-        } else null
-
-        // variant 별 진행률 (0..100). 평균값을 onProgress 로 알림.
-        val variantProgress = IntArray(targetLanguages.size)
-        fun publishProgress() {
-            val avg = if (variantProgress.isEmpty()) 0
-            else variantProgress.sum() / variantProgress.size
-            onProgress(avg.coerceIn(0, 100))
-        }
-
-        // 1단계 — 모든 variant 병렬 렌더.
-        val renderedPaths: List<String> = coroutineScope {
-            targetLanguages.mapIndexed { index, languageCode ->
-                async {
-                    val isOriginal = languageCode == ExportVariant.KEY_ORIGINAL
-                    val isOriginalSubtitle = languageCode == ExportVariant.KEY_ORIGINAL_SUBTITLE
-                    if (isOriginal && noEdits) {
-                        variantProgress[index] = 100
-                        publishProgress()
-                        return@async segments[0].sourceUri
-                    }
-                    val audioOverridePath: String? = if (isOriginal || isOriginalSubtitle) null
-                        else project.dubbedAudioPaths[languageCode] ?: project.dubbedAudioPath
-
-                    val request = ExportRequest(
-                        projectId = "$projectId#$languageCode",
-                        outputLanguageCode = languageCode,
-                        segments = segments,
-                        dubClips = dubClips,
-                        bgmClips = bgmClips,
-                        separationDirectives = separationDirectives,
-                        frameWidth = project.frameWidth,
-                        frameHeight = project.frameHeight,
-                        backgroundColorHex = project.backgroundColorHex,
-                        audioOverridePath = audioOverridePath,
-                        preUploadedInputId = preUploadedInputId,
-                    )
-                    val outcome = platformAdapter.executeExport(request) { p ->
-                        // 렌더는 0..90 매핑 — 갤러리 저장 단계 10% 여유.
-                        variantProgress[index] = (p.coerceIn(0, 100) * 90 / 100)
-                        publishProgress()
-                    }
-                    val path = outcome.getOrElse { e ->
-                        error("Render failed for $languageCode: ${e.message}")
-                    }
-                    variantProgress[index] = 90
-                    publishProgress()
-                    path
-                }
-            }.awaitAll()
-        }
-
-        // 2단계 — 갤러리 저장 (직렬). 실패 1건이라도 실패로 간주.
-        // 파일명 prefix:
-        //   - original 또는 무자막/무더빙 → "VID_"
-        //   - 더빙된 언어 (dubbedAudioPaths 또는 dubbedVideoPaths 보유) → "DUB_<LANG>"
-        //   - 자막만 있는 언어 → "SUB_<LANG>"
-        // saveToGallery=false (공유 흐름) 면 갤러리 저장 스킵 — caller 가 결과 path 로 share sheet 등 후속.
-        val saved = mutableListOf<SavedVariant>()
-        targetLanguages.forEachIndexed { i, languageCode ->
-            val path = renderedPaths[i]
-            if (saveToGallery) {
-                val isOriginal = languageCode == ExportVariant.KEY_ORIGINAL
-                val isOriginalSubtitle = languageCode == ExportVariant.KEY_ORIGINAL_SUBTITLE
-                val hasDub = !isOriginal && !isOriginalSubtitle && (
-                    project.dubbedAudioPaths.containsKey(languageCode) ||
-                        project.dubbedVideoPaths.containsKey(languageCode)
-                    )
-                val hasSubtitle = !isOriginal && !isOriginalSubtitle && languageCode in langsWithSubtitle
-                val langTag = languageCode.uppercase()
-                // 더빙 + 같은 lang 자막 동시 burn 케이스는 prefix "DUBSUB_" 로 구분 — 사용자가 갤러리에서
-                // "DUB_KO" 와 "DUBSUB_KO" 를 혼동 없이 식별하도록.
-                val displayName = when {
-                    isOriginal -> "VID_${projectId.hashCode().toUInt()}_$i"
-                    isOriginalSubtitle -> "SUB_원본_${projectId.hashCode().toUInt()}_$i"
-                    hasDub && hasSubtitle -> "DUBSUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
-                    hasDub -> "DUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
-                    hasSubtitle -> "SUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
-                    else -> "VID_${langTag}_${projectId.hashCode().toUInt()}_$i"
-                }
-                gallerySaver.saveVideo(path, displayName).getOrElse { e ->
-                    error("Gallery save failed for $languageCode: ${e.message}")
-                }
+        val renderedPath: String = if (noEdits && segments[0].type == SegmentType.VIDEO) {
+            onProgress(90)
+            segments[0].sourceUri
+        } else {
+            val request = ExportRequest(
+                projectId = "$projectId#${ExportVariant.KEY_ORIGINAL}",
+                outputLanguageCode = ExportVariant.KEY_ORIGINAL,
+                segments = segments,
+                bgmClips = bgmClips,
+                separationDirectives = separationDirectives,
+                frameWidth = project.frameWidth,
+                frameHeight = project.frameHeight,
+                backgroundColorHex = project.backgroundColorHex,
+                preUploadedInputId = null,
+            )
+            platformAdapter.executeExport(request) { p ->
+                onProgress((p.coerceIn(0, 100) * 90 / 100))
+            }.getOrElse { e ->
+                error("Render failed: ${e.message}")
             }
-            variantProgress[i] = 100
-            publishProgress()
-            saved += SavedVariant(languageCode = languageCode, outputPath = path)
+        }
+
+        if (saveToGallery) {
+            val displayName = "VID_${projectId.hashCode().toUInt()}"
+            gallerySaver.saveVideo(renderedPath, displayName).getOrElse { e ->
+                error("Gallery save failed: ${e.message}")
+            }
         }
         onProgress(100)
-        saved
-    }
-
-    /**
-     * Multi-variant 시 video + dub audios 를 BFF 에 1회 업로드. 실패하면 caller 가 inputId 없이
-     * 진행 — 각 variant 가 자체 multipart 업로드로 fallback. (ExportViewModel 동치 로직.)
-     */
-    private suspend fun uploadInputCacheOnce(
-        segments: List<Segment>,
-        dubClips: List<DubClip>,
-    ): String {
-        val firstVideo = segments
-            .filter { it.type == SegmentType.VIDEO }
-            .minByOrNull { it.order }
-            ?: error("No VIDEO segment to cache for multi-variant save")
-
-        val videoBytes = readFileBytes(firstVideo.sourceUri)
-        val videoPart = BinaryPart(
-            fieldName = "video",
-            filename = "video.mp4",
-            bytes = videoBytes,
-            contentType = "video/mp4",
-        )
-        val audioParts = dubClips.mapIndexed { i, clip ->
-            BinaryPart(
-                fieldName = "audios",
-                filename = "audio_$i.mp3",
-                bytes = readFileBytes(clip.audioFilePath),
-                contentType = "audio/mpeg",
-            )
-        }
-        return bffApi.uploadRenderInputs(video = videoPart, audios = audioParts).inputId
-    }
-
-    companion object {
-        /**
-         * 공통 헬퍼 — 이 use case 와 [ListExportVariantsUseCase] 가 같은 키 순서를 쓰도록 한 곳에서 결정.
-         *
-         * 순서: [ExportVariant.KEY_ORIGINAL] → [ExportVariant.KEY_ORIGINAL_SUBTITLE] (원본 자막) →
-         * translation langs (effectiveTargetLanguages 순서 보존).
-         * Translation lang 은 자막 또는 더빙이 실제로 있는 lang 만 포함.
-         */
-        internal fun computeAllVariantKeys(
-            project: EditProject,
-            allSubtitleClips: List<SubtitleClip>,
-        ): List<String> {
-            val langsWithSubtitle = collectLangsWithSubtitle(allSubtitleClips)
-            val langsWithDub = collectLangsWithDub(project)
-            val translationLangs = project.effectiveTargetLanguages
-                .filter { it.isNotBlank() && !it.equals(ExportVariant.KEY_ORIGINAL, ignoreCase = true) }
-                .filter { it in langsWithSubtitle || it in langsWithDub }
-            // 원본 자막 변종 — "" sentinel 로 SUB_원본_ 저장 대상 분리. SSOT 헬퍼 사용.
-            val originalSubtitleVariant: List<String> =
-                if (hasConfirmedOriginalSubtitle(allSubtitleClips, project.pendingReviewTargetLangsCsv)) {
-                    listOf(ExportVariant.KEY_ORIGINAL_SUBTITLE)
-                } else emptyList()
-            return listOf(ExportVariant.KEY_ORIGINAL) + originalSubtitleVariant + translationLangs
-        }
-
-        /**
-         * 자막이 존재하는 lang 집합 (원본 lang="" 은 제외 — 별도 sentinel 로 처리).
-         * `:save` use case 들이 공유하는 산출 helper.
-         */
-        internal fun collectLangsWithSubtitle(allSubtitleClips: List<SubtitleClip>): Set<String> =
-            allSubtitleClips
-                .map { it.languageCode }
-                .filter { it.isNotBlank() }
-                .toSet()
-
-        /**
-         * 더빙이 존재하는 lang 집합. `dubbedAudioPaths` 와 `dubbedVideoPaths` 의 union.
-         */
-        internal fun collectLangsWithDub(project: EditProject): Set<String> =
-            (project.dubbedAudioPaths.keys + project.dubbedVideoPaths.keys)
-                .filter { it.isNotBlank() }
-                .toSet()
+        listOf(SavedVariant(languageCode = ExportVariant.KEY_ORIGINAL, outputPath = renderedPath))
     }
 }
 
