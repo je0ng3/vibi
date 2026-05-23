@@ -296,6 +296,14 @@ class TimelineViewModel constructor(
      * 저장 완료 후 InputScreen 으로 돌아가는 1회성 신호. UI 가 collect 해 nav stack pop.
      * SaveStatus.DONE 만으로 navigation 트리거하면 재진입 시 즉시 또 pop 되는 사고가 나므로 분리.
      */
+    init {
+        // local.properties 의 BFF_BASE_URL 누락 시 stem URL 이 relative 가 돼 iOS AVPlayer
+        // 가 silent fail — fail-fast 로 설정 누락을 명시.
+        require(bffBaseUrl.isNotBlank()) {
+            "bffBaseUrl 속성이 비어있음 — local.properties 의 BFF_BASE_URL 또는 KoinHelper.initKoin 의 property 누락"
+        }
+    }
+
     private val _navigateBackHome = MutableSharedFlow<Unit>()
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
 
@@ -1004,8 +1012,7 @@ class TimelineViewModel constructor(
                 _navigateBackHome.emit(Unit)
             },
             onFailure = { e ->
-                // 사용자 메시지는 generic (한국어 톤 일관 + raw URI/IP/exception name 노출 금지).
-                // 상세 진단은 추후 Logger.e(e) 분리. (현재 :shared 로깅 미도입 — 향후 추가.)
+                com.vibi.shared.platform.logError("TimelineVM", "save failed", e)
                 _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.FAILED("저장 실패"))
             }
         )
@@ -1054,6 +1061,7 @@ class TimelineViewModel constructor(
                         _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.DONE)
                     },
                     onFailure = { e ->
+                        com.vibi.shared.platform.logError("TimelineVM", "share sheet failed", e)
                         _uiState.value = _uiState.value.copy(
                             shareStatus = ShareStatus.FAILED("공유 실패")
                         )
@@ -1061,6 +1069,7 @@ class TimelineViewModel constructor(
                 )
             },
             onFailure = { e ->
+                com.vibi.shared.platform.logError("TimelineVM", "share render failed", e)
                 _uiState.value = _uiState.value.copy(
                     shareStatus = ShareStatus.FAILED("공유 실패")
                 )

@@ -50,9 +50,11 @@ class SaveAllVariantsUseCase(
             val separationDirectives = separationDirectiveRepository.getByProject(projectId)
 
             val firstSeg = segments[0]
-            val canBypass = !isProjectEdited(project, segments, bgmClips, separationDirectives) &&
+            // bypass 조건: 무편집 + 단일 VIDEO segment. sourceUri 형식 변환은 gallerySaver /
+            // shareSheetLauncher 가 platform-side resolver 로 처리하므로 가드 불필요.
+            val canBypass = segments.size == 1 &&
                 firstSeg.type == SegmentType.VIDEO &&
-                firstSeg.sourceUri.startsWith("/") || firstSeg.sourceUri.startsWith("file:")
+                !isProjectEdited(project, segments, bgmClips, separationDirectives)
 
             val renderedPath: String = if (canBypass) {
                 onProgress(100)
