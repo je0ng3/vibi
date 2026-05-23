@@ -1140,19 +1140,32 @@ private object TimelineBarSpec {
     val RulerMinorTickHeight = 3.dp
 }
 
-/** 좌/우 트림 (음원분리 range + BGM 클립) 공용 chevron thumb. */
+/**
+ * 좌/우 트림 (음원분리 range + BGM 클립) 공용 chevron thumb.
+ *
+ * [outerCornerSharp] true 면 boundary 에 flush 된 쪽 (Start=left, End=right) 의 위·아래 모서리만
+ * 직각으로 처리 — chevron 의 둥근 corner 가 만들어내던 fill/bar 와의 1-2dp 단차 ("따로 노는" 시각)
+ * 차단. inner 쪽 (range 안쪽으로 향하는 면) 모서리는 그대로 둥글게 유지해 CapCut 식 부드러운 느낌.
+ */
 @Composable
 private fun ChevronThumb(
     side: BgmTrimSide,
     height: androidx.compose.ui.unit.Dp,
     handleColor: Color,
     gripColor: Color,
+    outerCornerSharp: Boolean = false,
 ) {
+    val r = TimelineBarSpec.HandleCornerRadius
+    val shape = if (!outerCornerSharp) RoundedCornerShape(r)
+        else when (side) {
+            BgmTrimSide.Start -> RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = r, bottomEnd = r)
+            BgmTrimSide.End -> RoundedCornerShape(topStart = r, bottomStart = r, topEnd = 0.dp, bottomEnd = 0.dp)
+        }
     Box(
         modifier = Modifier
             .width(TimelineBarSpec.ChevronThumbWidth)
             .height(height)
-            .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
+            .clip(shape)
             .background(handleColor),
         contentAlignment = Alignment.Center,
     ) {
@@ -1573,10 +1586,18 @@ private fun UnifiedTimelineBar(
                 )
 
                 // 좌/우 chevron 핸들 — BGM 트림 핸들과 동일 디자인. hit zone 은 파형 높이만큼만.
+                // hit zone offsetX 는 [0, totalWidthDp - hit] 로 clamp — 풀 선택 시 핸들이 컨테이너
+                // 바깥으로 절반 잘려 chevron 이 안 보이던 문제 차단. boundary 닿을 때 chevron 정렬을
+                // Center → CenterStart/CenterEnd 로 바꿔, chevron 의 바깥 엣지가 영상 시작·끝 라인에
+                // flush. range 가운데 영역에선 기존처럼 boundary 에 centered (straddle).
                 val minGap = TimelineBarSpec.MinRangeGapMs
                 val rangeHandleOffsetY = (playbackRegionHeight - rangeFillHeight) / 2
+                val maxHandleOffsetX = (totalWidthDp - handleHitWidth).coerceAtLeast(0.dp)
+                val atLeftBoundary = rangeStartMs <= 0L
+                val atRightBoundary = rangeEndMs >= totalMs
                 RangeHandle(
-                    offsetX = rangeStartDp - handleHitWidth / 2,
+                    offsetX = (rangeStartDp - handleHitWidth / 2)
+                        .coerceIn(0.dp, maxHandleOffsetX),
                     offsetY = rangeHandleOffsetY,
                     hitWidth = handleHitWidth,
                     hitHeight = rangeFillHeight,
@@ -1585,6 +1606,7 @@ private fun UnifiedTimelineBar(
                     gripColor = markerColor,
                     gripHeight = rangeFillHeight,
                     chevron = BgmTrimSide.Start,
+                    contentAlignment = if (atLeftBoundary) Alignment.CenterStart else Alignment.Center,
                     totalWidthPx = totalWidthPx,
                     totalMs = totalMs,
                     baseMsProvider = { currentRangeStart },
@@ -1592,7 +1614,8 @@ private fun UnifiedTimelineBar(
                     onChange = onRangeStartChange,
                 )
                 RangeHandle(
-                    offsetX = rangeStartDp + rangeWidthDp - handleHitWidth / 2,
+                    offsetX = (rangeStartDp + rangeWidthDp - handleHitWidth / 2)
+                        .coerceIn(0.dp, maxHandleOffsetX),
                     offsetY = rangeHandleOffsetY,
                     hitWidth = handleHitWidth,
                     hitHeight = rangeFillHeight,
@@ -1601,6 +1624,7 @@ private fun UnifiedTimelineBar(
                     gripColor = markerColor,
                     gripHeight = rangeFillHeight,
                     chevron = BgmTrimSide.End,
+                    contentAlignment = if (atRightBoundary) Alignment.CenterEnd else Alignment.Center,
                     totalWidthPx = totalWidthPx,
                     totalMs = totalMs,
                     baseMsProvider = { currentRangeEnd },
@@ -1732,11 +1756,10 @@ private fun UnifiedTimelineBar(
                         bgmIndexByClipId[clip.id], tokens,
                     )
                     val clipContentColor = Color(0xFF0C0A09)
-                    // selection border 제거 — 사용자가 (1) bgmRangeMode 일 땐 top/bottom range 바만,
-                    // (2) 일반 selection 일 땐 좌/우 trim 핸들만 보이는 상태를 정상으로 인지. 두 모드 간
-                    // 전환 시 border 가 한 쪽에만 나타나 불일치 발생 (target 이 BGM→Video 로 바뀌어
-                    // bgmRangeMode=false 가 되면 bar 가 사라지고 border 만 추가됨). selectedBgmClipId 가
-                    // 살아있다는 사실은 좌/우 핸들 또는 하단 EditActionsPanel 로 이미 신호됨.
+                    // 선택 시 영상 range 선택과 동일 visual 적용 — accent fill 0.32a + top/bottom 2dp
+                    // accent 바. 영상/BGM 양쪽 트랙이 같은 디자인 언어를 공유해 사용자가 "선택 됨" 신호를
+                    // 트랙 종류와 무관하게 동일하게 인지. bgmRangeMode (전체 BGM 레인에 range bar 가 별도로
+                    // 그려지는 모드) 에선 본 per-clip selection visual 은 미렌더 — 두 시각이 겹쳐 noisy.
                     Box(
                         modifier = Modifier
                             .offset(x = offsetXDp, y = offsetYDp)
@@ -1801,6 +1824,15 @@ private fun UnifiedTimelineBar(
                                 modifier = Modifier.matchParentSize(),
                             )
                         }
+                        // 선택 시 accent fill — 영상 RangeFillStrip 의 fillAlpha=0.32 와 동일. 라벨 앞에
+                        // 놓아 라벨 가독성은 그대로, 파형/배경만 accent 톤으로 tint.
+                        if (isSelected && !bgmRangeMode) {
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .background(accent.copy(alpha = 0.32f))
+                            )
+                        }
                         // (b) 라벨 — 캡컷처럼 수직 중앙에 위치, 좌측에서 시작. 색은 흰색 고정으로 어떤 블록
                         // 배경(brand accent / 코랄) 위에서도 가독성 확보. 이모지(=Unicode 글리프) 대신
                         // SVG Material 아이콘으로 플랫폼/폰트 차이 무관하게 균일 렌더.
@@ -1837,19 +1869,43 @@ private fun UnifiedTimelineBar(
                                 )
                             }
                         }
+                        // 선택 시 top/bottom accent 바 — 영상 RangeFillStrip 의 가장자리 바와 동일 두께
+                        // (TimelineBarSpec.RangeBorderThickness = 2dp). align 으로 클립 위·아래 엣지에 flush.
+                        if (isSelected && !bgmRangeMode) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(TimelineBarSpec.RangeBorderThickness)
+                                    .align(Alignment.TopStart)
+                                    .background(accent)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(TimelineBarSpec.RangeBorderThickness)
+                                    .align(Alignment.BottomStart)
+                                    .background(accent)
+                            )
+                        }
                     }
                     // (c) 트림 핸들 — 선택된 클립의 좌·우 엣지. bgmRangeMode 면 미렌더 (range 핸들과 충돌 방지).
                     if (isSelected && bgmDragEnabled && !bgmRangeMode) {
-                        // 핸들 hit zone 은 **항상 본체 바깥** — 좌 핸들은 좌측 32dp, 우 핸들은 우측 32dp.
-                        // 이전엔 wide clip 에서 hit zone 절반을 본체 안쪽으로 밀어 시각 elegance 를 챙겼지만
-                        // 본체 가장자리 16dp 가 핸들에 흡수돼 사용자가 재탭 선택해제 못 함. tap detector chain
-                        // 으로도 두 pointerInput 간 down 분배가 케이스별로 일정하지 않아 — hit zone 자체를
-                        // 분리해 본체 100% tappable 로 만드는 게 robust. chevron 시각은 hit zone 의 inner
-                        // edge 정렬로 본체 엣지에 그대로 붙어 보이도록.
-                        val leftHandleOffsetX = offsetXDp - TimelineBarSpec.HandleHitWidth
-                        val rightHandleOffsetX = offsetXDp + widthDp
-                        val leftVisualAlign = Alignment.CenterEnd
-                        val rightVisualAlign = Alignment.CenterStart
+                        // 영상 range 선택의 chevron 핸들과 동일 디자인 — hit zone 이 boundary 에 centered
+                        // (half-in/half-out straddle). 클립이 timeline 끝에 닿아 hit zone 이 컨테이너 바깥
+                        // 으로 잘릴 땐 [0, laneWidthDp - hit] 로 clamp + chevron 정렬을 boundary 쪽으로
+                        // 바꿔 (CenterStart/CenterEnd) chevron 의 바깥 엣지가 timeline 끝 라인에 flush.
+                        // 핸들 hit zone 이 클립 본체 가장자리 일부를 덮어도 BgmTrimHandle 의 onTap 이
+                        // onBgmSelectClip 으로 흘려보내 재탭 선택해제는 그대로 동작.
+                        val maxHandleOffsetX = (laneWidthDp - TimelineBarSpec.HandleHitWidth)
+                            .coerceAtLeast(0.dp)
+                        val rawLeftOffsetX = offsetXDp - TimelineBarSpec.HandleHitWidth / 2
+                        val rawRightOffsetX = offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2
+                        val leftHandleOffsetX = rawLeftOffsetX.coerceIn(0.dp, maxHandleOffsetX)
+                        val rightHandleOffsetX = rawRightOffsetX.coerceIn(0.dp, maxHandleOffsetX)
+                        val atLeftBoundary = effectiveStartMs <= 0L
+                        val atRightBoundary = effectiveStartMs + globalDurMs >= totalMs
+                        val leftVisualAlign = if (atLeftBoundary) Alignment.CenterStart else Alignment.Center
+                        val rightVisualAlign = if (atRightBoundary) Alignment.CenterEnd else Alignment.Center
                         // 좌 핸들 — sourceTrimStartMs + startMs 동시 갱신.
                         BgmTrimHandle(
                             side = BgmTrimSide.Start,
@@ -2636,6 +2692,12 @@ private fun RangeHandle(
      * 가득 채우면서 트림 핸들도 같은 언어로 보이도록.
      */
     chevron: BgmTrimSide? = null,
+    /**
+     * hit zone 안에서 chevron 시각의 정렬. 기본 Center — chevron 이 boundary 에 straddle (절반 안/절반 밖).
+     * boundary 가 timeline 끝에 닿아 hit zone 이 clamp 된 경우 호출부에서 CenterStart/CenterEnd 로 넘겨
+     * chevron 이 영상 끝 라인에 flush 하게.
+     */
+    contentAlignment: Alignment = Alignment.Center,
 ) {
     // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
@@ -2662,14 +2724,19 @@ private fun RangeHandle(
                 )
             }
             .pointerInput(Unit) { detectTapGestures(onTap = { }) },
-        contentAlignment = Alignment.Center
+        contentAlignment = contentAlignment,
     ) {
         if (chevron != null) {
+            // contentAlignment 가 boundary 쪽 (CenterStart/CenterEnd) 으로 강제된 케이스 = chevron 외곽이
+            // timeline 끝 라인에 flush — 그 쪽 모서리를 직각으로 만들어 fill/top·bottom bar 와 시각 단차 차단.
+            val outerSharp = (chevron == BgmTrimSide.Start && contentAlignment == Alignment.CenterStart) ||
+                (chevron == BgmTrimSide.End && contentAlignment == Alignment.CenterEnd)
             ChevronThumb(
                 side = chevron,
                 height = gripHeight,
                 handleColor = handleColor,
                 gripColor = gripColor,
+                outerCornerSharp = outerSharp,
             )
         } else {
             // 기존 시각 — 얇은 막대 두 개. hit zone 은 fillMaxHeight 유지.
@@ -2960,7 +3027,16 @@ private fun BgmTrimHandle(
             },
         contentAlignment = visualAlignment,
     ) {
-        ChevronThumb(side = side, height = height, handleColor = handleColor, gripColor = gripColor)
+        // boundary flush (CenterStart/CenterEnd) 일 땐 outer 모서리만 직각 — fill/top·bottom bar 와 단차 차단.
+        val outerSharp = (side == BgmTrimSide.Start && visualAlignment == Alignment.CenterStart) ||
+            (side == BgmTrimSide.End && visualAlignment == Alignment.CenterEnd)
+        ChevronThumb(
+            side = side,
+            height = height,
+            handleColor = handleColor,
+            gripColor = gripColor,
+            outerCornerSharp = outerSharp,
+        )
     }
 }
 
