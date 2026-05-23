@@ -24,7 +24,11 @@ data class SoundCardModel(
     val rangeEndMs: Long?,
     /** SPEAKER 카드만 — 1-based. SoundCard chip + 타임라인 파형 highlight 가 같은 팔레트로 매핑. */
     val speakerIndex: Int? = null,
-    /** BGM 카드만 — startMs 정렬 1-based. SoundCard chip + 타임라인 클립 블록이 BgmPalette 로 cycle. */
+    /**
+     * BGM 카드만 — createdAt(추가 순서) 정렬 1-based. SoundCard chip + 타임라인 클립 블록이 같은
+     * BgmPalette cycle 로 매핑. **startMs(위치) 가 아니라 createdAt 정렬을 쓰는 이유**: 사용자가
+     * 클립을 drag 해 위치를 바꿔도 색이 흔들리지 않게 — "처음 지정된 색은 변하지 않음".
+     */
     val bgmIndex: Int? = null,
 )
 
@@ -87,13 +91,14 @@ internal fun isRecordingSourceUri(sourceUri: String): Boolean {
  * BGM 카드 label — sourceUri 의 마지막 path segment (확장자 제외) 를 사용해 사용자가 삽입한
  * 음원의 실제 이름이 카드에 노출되게 한다.
  *
- * - 녹음은 [recordingOrdinal] 가 null/1 이면 "녹음", 2+ 이면 "녹음 N" (호출부가 timeline 순서로 부여).
+ * - 녹음은 [recordingOrdinal] 가 있으면 "녹음N" (예: "녹음1"), 없으면 "녹음".
+ *   호출부는 보통 추가 순서 (createdAt) 기준 ordinal 을 1 부터 부여.
  * - Android picker 구버전 자동 이름 `audio_<ts>.<ext>` → "음원"
  * - Android picker 신규 이름 `<원본>_<ts>.<ext>` → 접미사 제거 후 원본 노출.
  */
 internal fun bgmDisplayLabel(sourceUri: String, recordingOrdinal: Int? = null): String {
     if (isRecordingSourceUri(sourceUri)) {
-        return if (recordingOrdinal != null) "녹음 $recordingOrdinal" else "녹음"
+        return if (recordingOrdinal != null) "녹음$recordingOrdinal" else "녹음"
     }
     val lastSegment = sourceUri.substringAfterLast('/')
     val withoutExt = lastSegment.substringBeforeLast('.', missingDelimiterValue = lastSegment)
@@ -143,15 +148,21 @@ fun buildSoundDeckGroups(
                 cards = cards,
             )
         }
-    // timeline 순서로 정렬 후 녹음만 추려 1-based 순번 부여. 2+ 일 때만 라벨에 노출 (단일 녹음은 "녹음").
+    // 카드 표시 순서 — timeline 위치(startMs) 기준 정렬. 사용자가 카드를 좌→우로 훑을 때
+    // 실제 영상 흐름 순으로 보이게.
     val sortedBgm = bgmClips.sortedBy { it.startMs }
-    val recordingOrdinal: Map<String, Int> = run {
-        val recordings = sortedBgm.filter { isRecordingSourceUri(it.sourceUri) }
-        if (recordings.size < 2) emptyMap()
-        else recordings.withIndex().associate { (i, b) -> b.id to (i + 1) }
-    }
+    // 색·녹음 번호는 추가 순서(createdAt) 기준 stable 1-based — 위치(startMs) 가 바뀌어도
+    // 절대 변하지 않게. createdAt 동률이면 id 로 안정 정렬.
+    val sortedByCreation = bgmClips.sortedWith(compareBy({ it.createdAt }, { it.id }))
+    val bgmIndexByClipId: Map<String, Int> = sortedByCreation
+        .withIndex()
+        .associate { (i, b) -> b.id to (i + 1) }
+    val recordingOrdinal: Map<String, Int> = sortedByCreation
+        .filter { isRecordingSourceUri(it.sourceUri) }
+        .withIndex()
+        .associate { (i, b) -> b.id to (i + 1) }
     val bgmCards = sortedBgm
-        .mapIndexed { i, bgm ->
+        .map { bgm ->
             SoundCardModel(
                 key = "bgm:${bgm.id}",
                 label = bgmDisplayLabel(bgm.sourceUri, recordingOrdinal[bgm.id]),
@@ -163,7 +174,7 @@ fun buildSoundDeckGroups(
                 audioUrl = bgm.sourceUri,
                 rangeStartMs = bgm.startMs,
                 rangeEndMs = bgm.startMs + bgm.effectiveDurationMs,
-                bgmIndex = i + 1,
+                bgmIndex = bgmIndexByClipId[bgm.id],
             )
         }
     val bgmGroup = if (bgmCards.isEmpty()) emptyList()

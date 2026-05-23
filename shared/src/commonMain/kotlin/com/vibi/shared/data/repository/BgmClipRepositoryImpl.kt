@@ -51,6 +51,9 @@ class BgmClipRepositoryImpl constructor(
         speedScale = speedScale,
         sourceTrimStartMs = sourceTrimStartMs,
         sourceTrimEndMs = sourceTrimEndMs,
+        createdAt = createdAt,
+        originalSourceUri = originalSourceUri,
+        voiceOnlyUri = voiceOnlyUri,
     )
 
     private fun BgmClip.toEntity() = BgmClipEntity(
@@ -63,5 +66,8 @@ class BgmClipRepositoryImpl constructor(
         speedScale = speedScale,
         sourceTrimStartMs = sourceTrimStartMs,
         sourceTrimEndMs = sourceTrimEndMs,
+        createdAt = createdAt,
+        originalSourceUri = originalSourceUri,
+        voiceOnlyUri = voiceOnlyUri,
     )
 }

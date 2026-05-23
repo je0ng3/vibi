@@ -14,4 +14,7 @@ data class BgmClipEntity(
     val speedScale: Float = 1.0f,
     val sourceTrimStartMs: Long = 0L,
     val sourceTrimEndMs: Long = 0L,
+    val createdAt: Long = 0L,
+    val originalSourceUri: String? = null,
+    val voiceOnlyUri: String? = null,
 )

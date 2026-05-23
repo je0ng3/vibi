@@ -1,5 +1,6 @@
 package com.vibi.shared.domain.usecase.bgm
 
+import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.generateId
 
 import com.vibi.shared.domain.model.BgmClip
@@ -35,6 +36,7 @@ class AddBgmClipUseCase constructor(
             volumeScale = clamped,
             sourceTrimStartMs = sourceTrimStartMs,
             sourceTrimEndMs = sourceTrimEndMs,
+            createdAt = currentTimeMillis(),
         )
         bgmClipRepository.addClip(clip)
         return clip

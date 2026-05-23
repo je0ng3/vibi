@@ -152,6 +152,17 @@ fun Set<EditTarget>.hasBgm(): Boolean = any { it is EditTarget.Bgm }
  */
 enum class PreviewMode { MIX, ORIGINAL }
 
+/**
+ * BGM "배경음 제거" 작업의 진행 단계. 캐시(voiceOnlyUri) 가 채워진 이후 토글은 즉시(state 변경 없이)
+ * 라 본 enum 은 첫 분리 작업 진행 중 / 실패 만 다룬다.
+ */
+sealed interface BgmRemovalProgress {
+    /** 분리 작업 진행 중 — UI 는 버튼 비활성 + 로딩 표시. */
+    data object Processing : BgmRemovalProgress
+    /** 마지막 시도 실패 — 사용자가 다시 누르면 새 분리 시도. */
+    data class Failed(val message: String) : BgmRemovalProgress
+}
+
 data class TimelineUiState(
     val projectId: String = "",
     val segments: List<Segment> = emptyList(),
@@ -219,6 +230,12 @@ data class TimelineUiState(
     val bgmError: String? = null,
     val bgmTrimRequest: BgmTrimRequest? = null,
     val bgmLaneCount: Int = 3,
+    /**
+     * BGM "배경음 제거" 작업 진행 상태 (clipId → 상태). 캐시(BgmClip.voiceOnlyUri) 가 채워지기
+     * 전까지의 ephemeral 진행만 추적 — 캐시 채워진 뒤엔 본 맵에서 제거되고 UI 가 BgmClip 자체의
+     * sourceUri / voiceOnlyUri 비교로 토글 라벨 결정. Processing 동안 같은 클립 재요청은 무시.
+     */
+    val bgmBackgroundRemovalProgress: Map<String, BgmRemovalProgress> = emptyMap(),
     val audioSeparation: AudioSeparationUiState? = null,
     val showAudioSeparationSheet: Boolean = false,
     val processingSeparations: List<ProcessingSeparation> = emptyList(),
@@ -699,6 +716,10 @@ class TimelineViewModel constructor(
             SelectionTarget.Bgm -> state.selectedBgmClipId
         }
         val next = if (id != null && id == current) null else id
+        // BGM 을 새로 선택(next != null) 한 경우엔 영상 다듬기/range 선택 모드를 함께 종료. 그래야
+        // 하단 액션 토글이 Video 에서 Bgm 으로 교체된다 — 안 그러면 BGM 을 골랐는데 영상 토글이
+        // 그대로 남아 사용자가 어느 트랙을 편집하는지 혼선.
+        val switchingToBgm = target == SelectionTarget.Bgm && next != null
         _uiState.value = state.copy(
             selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
             selectedImageClipId = if (target == SelectionTarget.Image) next else null,
@@ -706,6 +727,12 @@ class TimelineViewModel constructor(
             selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
+            isSegmentEditMode = if (switchingToBgm) false else state.isSegmentEditMode,
+            isRangeSelecting = if (switchingToBgm) false else state.isRangeSelecting,
+            editTargets = if (switchingToBgm) setOf(EditTarget.Video) else state.editTargets,
+            rangeTargetSegmentId = if (switchingToBgm) null else state.rangeTargetSegmentId,
+            pendingRangeStartMs = if (switchingToBgm) 0L else state.pendingRangeStartMs,
+            pendingRangeEndMs = if (switchingToBgm) 0L else state.pendingRangeEndMs,
         )
     }
 
@@ -1254,6 +1281,11 @@ class TimelineViewModel constructor(
             editTargets = targets.ifEmpty { setOf(EditTarget.Video) },
             rangeTargetSegmentId = seg.id,
             selectedSegmentId = seg.id,
+            // 영상 편집 모드 진입 = 단일 선택 모델상 BGM/이미지/텍스트 선택 해제. 안 그러면 deck
+            // 카드 highlight 또는 잠재적 BGM 하단바가 영상 모드와 동시에 잡힘.
+            selectedBgmClipId = null,
+            selectedImageClipId = null,
+            selectedTextOverlayId = null,
             pendingRangeStartMs = segStart,
             pendingRangeEndMs = segEnd,
             showRangeActionSheet = false,
@@ -1832,6 +1864,7 @@ class TimelineViewModel constructor(
                             volumeScale = bgm.volumeScale,
                             speedScale = bgm.speedScale,
                             lane = bgm.lane,
+                            createdAt = currentTimeMillis(),
                         )
                     )
                 }
@@ -1925,6 +1958,7 @@ class TimelineViewModel constructor(
                         sourceTrimStartMs = bgm.sourceTrimStartMs,
                         sourceTrimEndMs = bgm.sourceTrimEndMs,
                         lane = bgm.lane,
+                        createdAt = currentTimeMillis(),
                     )
                 )
             }
@@ -2591,6 +2625,161 @@ class TimelineViewModel constructor(
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(bgmError = e.message)
             }
+        }
+    }
+
+    /**
+     * BGM 단일 클립 복제 — 선택된 클립의 모든 속성(sourceUri/trim/volume/speed/lane + 캐시된
+     * originalSourceUri/voiceOnlyUri) 을 그대로 복사하여 원본 끝(startMs + effectiveDuration) 에
+     * 새 클립 추가. createdAt 은 새로(= 색·번호 새로) 부여, id 도 새로.
+     */
+    fun onDuplicateBgmClip(clipId: String) {
+        viewModelScope.launch {
+            val original = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return@launch
+            val newStartMs = original.startMs + original.effectiveDurationMs
+            bgmClipRepository.addClip(
+                BgmClip(
+                    id = generateId(),
+                    projectId = original.projectId,
+                    sourceUri = original.sourceUri,
+                    sourceDurationMs = original.sourceDurationMs,
+                    startMs = newStartMs,
+                    volumeScale = original.volumeScale,
+                    speedScale = original.speedScale,
+                    sourceTrimStartMs = original.sourceTrimStartMs,
+                    sourceTrimEndMs = original.sourceTrimEndMs,
+                    lane = original.lane,
+                    createdAt = currentTimeMillis(),
+                    originalSourceUri = original.originalSourceUri,
+                    voiceOnlyUri = original.voiceOnlyUri,
+                )
+            )
+            pushUndoState()
+        }
+    }
+
+    /**
+     * BGM "배경음 제거 ↔ 원래대로" 토글.
+     *
+     * - 현재 voice-only 활성 ([BgmClip.isBackgroundRemoved] == true) → sourceUri 를 originalSourceUri 로
+     *   되돌림. voiceOnlyUri 캐시는 보존.
+     * - voiceOnlyUri 캐시가 이미 있음 (한 번 분리한 적 있고 지금은 원본) → sourceUri 를 voiceOnlyUri 로
+     *   즉시 swap. originalSourceUri 도 동일하게 유지(이미 채워져 있음).
+     * - 캐시 없음 (첫 분리) → headless 음원분리 시작, Ready 시 voice_all stem URL 을 voiceOnlyUri 에
+     *   저장 + originalSourceUri 에 현 sourceUri 보존 + sourceUri swap. Failed 는 [bgmBackgroundRemovalProgress]
+     *   에 메시지 기록.
+     *
+     * Processing 중 같은 클립 재요청은 무시. 다른 BGM 의 분리 작업과 무관 (각자 job).
+     */
+    fun onToggleBgmBackgroundRemoval(clipId: String) {
+        val state = _uiState.value
+        val clip = state.bgmClips.firstOrNull { it.id == clipId } ?: return
+        if (state.bgmBackgroundRemovalProgress[clipId] is BgmRemovalProgress.Processing) return
+
+        // 1. 이미 voice-only 활성 → 원래대로 (instant swap, 캐시 보존)
+        if (clip.isBackgroundRemoved) {
+            val original = clip.originalSourceUri ?: return // invariant 깨졌으면 no-op
+            viewModelScope.launch {
+                bgmClipRepository.updateClip(clip.copy(sourceUri = original))
+                clearRemovalProgress(clipId)
+                pushUndoState()
+            }
+            return
+        }
+
+        // 2. 캐시된 voice-only 가 있고 지금은 원본 → 캐시로 즉시 swap (재분리 없음)
+        val cached = clip.voiceOnlyUri
+        if (cached != null) {
+            viewModelScope.launch {
+                bgmClipRepository.updateClip(
+                    clip.copy(
+                        sourceUri = cached,
+                        // originalSourceUri 가 비어 있을 수 없는 invariant 지만 안전망.
+                        originalSourceUri = clip.originalSourceUri ?: clip.sourceUri,
+                    )
+                )
+                clearRemovalProgress(clipId)
+                pushUndoState()
+            }
+            return
+        }
+
+        // 3. 첫 분리 — 백그라운드 separation job 띄움 (sheet 없이).
+        setRemovalProgress(clipId, BgmRemovalProgress.Processing)
+        val originalUri = clip.sourceUri
+        viewModelScope.launch {
+            val jobResult = startAudioSeparation(
+                sourceUri = originalUri,
+                mediaType = SeparationMediaType.AUDIO,
+                numberOfSpeakers = 2,
+            )
+            val jobId = jobResult.getOrElse { err ->
+                setRemovalProgress(
+                    clipId,
+                    BgmRemovalProgress.Failed(err.message ?: ERROR_SEPARATION_GENERIC),
+                )
+                return@launch
+            }
+            try {
+                pollSeparation(jobId).collect { status ->
+                    when (status) {
+                        is SeparationStatus.Processing -> { /* keep Processing state */ }
+                        is SeparationStatus.Ready -> {
+                            val baseTrim = bffBaseUrl.trimEnd('/')
+                            val voiceStem = status.stems.firstOrNull {
+                                it.stemId == Stem.STEM_ID_VOICE_ALL
+                            }
+                            if (voiceStem == null) {
+                                setRemovalProgress(
+                                    clipId,
+                                    BgmRemovalProgress.Failed("voice_all stem 없음"),
+                                )
+                                return@collect
+                            }
+                            val absUrl = if (voiceStem.url.startsWith("http")) voiceStem.url
+                                else "$baseTrim/${voiceStem.url.trimStart('/')}"
+                            // 최신 clip 다시 가져오기 — 사용자가 분리 진행 중 clip 의 다른 속성
+                            // (volume/startMs 등) 을 바꿨을 수 있어 stale copy 로 덮어쓰면 안 됨.
+                            val latest = _uiState.value.bgmClips.firstOrNull { it.id == clipId }
+                                ?: return@collect
+                            bgmClipRepository.updateClip(
+                                latest.copy(
+                                    sourceUri = absUrl,
+                                    originalSourceUri = originalUri,
+                                    voiceOnlyUri = absUrl,
+                                )
+                            )
+                            clearRemovalProgress(clipId)
+                            pushUndoState()
+                        }
+                        is SeparationStatus.Failed -> setRemovalProgress(
+                            clipId,
+                            BgmRemovalProgress.Failed(status.progressReason ?: ERROR_SEPARATION_GENERIC),
+                        )
+                        is SeparationStatus.Consumed -> setRemovalProgress(
+                            clipId,
+                            BgmRemovalProgress.Failed(ERROR_SEPARATION_CONSUMED),
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                setRemovalProgress(
+                    clipId,
+                    BgmRemovalProgress.Failed(e.message ?: ERROR_SEPARATION_GENERIC),
+                )
+            }
+        }
+    }
+
+    private fun setRemovalProgress(clipId: String, progress: BgmRemovalProgress) {
+        _uiState.update { st ->
+            st.copy(bgmBackgroundRemovalProgress = st.bgmBackgroundRemovalProgress + (clipId to progress))
+        }
+    }
+
+    private fun clearRemovalProgress(clipId: String) {
+        _uiState.update { st ->
+            st.copy(bgmBackgroundRemovalProgress = st.bgmBackgroundRemovalProgress - clipId)
         }
     }
 

@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
@@ -34,12 +38,16 @@ import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 
 /**
- * 다듬기(볼륨/속도/secondary/삭제) 액션 패널 — 영상 다듬기 모드(전역) 와 BGM 카드 in-card expansion
- * 양쪽에서 동일 레이아웃으로 재사용. 볼륨/속도는 토글, secondary/삭제는 즉시 액션.
+ * 다듬기(볼륨/속도/secondary/삭제) 액션 패널 — 영상 다듬기 모드(전역) 와 BGM 카드 양쪽에서 동일
+ * 레이아웃으로 재사용. 볼륨/속도는 토글(슬라이더 펼침), secondary/삭제는 즉시 액션. 4 개 모두
+ * 아이콘 버튼 — 라벨 문자열은 접근성용 contentDescription 으로만 남음 (글리프/짧은 텍스트가 좁은
+ * 버튼 폭에서 잘리지 않게).
  *
  * - [title] 빈 문자열이면 헤더의 제목 영역 생략.
- * - [secondaryActionLabel] / [onSecondaryAction] — 영상은 "복제", BGM 은 "배경음 제거" 등 컨텍스트별
- *   세 번째 액션을 자유 라벨링. 색·outlined 스타일은 동일.
+ * - [secondaryActionIcon] / [secondaryActionContentDescription] / [onSecondaryAction] — 컨텍스트별 3번째 액션.
+ *   영상·BGM 모두 "복제" 라 ContentCopy 아이콘. 추후 다른 액션으로 교체해도 같은 슬롯에서 처리.
+ * - [tertiaryActionLabel] — 옵셔널 5번째 슬롯. BGM 의 "배경음 제거 ↔ 원래대로" 토글용. 텍스트로
+ *   유지 — 상태가 사용자에게 즉시 분간되어야 함 (같은 아이콘으로는 토글 방향 식별 불가).
  * - [onCancel] null 이면 닫기(X) 버튼 생략 — BGM in-card 의 경우 부모 카드 collapse 가 닫기 역할.
  */
 @Composable
@@ -51,10 +59,16 @@ fun EditActionsPanel(
     onSpeedChange: (Float) -> Unit,
     onApplyVolume: (Float) -> Unit,
     onApplySpeed: (Float) -> Unit,
-    secondaryActionLabel: String,
+    secondaryActionIcon: ImageVector,
+    secondaryActionContentDescription: String,
     onSecondaryAction: () -> Unit,
     onDelete: () -> Unit,
     onCancel: (() -> Unit)? = null,
+    // 5번째(맨 오른쪽) 액션 — 옵셔널. BGM 의 "배경음 제거 ↔ 원래대로" 같은 컨텍스트 액션용.
+    // null 이면 행은 4버튼 그대로 (영상 패널은 사용 안 함).
+    tertiaryActionLabel: String? = null,
+    onTertiaryAction: (() -> Unit)? = null,
+    tertiaryActionEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
@@ -100,42 +114,92 @@ fun EditActionsPanel(
                 }
             }
         }
-        // 4 버튼 동일 폭(weight 1f) + 작은 gap — SpaceBetween 시 좁은 화면에서 가장 긴 라벨
-        // ("배경음 제거") 가 잘려 보이지 않던 케이스 회피. weight 가 행 전체를 4등분해 어떤 라벨이든
-        // 고정 슬롯에 들어가고, 행 폭 자체가 양 끝까지 채워져 "양쪽 정렬" 요구도 자연스럽게 만족.
+        // 자연 폭 + SpaceBetween 으로 분배 — 아이콘 버튼은 컨텐트 (icon + padding) 만큼, 5번째
+        // 텍스트 버튼은 라벨 길이만큼 차지하고, 남는 공간이 버튼 사이로 균등 분배. 양 끝 버튼은
+        // 행 양쪽 가장자리에 flush. 좁은 화면이면 자동으로 gap 이 0 까지 줄어 라벨도 안 잘림.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
+            // 아이콘 버튼 4개 — 테두리 제거 (border = null). 폭은 ButtonDefaults.MinWidth 기본값에
+            // 맡겨 자연스러운 터치 영역 보장 (Material3 기본 ~58dp). 활성 색 (펼침 시 accent) 은
+            // 아이콘 tint 로 유지.
             OutlinedButton(
                 onClick = { expanded = if (expanded == "volume") null else "volume" },
-                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
+                modifier = Modifier.height(VibiSpacing.touchMin),
+                border = null,
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
                 ),
-            ) { Text("볼륨", style = typo.bodySm, maxLines = 1) }
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "볼륨",
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             OutlinedButton(
                 onClick = { expanded = if (expanded == "speed") null else "speed" },
-                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
+                modifier = Modifier.height(VibiSpacing.touchMin),
+                border = null,
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "speed") tokens.accent else tokens.onBackgroundPrimary,
                 ),
-            ) { Text("속도", style = typo.bodySm, maxLines = 1) }
+            ) {
+                Icon(
+                    Icons.Filled.Speed,
+                    contentDescription = "속도",
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             OutlinedButton(
                 onClick = onSecondaryAction,
-                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
+                modifier = Modifier.height(VibiSpacing.touchMin),
+                border = null,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text(secondaryActionLabel, style = typo.bodySm, color = tokens.accent, maxLines = 1) }
+            ) {
+                Icon(
+                    secondaryActionIcon,
+                    contentDescription = secondaryActionContentDescription,
+                    modifier = Modifier.size(20.dp),
+                    tint = tokens.accent,
+                )
+            }
             OutlinedButton(
                 onClick = onDelete,
-                contentPadding = PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
-                modifier = Modifier.weight(1f).height(VibiSpacing.touchMin),
+                contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
+                modifier = Modifier.height(VibiSpacing.touchMin),
+                border = null,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text("삭제", style = typo.bodySm, color = tokens.accent, maxLines = 1) }
+            ) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = "삭제",
+                    modifier = Modifier.size(20.dp),
+                    tint = tokens.accent,
+                )
+            }
+            // 옵셔널 5번째 — 라벨/콜백 둘 다 있으면 표시. enabled=false 면 회색·터치 비활성 (예: 처리 중).
+            if (tertiaryActionLabel != null && onTertiaryAction != null) {
+                OutlinedButton(
+                    onClick = onTertiaryAction,
+                    enabled = tertiaryActionEnabled,
+                    contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
+                    modifier = Modifier.height(VibiSpacing.touchMin),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
+                ) {
+                    Text(
+                        tertiaryActionLabel,
+                        style = typo.bodySm,
+                        color = if (tertiaryActionEnabled) tokens.accent else tokens.mutedText,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
 
         // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). Local state 로 슬라이더 위치 즉시 갱신 +

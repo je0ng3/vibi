@@ -52,6 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -681,8 +682,15 @@ fun TimelineScreen(
                 // 활성 동안엔 BGM 트랙은 read-only (탭으로 BGM range 편집 진입은 그대로 허용).
                 bgmDragEnabled = !state.isSegmentEditMode,
                 onBgmSelectClip = { clipId ->
-                    if (state.isSegmentEditMode) viewModel.onSelectBgmForRangeEdit(clipId)
-                    else viewModel.onSelectBgmClip(clipId)
+                    // BGM 을 명시적으로 range edit 타깃으로 잡아 둔 경우에만 range-edit 분기.
+                    // 그 외엔 단순 selection → 하단 BGM 편집 토글 등장. 사용자가 영상 다듬기 중에
+                    // BGM 을 탭하면 "BGM 으로 작업 전환" 의도이므로 selectExclusively 가 영상 모드를
+                    // 자동 종료해 BGM 토글이 자리를 차지하게 한다.
+                    if (state.isSegmentEditMode && state.editTargets.hasBgm()) {
+                        viewModel.onSelectBgmForRangeEdit(clipId)
+                    } else {
+                        viewModel.onSelectBgmClip(clipId)
+                    }
                 },
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
                 onBgmUpdateTrim = viewModel::onUpdateBgmTrim,
@@ -1675,11 +1683,12 @@ private fun UnifiedTimelineBar(
                             .background(accent)
                     )
                 }
-                // BGM 클립 색은 startMs 정렬 1-based 인덱스로 BgmPalette cycle (4색). 같은 통합 매핑을
-                // SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을 매칭.
-                // bgmClips 변경 시에만 재계산 (이전엔 매 recomposition 마다 sort+map allocate).
+                // BGM 클립 색은 createdAt(추가 순서) 1-based 인덱스로 BgmPalette cycle (4색). 같은
+                // 통합 매핑을 SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을
+                // 매칭. **createdAt 기준** 이라 사용자가 클립을 좌우 drag 해 위치(startMs) 가 바뀌어도
+                // 색은 절대 변하지 않음. createdAt 동률이면 id 로 안정 정렬.
                 val bgmIndexByClipId: Map<String, Int> = remember(bgmClips) {
-                    bgmClips.sortedBy { it.startMs }
+                    bgmClips.sortedWith(compareBy({ it.createdAt }, { it.id }))
                         .withIndex()
                         .associate { (i, b) -> b.id to (i + 1) }
                 }
@@ -2248,6 +2257,7 @@ private val BottomBarReserveDp = 160.dp
 private sealed interface BottomActionTarget {
     data object None : BottomActionTarget
     data object Video : BottomActionTarget
+    data class Bgm(val clipId: String) : BottomActionTarget
 }
 
 private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): BottomActionTarget {
@@ -2257,9 +2267,9 @@ private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): Bo
         return if (pendingRangeEndMs > pendingRangeStartMs) BottomActionTarget.Video
         else BottomActionTarget.None
     }
-    // BGM/녹음 clip 선택은 하단 바를 띄우지 않음 — 볼륨/속도/배경음 제거/삭제는 SoundDeck 의 BGM 카드에서
-    // 일관되게 처리. timeline 막대는 좌/우 trim 핸들 + 가로 drag (이동) 만 노출해 영상 편집 모드와 시각적
-    // 혼선 회피.
+    // BGM clip 이 선택돼 있으면 BGM 편집 토글 노출 — 볼륨/속도/삭제. 같은 [EditActionsPanel] 슬롯을
+    // 재사용해 영상 편집 토글과 thumb 도달 거리·인터랙션이 동일.
+    selectedBgmClipId?.let { return BottomActionTarget.Bgm(it) }
     return BottomActionTarget.None
 }
 
@@ -2303,11 +2313,63 @@ private fun BoxScope.TimelineActionBottomBar(
                     onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
                     onApplyVolume = { viewModel.onApplyRangeVolume(it) },
                     onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
-                    secondaryActionLabel = "복제",
+                    secondaryActionIcon = Icons.Filled.ContentCopy,
+                    secondaryActionContentDescription = "복제",
                     onSecondaryAction = { viewModel.onDuplicateRange() },
                     onDelete = { viewModel.onDeleteRange() },
                     onCancel = null,
                 )
+                is BottomActionTarget.Bgm -> {
+                    // 선택된 BGM 의 현 값에서 슬라이더 시작 — 외부 (deck 카드 등) 에서 같은 clip 의
+                    // volume/speed 가 바뀌어도 패널이 그 값을 반영. clip 이 사라지면 (삭제) 패널 자체가
+                    // bottomActionTarget None 으로 떨어져 사라짐 — 본 분기는 안전하게 firstOrNull 가드.
+                    val clip = state.bgmClips.firstOrNull { it.id == target.clipId }
+                    if (clip != null) {
+                        // 배경음 제거 토글 라벨/상태 — 진행 중이면 "처리 중..." 비활성, 캐시된 voice-only
+                        // 활성 시 "원래대로", 그 외엔 "배경음 제거". 5번째 슬롯(tertiary) 으로 노출.
+                        val removalProgress = state.bgmBackgroundRemovalProgress[clip.id]
+                        val bgRemovalLabel: String
+                        val bgRemovalEnabled: Boolean
+                        when {
+                            removalProgress is com.vibi.shared.ui.timeline.BgmRemovalProgress.Processing -> {
+                                bgRemovalLabel = "처리 중"
+                                bgRemovalEnabled = false
+                            }
+                            clip.isBackgroundRemoved -> {
+                                bgRemovalLabel = "원래대로"
+                                bgRemovalEnabled = true
+                            }
+                            else -> {
+                                bgRemovalLabel = "배경음 제거"
+                                bgRemovalEnabled = true
+                            }
+                        }
+                        com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
+                            title = "",
+                            volume = clip.volumeScale,
+                            speed = clip.speedScale,
+                            // BGM 은 토글 슬라이더가 곧 commit (영상 range 처럼 별도 apply 버튼 없음) —
+                            // change/apply 둘 다 같은 VM 콜에 위임. update* 가 즉시 DB write + Flow emit
+                            // 하므로 슬라이더 놓는 순간 timeline 도 따라옴.
+                            onVolumeChange = { viewModel.onUpdateBgmVolume(clip.id, it) },
+                            onSpeedChange = { viewModel.onUpdateBgmSpeed(clip.id, it) },
+                            onApplyVolume = { viewModel.onUpdateBgmVolume(clip.id, it) },
+                            onApplySpeed = { viewModel.onUpdateBgmSpeed(clip.id, it) },
+                            // secondary = 복제 (원본 끝에 동일 속성 새 클립 추가)
+                            secondaryActionIcon = Icons.Filled.ContentCopy,
+                            secondaryActionContentDescription = "BGM 복제",
+                            onSecondaryAction = { viewModel.onDuplicateBgmClip(clip.id) },
+                            onDelete = { viewModel.onDeleteBgmClip(clip.id) },
+                            // tertiary = 배경음 제거 ↔ 원래대로 토글
+                            tertiaryActionLabel = bgRemovalLabel,
+                            onTertiaryAction = { viewModel.onToggleBgmBackgroundRemoval(clip.id) },
+                            tertiaryActionEnabled = bgRemovalEnabled,
+                            // X 버튼 제거 — 같은 BGM 재탭하면 selectExclusively 가 toggle off 로
+                            // 해제 (사용자 친숙한 동작). 영상 패널과 동일하게 onCancel = null.
+                            onCancel = null,
+                        )
+                    }
+                }
             }
         }
     }
@@ -2730,7 +2792,7 @@ private fun isBgmRecording(clip: com.vibi.shared.domain.model.BgmClip): Boolean 
 }
 
 /**
- * BGM clip 의 표시 라벨 text. 녹음 1개면 "녹음", 2개 이상이면 timeline 순서대로 "녹음 1" / "녹음 2"...
+ * BGM clip 의 표시 라벨 text. 녹음은 추가 순서대로 "녹음1" / "녹음2"... (위치 바꿔도 번호 고정).
  * 파일은 filename (18자 truncate). 아이콘은 호출부에서.
  */
 private fun bgmClipLabelText(
@@ -2738,11 +2800,11 @@ private fun bgmClipLabelText(
     allClips: List<com.vibi.shared.domain.model.BgmClip>,
 ): String {
     if (isBgmRecording(clip)) {
-        val recordings = allClips.filter { isBgmRecording(it) }
-        if (recordings.size < 2) return "녹음"
-        val ordered = recordings.sortedBy { it.startMs }
+        val ordered = allClips
+            .filter { isBgmRecording(it) }
+            .sortedWith(compareBy({ it.createdAt }, { it.id }))
         val idx = ordered.indexOfFirst { it.id == clip.id }
-        return if (idx >= 0) "녹음 ${idx + 1}" else "녹음"
+        return if (idx >= 0) "녹음${idx + 1}" else "녹음"
     }
     val name = clip.sourceUri.substringAfterLast('/').substringBeforeLast('.')
     return name.take(18)
