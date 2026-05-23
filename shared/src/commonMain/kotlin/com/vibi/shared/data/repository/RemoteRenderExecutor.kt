@@ -35,10 +35,9 @@ class RemoteRenderExecutor(
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
         separationDirectives: List<SeparationDirectiveInput>,
-        preUploadedInputId: String?,
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
-        try {
+        return try {
             require(segments.isNotEmpty()) { "segments must not be empty" }
             onProgress(0)
 
@@ -47,7 +46,6 @@ class RemoteRenderExecutor(
                 frame = frame,
                 bgmClips = bgmClips,
                 separationDirectives = separationDirectives,
-                preUploadedInputId = preUploadedInputId,
             )
 
             onProgress(5)
@@ -56,7 +54,6 @@ class RemoteRenderExecutor(
                 segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
                 config = req.config,
-                inputId = preUploadedInputId,
             ).jobId
             onProgress(10)
 
@@ -65,11 +62,11 @@ class RemoteRenderExecutor(
             val bytes = api.downloadRenderResult(jobId)
             val outPath = saveBytesToCache(outputPath.substringAfterLast('/'), bytes)
             onProgress(100)
-            return Result.success(outPath)
+            Result.success(outPath)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            return Result.failure(e)
+        } catch (e: Throwable) {
+            Result.failure(e)
         }
     }
 
@@ -113,7 +110,6 @@ class RemoteRenderExecutor(
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
         separationDirectives: List<SeparationDirectiveInput>,
-        preUploadedInputId: String?,
     ): RenderRequest {
         val sortedSegments = segments.sortedBy { it.order }
         val videoParts = mutableListOf<BinaryPart>()
@@ -129,10 +125,8 @@ class RemoteRenderExecutor(
                 SegmentType.VIDEO -> {
                     val key = videoKeyByPath.getOrPut(seg.sourceFilePath) {
                         val k = "video_${seg.order}"
-                        if (preUploadedInputId == null) {
-                            val bytes = readFileBytes(seg.sourceFilePath)
-                            videoParts += BinaryPart(k, "$k.mp4", bytes, "video/mp4")
-                        }
+                        val bytes = readFileBytes(seg.sourceFilePath)
+                        videoParts += BinaryPart(k, "$k.mp4", bytes, "video/mp4")
                         k
                     }
                     renderSegments += RenderSegment(

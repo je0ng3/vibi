@@ -641,7 +641,7 @@ class TimelineViewModel constructor(
         )
     }
 
-    private fun pushUndoState(@Suppress("UNUSED_PARAMETER") markStale: Boolean = true) {
+    private fun pushUndoState() {
         mainUndoManager.pushState(buildSnapshot())
         updateUndoRedoState()
     }
@@ -706,10 +706,10 @@ class TimelineViewModel constructor(
     fun onDeleteSelectedClip() {
         viewModelScope.launch {
             val state = _uiState.value
-            val deletedImage = state.selectedImageClipId != null
-            state.selectedImageClipId?.let { imageClipRepository.deleteClip(it) }
+            val toDelete = state.selectedImageClipId ?: return@launch
+            imageClipRepository.deleteClip(toDelete)
             _uiState.value = _uiState.value.copy(selectedImageClipId = null)
-            pushUndoState(markStale = deletedImage)
+            pushUndoState()
         }
     }
 
@@ -1004,9 +1004,9 @@ class TimelineViewModel constructor(
                 _navigateBackHome.emit(Unit)
             },
             onFailure = { e ->
-                _uiState.value = _uiState.value.copy(
-                    saveStatus = SaveStatus.FAILED("저장 실패: ${e.message ?: e::class.simpleName}")
-                )
+                // 사용자 메시지는 generic (한국어 톤 일관 + raw URI/IP/exception name 노출 금지).
+                // 상세 진단은 추후 Logger.e(e) 분리. (현재 :shared 로깅 미도입 — 향후 추가.)
+                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.FAILED("저장 실패"))
             }
         )
     }
@@ -1055,14 +1055,14 @@ class TimelineViewModel constructor(
                     },
                     onFailure = { e ->
                         _uiState.value = _uiState.value.copy(
-                            shareStatus = ShareStatus.FAILED("공유 실패: ${e.message ?: e::class.simpleName}")
+                            shareStatus = ShareStatus.FAILED("공유 실패")
                         )
                     }
                 )
             },
             onFailure = { e ->
                 _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED("공유 실패: ${e.message ?: e::class.simpleName}")
+                    shareStatus = ShareStatus.FAILED("공유 실패")
                 )
             }
         )

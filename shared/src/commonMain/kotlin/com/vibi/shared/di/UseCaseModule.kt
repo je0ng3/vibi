@@ -42,8 +42,6 @@ val useCaseModule = module {
             editProjectRepository = get(),
             segmentRepository = get(),
             bgmClipRepository = get(),
-            textOverlayRepository = get(),
-            imageClipRepository = get(),
             separationDirectiveRepository = get(),
         )
     }

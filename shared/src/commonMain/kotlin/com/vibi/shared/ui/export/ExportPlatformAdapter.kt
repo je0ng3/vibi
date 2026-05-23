@@ -31,5 +31,4 @@ data class ExportRequest(
     val frameWidth: Int,
     val frameHeight: Int,
     val backgroundColorHex: String,
-    val preUploadedInputId: String? = null,
 )

@@ -63,7 +63,7 @@ class EditProjectRepositoryImpl constructor(
 
     override suspend fun updateProject(project: EditProject, touchActivity: Boolean) {
         // touchActivity=true: InputScreen "이어서 작업" 카드 정렬을 위해 updatedAt bump (default).
-        // touchActivity=false: internal job bookkeeping (separation status, isRenderStale 등) —
+        // touchActivity=false: internal job bookkeeping (separation status 등) —
         // updatedAt 유지하면 observeProject 의 distinctUntilChanged 가 무변화 update 를 dedup.
         val toPersist = if (touchActivity) project.copy(updatedAt = currentTimeMillis()) else project
         dao.update(toPersist.toEntity())
@@ -118,9 +118,6 @@ class EditProjectRepositoryImpl constructor(
         separationStatus = parseStatus(separationStatus),
         separationError = separationError,
         processingSeparations = decodeProcessingSeparations(processingSeparationsJson),
-        currentAudioRenderJobId = currentAudioRenderJobId,
-        currentVideoRenderJobId = currentVideoRenderJobId,
-        isRenderStale = isRenderStale,
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
@@ -144,9 +141,6 @@ class EditProjectRepositoryImpl constructor(
         separationStatus = separationStatus.name,
         separationError = separationError,
         processingSeparationsJson = encodeProcessingSeparations(processingSeparations),
-        currentAudioRenderJobId = currentAudioRenderJobId,
-        currentVideoRenderJobId = currentVideoRenderJobId,
-        isRenderStale = isRenderStale,
     )
 
     private fun parseStatus(name: String): AutoJobStatus =

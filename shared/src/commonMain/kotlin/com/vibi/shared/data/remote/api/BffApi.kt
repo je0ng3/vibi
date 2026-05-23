@@ -7,7 +7,6 @@ import com.vibi.shared.data.remote.dto.MixJobResponse
 import com.vibi.shared.data.remote.dto.MixRequest
 import com.vibi.shared.data.remote.dto.MixStatusResponse
 import com.vibi.shared.data.remote.dto.RenderConfig
-import com.vibi.shared.data.remote.dto.RenderInputCacheResponse
 import com.vibi.shared.data.remote.dto.RenderJobResponse
 import com.vibi.shared.data.remote.dto.RenderStatusResponse
 import com.vibi.shared.data.remote.dto.SeparationJobResponse
@@ -101,46 +100,18 @@ class BffApi(
     suspend fun listSeparationTestdata(): List<TestdataSeparationFolderDto> =
         client.get("api/v2/testdata/separation/list").body()
 
-    /**
-     * Multi-variant export 시 video/audios 를 한 번만 업로드하기 위한 캐시 endpoint.
-     *
-     * 응답 [RenderInputCacheResponse.inputId] 를 [submitRenderJob] 호출 시 `inputId` 인자로 전달하면
-     * BFF 가 캐시된 video/audios 를 재사용해서 multipart 재업로드 비용을 제거한다.
-     */
-    suspend fun uploadRenderInputs(
-        video: BinaryPart,
-        audios: List<BinaryPart>,
-    ): RenderInputCacheResponse =
-        client.post("api/v2/render/inputs") {
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        append(video)
-                        audios.forEach { append(it) }
-                    }
-                )
-            )
-        }.body()
-
-    /**
-     * @param inputId non-null 이면 BFF 가 캐시된 video 를 재사용. null 이면 multipart 로 업로드.
-     */
+    /** BFF render 잡 제출 — 모든 multipart parts 를 한 번에 업로드. */
     suspend fun submitRenderJob(
         videoFiles: List<BinaryPart>,
         segmentImageFiles: List<BinaryPart>,
         bgmFiles: List<BinaryPart>,
         config: RenderConfig,
-        inputId: String? = null,
     ): RenderJobResponse =
         client.post("api/v2/render") {
             setBody(
                 MultiPartFormDataContent(
                     formData {
-                        if (inputId == null) {
-                            videoFiles.forEach { append(it) }
-                        } else {
-                            append("inputId", inputId)
-                        }
+                        videoFiles.forEach { append(it) }
                         segmentImageFiles.forEach { append(it) }
                         bgmFiles.forEach { append(it) }
                         append("config", json.encodeToString(RenderConfig.serializer(), config))

@@ -25,19 +25,6 @@ data class EditProject(
      * 화면 재진입 / 앱 재실행 시 본 리스트의 모든 entry 가 다시 폴링 (Resume) 된다.
      */
     val processingSeparations: List<PersistedSeparationJob> = emptyList(),
-    /**
-     * BFF 에 가장 최근에 제출한 audio-only render jobId (RenderKind.AUDIO).
-     * 음성분리 가 편집 영상을 source 로 쓸 때 `editedRenderJobId` 로 전송하면 BFF 가
-     * 캐시된 audio m4a 를 재사용한다. 이전 jobId 는 보존하지 않음 (최신 1개만).
-     */
-    val currentAudioRenderJobId: String? = null,
-    /**
-     * BFF 에 가장 최근에 제출한 video render jobId (RenderKind.VIDEO).
-     * AUDIO 와 별도 슬롯 — 한 종류 캐시 hit 이 다른 종류로 cross-contaminate 하지 않도록.
-     */
-    val currentVideoRenderJobId: String? = null,
-    /** 마지막 render 와 timeline 이 어긋나는지 여부 — schema 호환 위해 보존. */
-    val isRenderStale: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_BACKGROUND_COLOR_HEX = "#000000"

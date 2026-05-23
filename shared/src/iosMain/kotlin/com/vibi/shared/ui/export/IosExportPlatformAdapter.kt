@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(kotlin.time.ExperimentalTime::class, kotlin.uuid.ExperimentalUuidApi::class)
 
 package com.vibi.shared.ui.export
 
@@ -9,11 +9,12 @@ import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
 import com.vibi.shared.domain.usecase.export.toExportInput
 import com.vibi.shared.platform.resolveStoredUriToPath
+import kotlin.uuid.Uuid
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.time.Clock
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
@@ -23,7 +24,11 @@ import platform.Foundation.writeToFile
 
 /**
  * iOS Export 어댑터 — BFF [FfmpegExecutor] (= RemoteRenderExecutor) 에 직접 위임.
- * 자막/더빙 제거 후 어댑터가 segment/bgm/separation 변환만 담당.
+ *
+ * 에러 정책:
+ *  - BGM 등 path 해소 실패 → fail-loud (silent drop 금지) 지만 raw URI 노출 안 하고
+ *    파일명만 surface. 여러 BGM 실패 시 일괄 수집해서 한 번에 throw.
+ *  - CancellationException 은 그대로 rethrow (구조적 동시성 보존).
  */
 class IosExportPlatformAdapter(
     private val executor: FfmpegExecutor,
@@ -33,59 +38,72 @@ class IosExportPlatformAdapter(
     override suspend fun executeExport(
         request: ExportRequest,
         onProgress: (percent: Int) -> Unit
-    ): Result<String> = runCatching {
-        val tmpRoot = NSTemporaryDirectory()
-        val cacheDir = "$tmpRoot/vibi_export_${Clock.System.now().toEpochMilliseconds()}"
-        NSFileManager.defaultManager.createDirectoryAtPath(
-            path = cacheDir,
-            withIntermediateDirectories = true,
-            attributes = null,
-            error = null
-        )
-
-        val segmentInputs = request.segments.map { segment ->
-            val localPath = resolveSegmentSource(segment, cacheDir)
-                ?: error("Failed to read segment source: ${segment.sourceUri}")
-            segment.toInput(localPath)
-        }
-
-        val outputPath = "$cacheDir/export_${Clock.System.now().toEpochMilliseconds()}.mp4"
-
-        val frame = if (request.frameWidth > 0 && request.frameHeight > 0) {
-            FrameInput(
-                width = request.frameWidth,
-                height = request.frameHeight,
-                backgroundColorHex = request.backgroundColorHex
+    ): Result<String> {
+        return try {
+            // cacheDir 충돌 (같은 ms 내 동시 export) 방지 위해 UUID 포함.
+            val tmpRoot = NSTemporaryDirectory()
+            val cacheDir = "$tmpRoot/vibi_export_${Uuid.random()}"
+            NSFileManager.defaultManager.createDirectoryAtPath(
+                path = cacheDir,
+                withIntermediateDirectories = true,
+                attributes = null,
+                error = null
             )
-        } else null
 
-        val bgmInputs = request.bgmClips.map { clip ->
-            // BGM 은 사용자가 timeline 에 명시적으로 배치한 결과물이라 silent drop 금지.
-            // 권한 만료 / HTTP 4xx / 사라진 content:// 등으로 path 해소 실패 시 fail-loud.
-            val localPath = copyUriToCache(clip.sourceUri, cacheDir, prefix = "bgm")
-                ?: error("BGM source unreadable: ${clip.sourceUri}")
-            BgmClipMixInput(
-                audioFilePath = localPath,
-                startMs = clip.startMs,
-                volume = clip.volumeScale,
-                speed = clip.speedScale,
-                sourceTrimStartMs = clip.sourceTrimStartMs,
-                sourceTrimEndMs = clip.sourceTrimEndMs,
+            val segmentInputs = request.segments.map { segment ->
+                val localPath = resolveSegmentSource(segment, cacheDir)
+                    ?: error("Segment source unreadable: ${segment.sourceUri.fileNameOnly()}")
+                segment.toInput(localPath)
+            }
+
+            val outputPath = "$cacheDir/export.mp4"
+
+            val frame = if (request.frameWidth > 0 && request.frameHeight > 0) {
+                FrameInput(
+                    width = request.frameWidth,
+                    height = request.frameHeight,
+                    backgroundColorHex = request.backgroundColorHex
+                )
+            } else null
+
+            // BGM 실패는 일괄 수집 — 사용자가 retry 사이클을 N번 돌지 않게.
+            val bgmInputs = mutableListOf<BgmClipMixInput>()
+            val bgmFailures = mutableListOf<String>()
+            for (clip in request.bgmClips) {
+                val localPath = copyUriToCache(clip.sourceUri, cacheDir, prefix = "bgm")
+                if (localPath == null) {
+                    bgmFailures += clip.sourceUri.fileNameOnly()
+                    continue
+                }
+                bgmInputs += BgmClipMixInput(
+                    audioFilePath = localPath,
+                    startMs = clip.startMs,
+                    volume = clip.volumeScale,
+                    speed = clip.speedScale,
+                    sourceTrimStartMs = clip.sourceTrimStartMs,
+                    sourceTrimEndMs = clip.sourceTrimEndMs,
+                )
+            }
+            if (bgmFailures.isNotEmpty()) {
+                error("BGM unreadable: ${bgmFailures.joinToString(", ")}")
+            }
+
+            val directives = request.separationDirectives.mapNotNull { it.toExportInput() }
+
+            val outcome = executor.renderProject(
+                segments = segmentInputs,
+                outputPath = outputPath,
+                frame = frame,
+                bgmClips = bgmInputs,
+                separationDirectives = directives,
+                onProgress = onProgress,
             )
+            outcome
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Result.failure(e)
         }
-
-        val directives = request.separationDirectives.mapNotNull { it.toExportInput() }
-
-        val result = executor.renderProject(
-            segments = segmentInputs,
-            outputPath = outputPath,
-            frame = frame,
-            bgmClips = bgmInputs,
-            separationDirectives = directives,
-            preUploadedInputId = request.preUploadedInputId,
-            onProgress = onProgress,
-        )
-        result.getOrThrow()
     }
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
@@ -118,10 +136,16 @@ class IosExportPlatformAdapter(
             val dest = "$cacheDir/$safeName"
             data.writeToFile(dest, atomically = true)
             dest
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             null
         }
     }
+
+    /** URI 의 마지막 path segment만 추출 (raw URI / 토큰 / 식별자 metadata leak 방지). */
+    private fun String.fileNameOnly(): String =
+        substringAfterLast('/').take(64).ifBlank { "(unknown)" }
 
     private fun Segment.toInput(localPath: String) = SegmentInput(
         sourceFilePath = localPath,

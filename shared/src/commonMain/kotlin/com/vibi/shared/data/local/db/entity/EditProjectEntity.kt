@@ -30,10 +30,4 @@ data class EditProjectEntity(
      * numberOfSpeakers, muteOriginalSegmentAudio).
      */
     val processingSeparationsJson: String = "",
-    /** 가장 최근 BFF audio-only render jobId (RenderKind.AUDIO). 분리 가 사용. */
-    val currentAudioRenderJobId: String? = null,
-    /** 가장 최근 BFF video render jobId (RenderKind.VIDEO). */
-    val currentVideoRenderJobId: String? = null,
-    /** 1 = render 후 timeline mutation 있음 (다시 render 필요). 0 = 최신 render 와 동기화. 기본 1. */
-    val isRenderStale: Boolean = true,
 )

@@ -91,17 +91,12 @@ fun SeparationDirective.toExportInput(): SeparationDirectiveInput? {
 }
 
 interface FfmpegExecutor {
-    /**
-     * @param preUploadedInputId non-null 이면 BFF 가 캐시된 video 를 재사용 — segment 의 video bytes
-     *   를 multipart 로 다시 보내지 않는다.
-     */
     suspend fun renderProject(
         segments: List<SegmentInput>,
         outputPath: String,
         frame: FrameInput? = null,
         bgmClips: List<BgmClipMixInput> = emptyList(),
         separationDirectives: List<SeparationDirectiveInput> = emptyList(),
-        preUploadedInputId: String? = null,
         onProgress: (percent: Int) -> Unit
     ): Result<String>
 }
