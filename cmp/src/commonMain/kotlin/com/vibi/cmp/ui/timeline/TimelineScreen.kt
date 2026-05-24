@@ -267,6 +267,22 @@ fun TimelineScreen(
         }
     }
 
+    // directive 안에서 scrub/playback 진행 시 stem mixer 도 따라가야 함. stemSyncKey 는
+    // coroutine churn 회피로 playbackPositionMs 를 의도적으로 제외해 inRange 변화 시점만
+    // reaction — 그 결과 directive 안에서 scrub 해도 mixer 가 옛 위치 그대로 재생되는 사고.
+    // 본 effect 는 playbackPositionMs 를 키에 포함해 매 변화마다 mixer.seekTo 호출.
+    // Mixer 내부 drift 가드(50ms) 가 polling 자체 emit 으로 인한 무의미 set 을 차단해
+    // audio glitch 없이 사용자 scrub 만 정확히 반영.
+    LaunchedEffect(activeDirective?.id, state.playbackPositionMs, state.previewMode) {
+        val dir = activeDirective ?: return@LaunchedEffect
+        if (state.previewMode == com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL) return@LaunchedEffect
+        val inRange = state.playbackPositionMs in dir.rangeStartMs..dir.rangeEndMs
+        if (!inRange) return@LaunchedEffect
+        val offset = ((state.playbackPositionMs - dir.rangeStartMs) + dir.sourceOffsetMs)
+            .coerceAtLeast(0L)
+        stemMixer.seekTo(offset)
+    }
+
     // EditAudio (편집·음원) 단계는 자동 segment edit 모드 진입을 하지 않는다 —
     // 사용자가 BGM 작업 + 영상 segment 작업을 자유롭게 섞을 수 있도록. segment 편집은
     // 영상 위 우상단 연필 버튼(onEnterSegmentEditMode) 명시 진입.

@@ -239,7 +239,13 @@ private class IosStemMixerHandle(
         val active = activeGroupId ?: return
         pendingSeekByGroup[active] = positionMs.coerceAtLeast(0L)
         players.forEach { (k, p) ->
-            if (groupOfPlayer[k] == active) p.currentTime = seconds
+            if (groupOfPlayer[k] != active) return@forEach
+            // drift > 50ms 일 때만 실제 set — UI 가 polling 33ms 마다 호출해도
+            // 자기 위치와 거의 일치하면 무의미 set 으로 인한 audio glitch 회피.
+            // BgmPlaybackSync 의 0.3s 보다 짧은 50ms — stem 은 video 와 정밀 sync 필요.
+            if (kotlin.math.abs(p.currentTime - seconds) > 0.05) {
+                p.currentTime = seconds
+            }
         }
     }
 
