@@ -138,14 +138,10 @@ fun SoundDeck(
                 style = typo.titleSm,
                 color = tokens.onBackgroundPrimary,
             )
-            // 보조 문구는 ①비어있을 때 placeholder, ②분리 결과가 있을 때만 "구간 탭" 가이드.
+            // 보조 문구는 분리 결과가 있을 때만 "구간 탭" 가이드.
             // BGM 만 있는 상태는 카드 자체가 의미를 전달하므로 보조 문구 숨김.
             val hasSeparation = groups.any { it is SoundDeckGroup.Separation }
-            val hint = when {
-                groups.isEmpty() -> "Your separated and added audio shows up here"
-                hasSeparation -> "Tap a range to adjust the sounds"
-                else -> null
-            }
+            val hint = if (hasSeparation) "Tap a range to adjust the sounds" else null
             if (hint != null) {
                 Spacer(modifier = Modifier.width(VibiSpacing.xs))
                 Text(
