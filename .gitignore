@@ -15,10 +15,11 @@
 local.properties
 **/local.properties
 
-# iOS auth secrets (Google OAuth client id + BFF base URL). template 만 커밋.
-# Auth.xcconfig = Debug (로컬 IP), Auth.release.xcconfig = Release (production HTTPS).
+# Auth.xcconfig (Debug) 만 ignore — BFF_BASE_URL 이 개발자별 LAN IP 라 커밋 시 충돌.
+# Auth.release.xcconfig (Release) 의 값들은 모두 빌드 산출물에 박혀 배포되는 public
+# 정보 (Google iOS OAuth client id = public client, api.vibi.fm = 트래픽으로 노출,
+# DEVELOPMENT_TEAM = App Store 페이지 노출) — Xcode Cloud 공급 위해 커밋.
 iosApp/Configs/Auth.xcconfig
-iosApp/Configs/Auth.release.xcconfig
 
 # IDE
 /.idea

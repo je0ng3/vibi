@@ -1,0 +1,11 @@
+// Release 빌드 (App Store / TestFlight) — 로컬 본. .gitignore 처리.
+// 실제 production 도메인 확정 시 BFF_BASE_URL 만 갱신.
+// xcconfig 의 `//` 주석 회피: URL_SLASH 를 두 번 substitute.
+
+GOOGLE_OAUTH_IOS_CLIENT_ID = 834339629389-nt43dbk8ast9gbaqei3gt103u3vgb447.apps.googleusercontent.com
+GOOGLE_OAUTH_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.834339629389-nt43dbk8ast9gbaqei3gt103u3vgb447
+
+URL_SLASH = /
+BFF_BASE_URL = https:$(URL_SLASH)$(URL_SLASH)api.vibi.fm/
+
+DEVELOPMENT_TEAM = P49F6J5FKS
