@@ -68,3 +68,22 @@ fun createBffHttpClient(
             }
         }
     }
+
+/**
+ * R2 presigned PUT 전용 client — baseUrl/auth/contentType default 없음. presigned URL 의
+ * SigV4 는 query string 기반이라 Authorization 헤더가 있으면 R2 가 401, contentType 도
+ * caller 가 sign 시점 값과 정확히 매치해야 하므로 default 박지 않음.
+ *
+ * [createBffHttpClient] 의 `defaultRequest { url(baseUrl) }` 와 분리해서 baseUrl 이 absolute
+ * R2 URL 을 override 하는 ktor 동작 위험을 회피.
+ */
+fun createR2HttpClient(): HttpClient =
+    createPlatformHttpClient {
+        expectSuccess = true
+        install(HttpTimeout) {
+            // 대용량 영상 PUT — 100MB 영상 5 Mbps 업로드면 160s, margin 포함 600s 잡음.
+            requestTimeoutMillis = 600_000L
+            connectTimeoutMillis = 10_000L
+            socketTimeoutMillis = 600_000L
+        }
+    }
