@@ -2,7 +2,6 @@ package com.vibi.shared.di
 
 import com.vibi.shared.data.repository.IosAudioMetadataExtractor
 import com.vibi.shared.data.repository.IosGallerySaver
-import com.vibi.shared.data.repository.IosImageMetadataExtractor
 import com.vibi.shared.data.repository.IosShareSheetLauncher
 import com.vibi.shared.data.repository.IosVideoMetadataExtractor
 import com.vibi.shared.platform.AppleSignInClient
@@ -17,7 +16,6 @@ import com.russhwolf.settings.NSUserDefaultsSettings
 import com.russhwolf.settings.Settings
 import platform.Foundation.NSUserDefaults
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
-import com.vibi.shared.domain.usecase.input.ImageMetadataExtractor
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
 import com.vibi.shared.domain.usecase.share.GallerySaver
 import com.vibi.shared.domain.usecase.share.ShareSheetLauncher
@@ -35,7 +33,6 @@ val iosPlatformModule = module {
     single<VideoMetadataExtractor> { IosVideoMetadataExtractor() }
     single<VideoThumbnailExtractor> { IosVideoThumbnailExtractor() }
     single<AudioMetadataExtractor> { IosAudioMetadataExtractor() }
-    single<ImageMetadataExtractor> { IosImageMetadataExtractor() }
 
     // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
     // 호출 시 별도 module 로 주입.

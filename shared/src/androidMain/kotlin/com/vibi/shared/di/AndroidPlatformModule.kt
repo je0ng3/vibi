@@ -2,7 +2,6 @@ package com.vibi.shared.di
 
 import com.vibi.shared.data.repository.AndroidAudioMetadataExtractor
 import com.vibi.shared.data.repository.AndroidGallerySaver
-import com.vibi.shared.data.repository.AndroidImageMetadataExtractor
 import com.vibi.shared.data.repository.AndroidShareSheetLauncher
 import com.vibi.shared.data.repository.AndroidVideoMetadataExtractor
 import android.content.Context
@@ -15,7 +14,6 @@ import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.russhwolf.settings.Settings
 import com.russhwolf.settings.SharedPreferencesSettings
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
-import com.vibi.shared.domain.usecase.input.ImageMetadataExtractor
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
 import com.vibi.shared.domain.usecase.share.GallerySaver
 import com.vibi.shared.domain.usecase.share.ShareSheetLauncher
@@ -31,7 +29,6 @@ val androidPlatformModule = module {
     single<VideoMetadataExtractor> { AndroidVideoMetadataExtractor(androidContext()) }
     single<VideoThumbnailExtractor> { AndroidVideoThumbnailExtractor(androidContext()) }
     single<AudioMetadataExtractor> { AndroidAudioMetadataExtractor(androidContext()) }
-    single<ImageMetadataExtractor> { AndroidImageMetadataExtractor(androidContext()) }
     single<GallerySaver> { AndroidGallerySaver(androidContext()) }
     single<ShareSheetLauncher> { AndroidShareSheetLauncher(androidContext()) }
 

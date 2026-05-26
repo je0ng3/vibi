@@ -8,7 +8,6 @@ import com.vibi.shared.data.remote.dto.RenderFrame
 import com.vibi.shared.data.remote.dto.RenderSegment
 import com.vibi.shared.data.remote.dto.RenderSeparationDirective
 import com.vibi.shared.data.remote.dto.RenderSeparationStem
-import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.usecase.export.BgmClipMixInput
 import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
@@ -51,7 +50,6 @@ class RemoteRenderExecutor(
             onProgress(5)
             val jobId = api.submitRenderJob(
                 videoFiles = req.videoParts,
-                segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
                 config = req.config,
             ).jobId
@@ -100,7 +98,6 @@ class RemoteRenderExecutor(
 
     private data class RenderRequest(
         val videoParts: List<BinaryPart>,
-        val segmentImageParts: List<BinaryPart>,
         val bgmParts: List<BinaryPart>,
         val config: RenderConfig,
     )
@@ -113,7 +110,6 @@ class RemoteRenderExecutor(
     ): RenderRequest {
         val sortedSegments = segments.sortedBy { it.order }
         val videoParts = mutableListOf<BinaryPart>()
-        val segmentImageParts = mutableListOf<BinaryPart>()
         val renderSegments = mutableListOf<RenderSegment>()
 
         // 같은 source video 를 가리키는 N 개 segment 가 동일 파일을 N번 read+upload 하지
@@ -121,45 +117,24 @@ class RemoteRenderExecutor(
         val videoKeyByPath = mutableMapOf<String, String>()
 
         for (seg in sortedSegments) {
-            when (seg.type) {
-                SegmentType.VIDEO -> {
-                    val key = videoKeyByPath.getOrPut(seg.sourceFilePath) {
-                        val k = "video_${seg.order}"
-                        val bytes = readFileBytes(seg.sourceFilePath)
-                        videoParts += BinaryPart(k, "$k.mp4", bytes, "video/mp4")
-                        k
-                    }
-                    renderSegments += RenderSegment(
-                        sourceFileKey = key,
-                        type = "VIDEO",
-                        order = seg.order,
-                        durationMs = seg.durationMs,
-                        trimStartMs = seg.trimStartMs,
-                        trimEndMs = seg.effectiveTrimEndMs,
-                        width = seg.width,
-                        height = seg.height,
-                        volumeScale = seg.volumeScale,
-                        speedScale = seg.speedScale
-                    )
-                }
-                SegmentType.IMAGE -> {
-                    val key = "segment_image_${seg.order}"
-                    val bytes = readFileBytes(seg.sourceFilePath)
-                    segmentImageParts += BinaryPart(key, "$key.img", bytes, "image/*")
-                    renderSegments += RenderSegment(
-                        sourceFileKey = key,
-                        type = "IMAGE",
-                        order = seg.order,
-                        durationMs = seg.durationMs,
-                        width = seg.width,
-                        height = seg.height,
-                        imageXPct = seg.imageXPct,
-                        imageYPct = seg.imageYPct,
-                        imageWidthPct = seg.imageWidthPct,
-                        imageHeightPct = seg.imageHeightPct
-                    )
-                }
+            val key = videoKeyByPath.getOrPut(seg.sourceFilePath) {
+                val k = "video_${seg.order}"
+                val bytes = readFileBytes(seg.sourceFilePath)
+                videoParts += BinaryPart(k, "$k.mp4", bytes, "video/mp4")
+                k
             }
+            renderSegments += RenderSegment(
+                sourceFileKey = key,
+                type = "VIDEO",
+                order = seg.order,
+                durationMs = seg.durationMs,
+                trimStartMs = seg.trimStartMs,
+                trimEndMs = seg.effectiveTrimEndMs,
+                width = seg.width,
+                height = seg.height,
+                volumeScale = seg.volumeScale,
+                speedScale = seg.speedScale
+            )
         }
 
         val bgmParts = mutableListOf<BinaryPart>()
@@ -213,7 +188,6 @@ class RemoteRenderExecutor(
 
         return RenderRequest(
             videoParts = videoParts,
-            segmentImageParts = segmentImageParts,
             bgmParts = bgmParts,
             config = config,
         )

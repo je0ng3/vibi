@@ -18,9 +18,8 @@ class IsProjectEditedTest {
         speedScale: Float = 1.0f,
         width: Int = 1920,
         height: Int = 1080,
-        type: SegmentType = SegmentType.VIDEO,
     ) = Segment(
-        id = "s", projectId = "p", type = type, order = 0,
+        id = "s", projectId = "p", type = SegmentType.VIDEO, order = 0,
         sourceUri = "file:///v.mp4", durationMs = durationMs,
         width = width, height = height,
         trimStartMs = trimStartMs, trimEndMs = trimEndMs,
@@ -121,11 +120,5 @@ class IsProjectEditedTest {
     @Test fun `backgroundColorHex 변경은 편집`() {
         val p = project(backgroundColorHex = "#FFFFFF")
         assertTrue(isProjectEdited(p, listOf(seg())))
-    }
-
-    @Test fun `IMAGE segment 의 volume_speed 는 검사 안 함`() {
-        // IMAGE 는 trim/volume/speed 자체가 무의미하므로 volumeScale=0.5 라도 무편집.
-        val s = seg(type = SegmentType.IMAGE, volumeScale = 0.5f, speedScale = 2.0f)
-        assertFalse(s.hasNonTrivialEdits())
     }
 }

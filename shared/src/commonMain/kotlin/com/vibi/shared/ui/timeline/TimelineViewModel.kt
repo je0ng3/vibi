@@ -9,7 +9,6 @@ import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.model.EditProject
-import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.model.PersistedSeparationJob
@@ -23,19 +22,15 @@ import com.vibi.shared.domain.model.clearSeparation
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
-import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
 import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.model.SeparationMediaType
-import com.vibi.shared.domain.usecase.image.AddImageClipUseCase
-import com.vibi.shared.domain.usecase.image.UpdateImageClipUseCase
 import com.vibi.shared.domain.usecase.bgm.AddBgmClipUseCase
 import com.vibi.shared.domain.usecase.bgm.UpdateBgmClipUseCase
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
-import com.vibi.shared.domain.usecase.input.ImageMetadataExtractor
 import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
 import com.vibi.shared.domain.usecase.save.ExportVariant
@@ -47,14 +42,11 @@ import com.vibi.shared.domain.util.UndoRedoManager
 import com.vibi.shared.domain.usecase.text.AddTextOverlayUseCase
 import com.vibi.shared.domain.usecase.text.DuplicateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.text.UpdateTextOverlayUseCase
-import com.vibi.shared.domain.usecase.timeline.AddImageSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.DuplicateSegmentRangeUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.SplitSegmentUseCase
-import com.vibi.shared.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
-import com.vibi.shared.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
 import com.vibi.shared.domain.usecase.timeline.UpdateSegmentSpeedUseCase
 import com.vibi.shared.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.vibi.shared.domain.usecase.timeline.UpdateSegmentVolumeUseCase
@@ -174,14 +166,12 @@ data class TimelineUiState(
     val trimStartMs: Long = 0L,
     val trimEndMs: Long = 0L,
     val showAppendSheet: Boolean = false,
-    val imageClips: List<ImageClip> = emptyList(),
     val playbackPositionMs: Long = 0L,
     val isPlaying: Boolean = false,
     /**
      * directive range 안에서 stem 재생 중일 때 video player 의 원본 audio 만 mute 하는 ephemeral 플래그.
      */
     val runtimeVideoMutedForDirective: Boolean = false,
-    val selectedImageClipId: String? = null,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val isVideoSelected: Boolean = false,
@@ -256,7 +246,6 @@ data class TimelineUiState(
 
 data class TimelineSnapshot(
     val segments: List<Segment>,
-    val imageClips: List<ImageClip>,
     val textOverlays: List<TextOverlay> = emptyList(),
     val bgmClips: List<BgmClip> = emptyList(),
     val separationDirectives: List<SeparationDirective> = emptyList(),
@@ -271,18 +260,12 @@ data class TimelineSnapshot(
 class TimelineViewModel constructor(
     private val projectId: String,
     private val segmentRepository: SegmentRepository,
-    private val imageClipRepository: ImageClipRepository,
     private val editProjectRepository: EditProjectRepository,
     private val textOverlayRepository: TextOverlayRepository,
     private val bgmClipRepository: BgmClipRepository,
-    private val addImageClip: AddImageClipUseCase,
-    private val updateImageClip: UpdateImageClipUseCase,
     private val updateSegmentTrim: UpdateSegmentTrimUseCase,
     private val addVideoSegment: AddVideoSegmentUseCase,
-    private val addImageSegment: AddImageSegmentUseCase,
     private val removeSegment: RemoveSegmentUseCase,
-    private val updateImageSegmentDuration: UpdateImageSegmentDurationUseCase,
-    private val updateImageSegmentPosition: UpdateImageSegmentPositionUseCase,
     private val splitSegment: SplitSegmentUseCase,
     private val duplicateSegmentRange: DuplicateSegmentRangeUseCase,
     private val removeSegmentRange: RemoveSegmentRangeUseCase,
@@ -295,7 +278,6 @@ class TimelineViewModel constructor(
     private val addBgmClip: AddBgmClipUseCase,
     private val updateBgmClip: UpdateBgmClipUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
-    private val imageMetadataExtractor: ImageMetadataExtractor,
     private val audioMetadataExtractor: AudioMetadataExtractor,
     private val startAudioSeparation: StartAudioSeparationUseCase,
     private val pollSeparation: PollSeparationUseCase,
@@ -334,7 +316,7 @@ class TimelineViewModel constructor(
 
     /**
      * 메인 timeline undo 스택 — 모든 편집(영상 segment / BGM / 분리 directive / frame /
-     * text overlay / image clip) 이 같은 스택을 공유.
+     * text overlay) 이 같은 스택을 공유.
      *
      * 영상편집 commit / 음원분리 commit 같은 비가역 checkpoint 후에는 [UndoRedoManager.clear] +
      * 새 baseline push 로 스택을 끊어 사용자가 commit 이전 상태로 되돌리지 않도록 막는다.
@@ -350,7 +332,6 @@ class TimelineViewModel constructor(
 
     init {
         loadSegments()
-        observeClips()
         observeProject()
         observeTextOverlays()
         observeBgmClips()
@@ -641,14 +622,6 @@ class TimelineViewModel constructor(
         return acc
     }
 
-    private fun observeClips() {
-        viewModelScope.launch {
-            imageClipRepository.observeClips(projectId).collect { images ->
-                _uiState.update { it.copy(imageClips = images) }
-            }
-        }
-    }
-
     /**
      * In-memory snapshot — `_uiState.value` 가 이미 모든 repository 의 최신 상태를 반영하고 있으므로
      * 다시 7-async fan-out 으로 repository 를 .first() 하지 않는다. frame/background 등 EditProject
@@ -661,7 +634,6 @@ class TimelineViewModel constructor(
         val s = _uiState.value
         return TimelineSnapshot(
             segments = s.segments,
-            imageClips = s.imageClips,
             textOverlays = s.textOverlays,
             bgmClips = s.bgmClips,
             separationDirectives = s.separationDirectives,
@@ -707,19 +679,18 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * Single-selection model: at any moment at most one of segment / image / text-overlay / bgm
+     * Single-selection model: at any moment at most one of segment / text-overlay / bgm
      * may be selected. This helper applies a tap-toggle on the chosen target while clearing
      * every other selected*Id.
      */
     private enum class SelectionTarget {
-        Segment, Image, TextOverlay, Bgm
+        Segment, TextOverlay, Bgm
     }
 
     private fun selectExclusively(target: SelectionTarget, id: String?) {
         val state = _uiState.value
         val current = when (target) {
             SelectionTarget.Segment -> state.selectedSegmentId
-            SelectionTarget.Image -> state.selectedImageClipId
             SelectionTarget.TextOverlay -> state.selectedTextOverlayId
             SelectionTarget.Bgm -> state.selectedBgmClipId
         }
@@ -730,7 +701,6 @@ class TimelineViewModel constructor(
         val switchingToBgm = target == SelectionTarget.Bgm && next != null
         _uiState.value = state.copy(
             selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
-            selectedImageClipId = if (target == SelectionTarget.Image) next else null,
             selectedTextOverlayId = if (target == SelectionTarget.TextOverlay) next else null,
             selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
             isVideoSelected = false,
@@ -744,137 +714,20 @@ class TimelineViewModel constructor(
         )
     }
 
-    fun onSelectImageClip(clipId: String?) = selectExclusively(SelectionTarget.Image, clipId)
-
-    fun onDeleteSelectedClip() {
-        viewModelScope.launch {
-            val state = _uiState.value
-            val toDelete = state.selectedImageClipId ?: return@launch
-            imageClipRepository.deleteClip(toDelete)
-            _uiState.value = _uiState.value.copy(selectedImageClipId = null)
-            pushUndoState()
-        }
-    }
-
-    fun onInsertImage(uri: String, defaultDurationMs: Long = 3000L) {
-        viewModelScope.launch {
-            val state = _uiState.value
-            val videoDurationMs = state.videoDurationMs
-            val maxStart = if (videoDurationMs > 0L) (videoDurationMs - 500L).coerceAtLeast(0L) else Long.MAX_VALUE
-            // Avoid stacking new sticker on top of an existing one at the same
-            // start time — shift right in 250ms increments until a free spot.
-            val taken = state.imageClips.map { it.startMs }.toSet()
-            var startMs = state.playbackPositionMs.coerceIn(0L, maxStart)
-            while (startMs in taken && startMs < maxStart) startMs = (startMs + 250L).coerceAtMost(maxStart)
-            val maxEnd = if (videoDurationMs > 0L) videoDurationMs else (startMs + defaultDurationMs)
-            val endMs = (startMs + defaultDurationMs)
-                .coerceAtMost(maxEnd)
-                .coerceAtLeast(startMs + 500L)
-            addImageClip(
-                projectId = projectId,
-                imageUri = uri,
-                startMs = startMs,
-                endMs = endMs,
-                lane = pickFreeOverlayLane(startMs, endMs)
-            )
-            pushUndoState()
-        }
-    }
-
-    fun onMoveImageClip(clipId: String, newStartMs: Long) {
-        viewModelScope.launch {
-            val clip = _uiState.value.imageClips.find { it.id == clipId } ?: return@launch
-            val duration = clip.endMs - clip.startMs
-            val videoDuration = _uiState.value.videoDurationMs
-            val coercedStart = newStartMs.coerceAtLeast(0L).let {
-                if (videoDuration > 0L) it.coerceAtMost((videoDuration - duration).coerceAtLeast(0L)) else it
-            }
-            updateImageClip(clip.copy(startMs = coercedStart, endMs = coercedStart + duration))
-            pushUndoState()
-        }
-    }
-
     /**
-     * Pick the lowest lane number free of time-overlap with both image clips
-     * AND text overlays — they share lanes on the merged overlay track.
+     * Pick the lowest lane number free of time-overlap with existing text overlays —
+     * they share lanes on the merged overlay track.
      */
     private fun pickFreeOverlayLane(startMs: Long, endMs: Long): Int {
         val state = _uiState.value
-        // Treat both lists as one virtual collection of (lane, start, end)
-        // tuples and reuse the shared lane-packing helper.
-        data class LaneItem(val lane: Int, val start: Long, val end: Long)
-        val combined = state.imageClips.map { LaneItem(it.lane, it.startMs, it.endMs) } +
-            state.textOverlays.map { LaneItem(it.lane, it.startMs, it.endMs) }
         return com.vibi.shared.domain.util.pickLowestFreeLane(
-            existing = combined,
+            existing = state.textOverlays,
             startMs = startMs,
             endMs = endMs,
             laneOf = { it.lane },
-            startOf = { it.start },
-            endOf = { it.end }
+            startOf = { it.startMs },
+            endOf = { it.endMs }
         )
-    }
-
-    fun onChangeImageClipLane(clipId: String, delta: Int) {
-        if (delta == 0) return
-        viewModelScope.launch {
-            val clip = imageClipRepository.getClip(clipId) ?: return@launch
-            val newLane = (clip.lane + delta).coerceAtLeast(0)
-            if (newLane == clip.lane) return@launch
-            updateImageClip(clip.copy(lane = newLane))
-            pushUndoState()
-        }
-    }
-
-    fun onDuplicateImageClip(clipId: String) {
-        viewModelScope.launch {
-            val clip = imageClipRepository.getClip(clipId) ?: return@launch
-            // Place the duplicate at the same time position so it sits directly
-            // beside the source on the timeline. AddImageClipUseCase auto-picks
-            // the lowest free lane that doesn't time-conflict, which pushes the
-            // copy to the row right below the original.
-            addImageClip(
-                projectId = projectId,
-                imageUri = clip.imageUri,
-                startMs = clip.startMs,
-                endMs = clip.endMs,
-                xPct = clip.xPct,
-                yPct = clip.yPct,
-                widthPct = clip.widthPct,
-                heightPct = clip.heightPct,
-                lane = pickFreeOverlayLane(clip.startMs, clip.endMs)
-            )
-            pushUndoState()
-        }
-    }
-
-    fun onResizeImageClipDuration(clipId: String, newEndMs: Long) {
-        viewModelScope.launch {
-            val clip = _uiState.value.imageClips.find { it.id == clipId } ?: return@launch
-            val minEnd = clip.startMs + 500L
-            val videoDuration = _uiState.value.videoDurationMs
-            val coercedEnd = newEndMs.coerceAtLeast(minEnd).let {
-                if (videoDuration > 0L) it.coerceAtMost(videoDuration) else it
-            }
-            updateImageClip(clip.copy(endMs = coercedEnd))
-            pushUndoState()
-        }
-    }
-
-    fun onUpdateImageClipPosition(
-        clipId: String,
-        xPct: Float,
-        yPct: Float,
-        widthPct: Float,
-        heightPct: Float
-    ) {
-        viewModelScope.launch {
-            val clip = imageClipRepository.getClip(clipId) ?: return@launch
-            updateImageClip(
-                clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
-            )
-            pushUndoState()
-        }
     }
 
     // 자막 위치/스타일 메서드 제거 — 자막 기능 삭제.
@@ -897,8 +750,6 @@ class TimelineViewModel constructor(
 
     private suspend fun restoreSnapshot(snapshot: TimelineSnapshot) {
         // N+1 insert 회피 — DAO insertAll 한 번 IPC.
-        imageClipRepository.deleteAllClips(projectId)
-        imageClipRepository.addClips(snapshot.imageClips)
         segmentRepository.deleteAllByProjectId(projectId)
         segmentRepository.addSegments(snapshot.segments)
         textOverlayRepository.deleteAllByProjectId(projectId)
@@ -936,8 +787,7 @@ class TimelineViewModel constructor(
             onDeselectVideo()
         } else {
             _uiState.value = _uiState.value.copy(
-                isVideoSelected = true,
-                selectedImageClipId = null
+                isVideoSelected = true
             )
         }
     }
@@ -1133,15 +983,6 @@ class TimelineViewModel constructor(
         }
     }
 
-    fun onAppendImageSegment(uri: String) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(showAppendSheet = false, isPlaying = false)
-            val info = imageMetadataExtractor.extract(uri) ?: return@launch
-            addImageSegment(projectId = projectId, imageInfo = info)
-            pushUndoState()
-        }
-    }
-
     fun onSelectSegment(segmentId: String?) {
         selectExclusively(SelectionTarget.Segment, segmentId)
         // Segment selection additionally seeds the trim fields used by the
@@ -1164,37 +1005,6 @@ class TimelineViewModel constructor(
                 isPlaying = false,
                 playbackPositionMs = 0L
             )
-            pushUndoState()
-        }
-    }
-
-    fun onUpdateImageSegmentDuration(segmentId: String, durationMs: Long) {
-        viewModelScope.launch {
-            updateImageSegmentDuration(segmentId, durationMs)
-            pushUndoState()
-        }
-    }
-
-    fun onResizeImageSegmentByDrag(segmentId: String, requestedDurationMs: Long) {
-        viewModelScope.launch {
-            val seg = _uiState.value.segments.firstOrNull { it.id == segmentId } ?: return@launch
-            if (seg.type != SegmentType.IMAGE) return@launch
-            val clamped = requestedDurationMs.coerceIn(MIN_IMAGE_DURATION_MS, MAX_IMAGE_DURATION_MS)
-            if (clamped == seg.durationMs) return@launch
-            updateImageSegmentDuration(segmentId, clamped)
-            pushUndoState()
-        }
-    }
-
-    fun onUpdateImageSegmentPosition(
-        segmentId: String,
-        xPct: Float,
-        yPct: Float,
-        widthPct: Float,
-        heightPct: Float
-    ) {
-        viewModelScope.launch {
-            updateImageSegmentPosition(segmentId, xPct, yPct, widthPct, heightPct)
             pushUndoState()
         }
     }
@@ -1289,10 +1099,9 @@ class TimelineViewModel constructor(
             editTargets = targets.ifEmpty { setOf(EditTarget.Video) },
             rangeTargetSegmentId = seg.id,
             selectedSegmentId = seg.id,
-            // 영상 편집 모드 진입 = 단일 선택 모델상 BGM/이미지/텍스트 선택 해제. 안 그러면 deck
+            // 영상 편집 모드 진입 = 단일 선택 모델상 BGM/텍스트 선택 해제. 안 그러면 deck
             // 카드 highlight 또는 잠재적 BGM 하단바가 영상 모드와 동시에 잡힘.
             selectedBgmClipId = null,
-            selectedImageClipId = null,
             selectedTextOverlayId = null,
             pendingRangeStartMs = segStart,
             pendingRangeEndMs = segEnd,
@@ -3666,8 +3475,6 @@ class TimelineViewModel constructor(
 
     companion object {
         const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
-        const val MIN_IMAGE_DURATION_MS = 500L
-        const val MAX_IMAGE_DURATION_MS = 30_000L
         const val MIN_FRAME_DIMENSION = 16
         const val MAX_FRAME_DIMENSION = 7680
         const val DEFAULT_OVERLAY_DURATION_MS = 3_000L

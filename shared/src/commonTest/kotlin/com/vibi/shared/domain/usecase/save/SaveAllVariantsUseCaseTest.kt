@@ -2,14 +2,12 @@ package com.vibi.shared.domain.usecase.save
 
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.domain.model.EditProject
-import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.TextOverlay
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
-import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.TextOverlayRepository
@@ -218,7 +216,6 @@ class SaveAllVariantsUseCaseTest {
         bgmClips: List<BgmClip> = emptyList(),
         separationDirectives: List<SeparationDirective> = emptyList(),
         textOverlays: List<TextOverlay> = emptyList(),
-        imageClips: List<ImageClip> = emptyList(),
         adapter: FakeExportPlatformAdapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4"),
         gallerySaver: FakeGallerySaver = FakeGallerySaver(),
     ): SaveAllVariantsUseCase = SaveAllVariantsUseCase(
@@ -230,7 +227,7 @@ class SaveAllVariantsUseCaseTest {
         separationDirectiveRepository = FakeSeparationRepo(separationDirectives),
     )
 
-    // ── fakes (textOverlay/imageClip 는 use case ctor 에 빠졌으므로 미러용 필요 없음) ──
+    // ── fakes (textOverlay 는 use case ctor 에 빠졌으므로 미러용 필요 없음) ──
 
     private class FakeExportPlatformAdapter(
         private val success: String? = null,

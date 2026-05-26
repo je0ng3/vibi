@@ -156,10 +156,6 @@ class IosExportPlatformAdapter(
         trimEndMs = trimEndMs,
         width = width,
         height = height,
-        imageXPct = imageXPct,
-        imageYPct = imageYPct,
-        imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct,
         volumeScale = volumeScale,
         speedScale = speedScale
     )

@@ -63,10 +63,6 @@ class SegmentRepositoryImpl constructor(
         height = height,
         trimStartMs = trimStartMs,
         trimEndMs = trimEndMs,
-        imageXPct = imageXPct,
-        imageYPct = imageYPct,
-        imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct,
         volumeScale = volumeScale,
         speedScale = speedScale,
         duplicatedFromId = duplicatedFromId
@@ -83,10 +79,6 @@ class SegmentRepositoryImpl constructor(
         height = height,
         trimStartMs = trimStartMs,
         trimEndMs = trimEndMs,
-        imageXPct = imageXPct,
-        imageYPct = imageYPct,
-        imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct,
         volumeScale = volumeScale,
         speedScale = speedScale,
         duplicatedFromId = duplicatedFromId

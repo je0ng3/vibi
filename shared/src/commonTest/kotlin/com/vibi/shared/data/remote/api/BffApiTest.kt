@@ -77,7 +77,6 @@ class BffApiTest {
 
         val result = api.submitRenderJob(
             videoFiles = listOf(BinaryPart("video_0", "v.mp4", byteArrayOf(0x00, 0x01), "video/mp4")),
-            segmentImageFiles = emptyList(),
             bgmFiles = emptyList(),
             config = RenderConfig(segments = emptyList())
         )

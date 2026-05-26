@@ -6,7 +6,6 @@ import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.local.db.VibiDatabase
 import com.vibi.shared.data.local.db.dao.BgmClipDao
 import com.vibi.shared.data.local.db.dao.EditProjectDao
-import com.vibi.shared.data.local.db.dao.ImageClipDao
 import com.vibi.shared.data.local.db.dao.SegmentDao
 import com.vibi.shared.data.local.db.dao.SeparationDirectiveDao
 import com.vibi.shared.data.local.db.dao.TextOverlayDao
@@ -31,7 +30,6 @@ class EditProjectRepositoryImpl constructor(
     private val database: VibiDatabase,
     private val dao: EditProjectDao,
     private val segmentDao: SegmentDao,
-    private val imageClipDao: ImageClipDao,
     private val textOverlayDao: TextOverlayDao,
     private val bgmClipDao: BgmClipDao,
     private val separationDirectiveDao: SeparationDirectiveDao,
@@ -93,7 +91,6 @@ class EditProjectRepositoryImpl constructor(
     private suspend fun cascadeDeleteProject(projectId: String) {
         // 자식 row 들 — Room FK ON DELETE CASCADE 미설정 환경에서 명시 cleanup.
         runCatching { segmentDao.deleteByProjectId(projectId) }
-        runCatching { imageClipDao.deleteByProjectId(projectId) }
         runCatching { textOverlayDao.deleteByProjectId(projectId) }
         runCatching { bgmClipDao.deleteByProjectId(projectId) }
         runCatching { separationDirectiveDao.deleteByProject(projectId) }
@@ -204,10 +201,6 @@ class EditProjectRepositoryImpl constructor(
         width = width,
         height = height,
         trimStartMs = trimStartMs,
-        trimEndMs = trimEndMs,
-        imageXPct = imageXPct,
-        imageYPct = imageYPct,
-        imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct
+        trimEndMs = trimEndMs
     )
 }

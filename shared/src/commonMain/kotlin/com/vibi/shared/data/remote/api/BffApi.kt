@@ -114,7 +114,6 @@ class BffApi(
     /** BFF render 잡 제출 — 모든 multipart parts 를 한 번에 업로드. */
     suspend fun submitRenderJob(
         videoFiles: List<BinaryPart>,
-        segmentImageFiles: List<BinaryPart>,
         bgmFiles: List<BinaryPart>,
         config: RenderConfig,
     ): RenderJobResponse =
@@ -123,7 +122,6 @@ class BffApi(
                 MultiPartFormDataContent(
                     formData {
                         videoFiles.forEach { append(it) }
-                        segmentImageFiles.forEach { append(it) }
                         bgmFiles.forEach { append(it) }
                         append("config", json.encodeToString(RenderConfig.serializer(), config))
                     }

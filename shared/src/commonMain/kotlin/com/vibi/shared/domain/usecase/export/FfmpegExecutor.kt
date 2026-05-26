@@ -12,21 +12,14 @@ data class SegmentInput(
     val trimEndMs: Long,
     val width: Int,
     val height: Int,
-    val imageXPct: Float = 50f,
-    val imageYPct: Float = 50f,
-    val imageWidthPct: Float = 50f,
-    val imageHeightPct: Float = 50f,
     val volumeScale: Float = 1.0f,
     val speedScale: Float = 1.0f
 ) {
     val effectiveTrimEndMs: Long
-        get() = if (type == SegmentType.VIDEO && trimEndMs <= 0L) durationMs else trimEndMs
+        get() = if (trimEndMs <= 0L) durationMs else trimEndMs
 
     val effectiveDurationMs: Long
-        get() = when (type) {
-            SegmentType.VIDEO -> effectiveTrimEndMs - trimStartMs
-            SegmentType.IMAGE -> durationMs
-        }
+        get() = effectiveTrimEndMs - trimStartMs
 }
 
 data class FrameInput(

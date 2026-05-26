@@ -6,14 +6,12 @@ import com.vibi.shared.data.repository.AudioSeparationRepositoryImpl
 import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.data.repository.BgmClipRepositoryImpl
 import com.vibi.shared.data.repository.EditProjectRepositoryImpl
-import com.vibi.shared.data.repository.ImageClipRepositoryImpl
 import com.vibi.shared.data.repository.RemoteRenderExecutor
 import com.vibi.shared.data.repository.SegmentRepositoryImpl
 import com.vibi.shared.data.repository.TextOverlayRepositoryImpl
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
-import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.usecase.export.FfmpegExecutor
@@ -28,7 +26,6 @@ val repositoryModule = module {
             database = get(),
             dao = get(),
             segmentDao = get(),
-            imageClipDao = get(),
             textOverlayDao = get(),
             bgmClipDao = get(),
             separationDirectiveDao = get(),
@@ -36,7 +33,6 @@ val repositoryModule = module {
         )
     }
     single<SegmentRepository> { SegmentRepositoryImpl(get()) }
-    single<ImageClipRepository> { ImageClipRepositoryImpl(get()) }
     single<TextOverlayRepository> { TextOverlayRepositoryImpl(get()) }
     single<BgmClipRepository> { BgmClipRepositoryImpl(get()) }
     single<AudioSeparationRepository> {

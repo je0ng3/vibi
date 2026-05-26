@@ -66,6 +66,7 @@ data class RenderFrame(
 @Serializable
 data class RenderSegment(
     val sourceFileKey: String,
+    /** 항상 "VIDEO" — wire 호환을 위해 필드 유지 (BFF 가 무시해도 무방). */
     val type: String,
     val order: Int,
     val durationMs: Long,
@@ -73,10 +74,6 @@ data class RenderSegment(
     val trimEndMs: Long = 0L,
     val width: Int,
     val height: Int,
-    val imageXPct: Float = 50f,
-    val imageYPct: Float = 50f,
-    val imageWidthPct: Float = 50f,
-    val imageHeightPct: Float = 50f,
     val volumeScale: Float = 1.0f,
     val speedScale: Float = 1.0f
 )
