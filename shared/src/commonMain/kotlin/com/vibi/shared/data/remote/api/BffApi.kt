@@ -5,9 +5,6 @@ import com.vibi.shared.data.remote.dto.AssetUploadUrlRequest
 import com.vibi.shared.data.remote.dto.AssetUploadUrlResponse
 import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.data.remote.dto.GoogleAuthRequestDto
-import com.vibi.shared.data.remote.dto.MixJobResponse
-import com.vibi.shared.data.remote.dto.MixRequest
-import com.vibi.shared.data.remote.dto.MixStatusResponse
 import com.vibi.shared.data.remote.dto.RenderConfig
 import com.vibi.shared.data.remote.dto.RenderConfigV3
 import com.vibi.shared.data.remote.dto.RenderJobResponse
@@ -210,17 +207,6 @@ class BffApi(
         client.get("api/v2/separate/$jobId").body()
 
     suspend fun downloadStem(tokenizedUrl: String): ByteArray =
-        client.get(tokenizedUrl).readRawBytes()
-
-    suspend fun requestStemMix(jobId: String, body: MixRequest): MixJobResponse =
-        client.post("api/v2/separate/$jobId/mix") {
-            setBody(body)
-        }.body()
-
-    suspend fun getMixStatus(mixJobId: String): MixStatusResponse =
-        client.get("api/v2/separate/mix/$mixJobId").body()
-
-    suspend fun downloadMix(tokenizedUrl: String): ByteArray =
         client.get(tokenizedUrl).readRawBytes()
 }
 

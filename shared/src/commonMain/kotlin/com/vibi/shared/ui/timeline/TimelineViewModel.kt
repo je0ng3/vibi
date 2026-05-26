@@ -539,8 +539,7 @@ class TimelineViewModel constructor(
                         }
                     }
                 }
-                is SeparationStatus.Failed,
-                is SeparationStatus.Consumed -> clearStaleSeparation()
+                is SeparationStatus.Failed -> clearStaleSeparation()
                 is SeparationStatus.Processing -> Unit
                 null -> {
                     val httpStatus = (result.exceptionOrNull() as? ClientRequestException)
@@ -2579,10 +2578,6 @@ class TimelineViewModel constructor(
                             clipId,
                             BgmRemovalProgress.Failed(status.progressReason ?: ERROR_SEPARATION_GENERIC),
                         )
-                        is SeparationStatus.Consumed -> setRemovalProgress(
-                            clipId,
-                            BgmRemovalProgress.Failed(ERROR_SEPARATION_CONSUMED),
-                        )
                     }
                 }
             } catch (e: Exception) {
@@ -2778,9 +2773,6 @@ class TimelineViewModel constructor(
                             step = AudioSeparationStep.FAILED,
                             errorMessage = status.progressReason ?: ERROR_SEPARATION_GENERIC,
                         )
-                    }
-                    is SeparationStatus.Consumed -> updateSeparation {
-                        it.copy(step = AudioSeparationStep.FAILED, errorMessage = ERROR_SEPARATION_CONSUMED)
                     }
                 }
             }
@@ -3152,8 +3144,6 @@ class TimelineViewModel constructor(
                     }
                     is SeparationStatus.Failed ->
                         handleSeparationFailure(clientToken, status.progressReason ?: ERROR_SEPARATION_GENERIC)
-                    is SeparationStatus.Consumed ->
-                        handleSeparationFailure(clientToken, ERROR_SEPARATION_CONSUMED)
                 }
             }
         } catch (e: Exception) {
@@ -3485,8 +3475,6 @@ class TimelineViewModel constructor(
         const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
         private const val HTTP_NOT_FOUND = 404
         private const val ERROR_SEPARATION_GENERIC = "Separation failed"
-        private const val ERROR_SEPARATION_CONSUMED =
-            "This separation has already been finalized and can't be reused"
         // sheet 의 FAILED 단계가 [AudioSeparationUiState.insufficientCredits]=true 일 때 표시할
         // 메시지. UI 가 추가로 "Buy credits" 버튼을 렌더해 충전 화면으로 분기 시킨다.
         private const val ERROR_INSUFFICIENT_CREDITS = "Not enough credits"

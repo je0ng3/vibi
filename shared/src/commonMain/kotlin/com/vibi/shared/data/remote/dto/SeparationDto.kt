@@ -31,7 +31,6 @@ data class SeparationStatusResponse(
     val progress: Int = 0,
     val progressReason: String? = null,
     val stems: List<StemDto> = emptyList(),
-    val mixJobId: String? = null,
     /** status=FAILED 시 reason. UI 에서 그대로 표시. */
     val error: String? = null,
     /**
@@ -40,30 +39,4 @@ data class SeparationStatusResponse(
      * 누락(서버 측정 실패) 시 클라이언트가 사용자 선택값을 그대로 사용 — 기존 동작 fallback.
      */
     val actualDurationMs: Long? = null
-)
-
-@Serializable
-data class MixStemRequest(
-    val stemId: String,
-    val volume: Float
-)
-
-@Serializable
-data class MixRequest(
-    val stems: List<MixStemRequest>
-)
-
-@Serializable
-data class MixJobResponse(
-    val mixJobId: String
-)
-
-@Serializable
-data class MixStatusResponse(
-    val mixJobId: String,
-    val status: String,
-    val progress: Int = 0,
-    val downloadUrl: String? = null,
-    /** status=FAILED 시 reason. UI 에서 그대로 표시. */
-    val error: String? = null
 )

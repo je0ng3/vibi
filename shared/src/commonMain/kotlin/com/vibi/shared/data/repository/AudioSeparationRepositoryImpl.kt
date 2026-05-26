@@ -5,16 +5,12 @@ import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.api.BinaryPart
 import com.vibi.shared.data.remote.dto.BffErrorResponse
-import com.vibi.shared.data.remote.dto.MixRequest
-import com.vibi.shared.data.remote.dto.MixStemRequest
 import com.vibi.shared.data.remote.dto.SeparationSpec
 import com.vibi.shared.domain.error.InsufficientCreditsException
 import com.vibi.shared.domain.model.SeparationCost
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.repository.AudioSeparationRepository
-import com.vibi.shared.domain.repository.MixStatus
 import com.vibi.shared.domain.repository.SeparationStatus
-import com.vibi.shared.domain.repository.StemSelection
 import com.vibi.shared.platform.AudioExtractException
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.AudioSourceKind
@@ -124,9 +120,6 @@ class AudioSeparationRepositoryImpl(
             response.status == STATUS_FAILED ->
                 SeparationStatus.Failed(response.jobId, response.progressReason)
 
-            response.mixJobId != null ->
-                SeparationStatus.Consumed(response.jobId, response.mixJobId)
-
             response.status == STATUS_READY && response.stems.isNotEmpty() ->
                 SeparationStatus.Ready(
                     jobId = response.jobId,
@@ -156,52 +149,9 @@ class AudioSeparationRepositoryImpl(
             saveBytesToCache("stems_$outputFileName", bytes)
         }
 
-    override suspend fun requestMix(
-        jobId: String,
-        selections: List<StemSelection>
-    ): Result<String> = runCatching {
-        val body = MixRequest(
-            stems = selections.map { MixStemRequest(it.stemId, it.volume) }
-        )
-        api.requestStemMix(jobId, body).mixJobId
-    }
-
-    override suspend fun pollMixStatus(mixJobId: String): Result<MixStatus> = runCatching {
-        val response = api.getMixStatus(mixJobId)
-        when (response.status) {
-            MIX_STATUS_COMPLETED -> MixStatus.Completed(
-                mixJobId = response.mixJobId,
-                downloadUrl = response.downloadUrl
-                    ?: error("COMPLETED without downloadUrl")
-            )
-            MIX_STATUS_FAILED -> MixStatus.Failed(response.mixJobId)
-            else -> MixStatus.Processing(response.mixJobId, response.progress)
-        }
-    }
-
-    override suspend fun downloadMix(
-        mixJobId: String,
-        downloadUrl: String,
-        outputFileName: String
-    ): Result<String> = runCatching {
-        val bytes = try {
-            api.downloadMix(downloadUrl)
-        } catch (e: ClientRequestException) {
-            if (e.response.status.value != HTTP_FORBIDDEN) throw e
-            val refreshed = api.getMixStatus(mixJobId)
-            val freshUrl = refreshed.downloadUrl
-                ?: error("mix $mixJobId has no downloadUrl to refresh")
-            api.downloadMix(freshUrl)
-        }
-        saveBytesToCache("mix_$outputFileName", bytes)
-    }
-
     private companion object {
         const val STATUS_READY = "READY"
         const val STATUS_FAILED = "FAILED"
-        const val MIX_STATUS_COMPLETED = "COMPLETED"
-        const val MIX_STATUS_FAILED = "FAILED"
-        const val HTTP_FORBIDDEN = 403
         const val HTTP_PAYMENT_REQUIRED = 402
         const val ERROR_INSUFFICIENT_CREDITS = "insufficient_credits"
         val REQUIRED_REGEX = Regex("required=(\\d+)")

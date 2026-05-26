@@ -1,7 +1,5 @@
 package com.vibi.shared.data.remote.api
 
-import com.vibi.shared.data.remote.dto.MixRequest
-import com.vibi.shared.data.remote.dto.MixStemRequest
 import com.vibi.shared.data.remote.dto.RenderConfig
 import com.vibi.shared.data.remote.dto.SeparationSpec
 import io.ktor.client.HttpClient
@@ -185,55 +183,6 @@ class BffApiTest {
         assertEquals("READY", result.status)
         assertEquals(2, result.stems.size)
         assertEquals("background", result.stems[0].stemId)
-    }
-
-    @Test
-    fun `requestStemMix posts stem volumes`() = runTest {
-        val (api, captured) = buildApi { _ ->
-            respond(
-                content = """{"mixJobId":"mix-1"}""",
-                status = HttpStatusCode.OK,
-                headers = jsonHeaders()
-            )
-        }
-
-        val result = api.requestStemMix(
-            "sep-1",
-            MixRequest(stems = listOf(
-                MixStemRequest(stemId = "background", volume = 0.8f),
-                MixStemRequest(stemId = "voice_all", volume = 1.2f)
-            ))
-        )
-
-        assertEquals("api/v2/separate/sep-1/mix", captured[0].url.encodedPath.trimStart('/'))
-        val body = (captured[0].body as TextContent).text
-        assertContains(body, "background")
-        assertContains(body, "voice_all")
-        assertEquals("mix-1", result.mixJobId)
-    }
-
-    @Test
-    fun `requestStemMix returns 409 when source already consumed`() = runTest {
-        val (api, _) = buildApi { _ ->
-            respondError(HttpStatusCode.Conflict, """{"error":"separation_consumed"}""", jsonHeaders())
-        }
-        assertFailsWith<Exception> {
-            api.requestStemMix("sep-1", MixRequest(stems = emptyList()))
-        }
-    }
-
-    @Test
-    fun `getMixStatus parses signed download url`() = runTest {
-        val (api, _) = buildApi { _ ->
-            respond(
-                content = """{"mixJobId":"mix-1","status":"COMPLETED","progress":100,"downloadUrl":"https://x/m?token=xyz"}""",
-                status = HttpStatusCode.OK,
-                headers = jsonHeaders()
-            )
-        }
-        val result = api.getMixStatus("mix-1")
-        assertEquals("COMPLETED", result.status)
-        assertEquals("https://x/m?token=xyz", result.downloadUrl)
     }
 
     // ───────────────────── tokenized downloads ─────────────────────

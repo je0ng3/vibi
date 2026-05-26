@@ -24,33 +24,10 @@ sealed class SeparationStatus {
         val actualDurationMs: Long? = null
     ) : SeparationStatus()
 
-    data class Consumed(
-        override val jobId: String,
-        val mixJobId: String
-    ) : SeparationStatus()
-
     data class Failed(
         override val jobId: String,
         val progressReason: String?
     ) : SeparationStatus()
-}
-
-sealed class MixStatus {
-    abstract val mixJobId: String
-
-    data class Processing(
-        override val mixJobId: String,
-        val progress: Int
-    ) : MixStatus()
-
-    data class Completed(
-        override val mixJobId: String,
-        val downloadUrl: String
-    ) : MixStatus()
-
-    data class Failed(
-        override val mixJobId: String
-    ) : MixStatus()
 }
 
 data class StemSelection(
@@ -59,7 +36,6 @@ data class StemSelection(
     /**
      * 분리된 stem 의 절대 다운로드 URL. directive 영속화 후 export render 가
      * 이 URL 들을 받아 amix 합성하기 때문에 stemId 만으론 부족.
-     * legacy 경로(BFF mix mp3)에서는 비어 있을 수 있음.
      */
     val audioUrl: String? = null,
     /**
@@ -95,14 +71,4 @@ interface AudioSeparationRepository {
     suspend fun pollStatus(jobId: String): Result<SeparationStatus>
 
     suspend fun downloadStem(stemUrl: String, outputFileName: String): Result<String>
-
-    suspend fun requestMix(jobId: String, selections: List<StemSelection>): Result<String>
-
-    suspend fun pollMixStatus(mixJobId: String): Result<MixStatus>
-
-    suspend fun downloadMix(
-        mixJobId: String,
-        downloadUrl: String,
-        outputFileName: String
-    ): Result<String>
 }
