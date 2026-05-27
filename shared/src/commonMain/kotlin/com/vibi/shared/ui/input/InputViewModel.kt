@@ -174,7 +174,11 @@ class InputViewModel constructor(
             title = title,
             createdAt = createdAt,
             updatedAt = updatedAt,
-            jobsRunningSummary = if (running > 0) "${running}개 작업 진행 중" else null,
+            jobsRunningSummary = when {
+                running <= 0 -> null
+                running == 1 -> "1 job in progress"
+                else -> "$running jobs in progress"
+            },
             thumbnailPath = thumbnailPath,
         )
     }
