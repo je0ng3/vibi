@@ -37,6 +37,7 @@ cmp/
     │   ├── ui/timeline/
     │   │   ├── TimelineScreen.kt                   # 메인 에디터 + UnifiedTimelineBar (인라인 구간 선택)
     │   │   ├── AudioSeparationSheet.kt             # Setup→Processing→PickStems→Mixing→Done
+    │   │   ├── BgmTrimSheet.kt                     # 영상보다 긴 BGM 의 sub-range 선택
     │   │   ├── DetailEditPanel.kt                  # segment/clip 디테일 (볼륨/속도)
     │   │   ├── ExportVariantPickerSheet.kt         # multi-variant export
     │   │   ├── WaveformPlayBar.kt                  # 영상 audio 파형 + 분리 구간 accent 표시

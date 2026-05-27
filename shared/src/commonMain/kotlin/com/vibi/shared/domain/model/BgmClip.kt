@@ -10,9 +10,7 @@ data class BgmClip(
     val speedScale: Float = 1.0f,
     /**
      * 음원 내부 trim 시작 ms. 0 이면 음원 처음부터.
-     * BGM 추가 시 음원이 timeline 끝을 넘으면 [TimelineViewModel.onPickBgmAudio] 가 자동으로
-     * [sourceTrimEndMs] 를 영상 끝까지로 cap 하고, lane 위 핸들 drag 가 사용자의 추가 sub-range
-     * 조정을 갱신한다.
+     * 영상보다 긴 음원 삽입 시 BgmTrimSheet 에서 사용자가 잘라낸 [start, end) 구간을 보존.
      */
     val sourceTrimStartMs: Long = 0L,
     /**
