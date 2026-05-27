@@ -2362,7 +2362,16 @@ class TimelineViewModel constructor(
         }
     }
 
-    /** BgmTrimSheet 의 "삽입" 클릭 시 호출. 선택 구간 ≤ 영상 길이일 때만 진행. */
+    /** BgmTrimSheet 의 "삽입" 클릭 시 호출. 선택 구간 ≤ 영상 길이일 때만 진행.
+     *
+     *  플랫폼 audio extractor 가 지원되면 선택 구간만큼 잘라낸 **새 m4a 파일**을 만들어 그 path
+     *  를 BgmClip 의 sourceUri 로 박는다. iOS=AVAssetExportPresetAppleM4A sample-copy, Android=
+     *  현재 stub (지원 안 함 → fallback). trim 결과 파일을 sourceUri 로 쓰면 BgmClip 의 sub-range
+     *  offset 은 0 — render-time ffmpeg atrim 단계가 사라져 timeline preview/seek 도 단순화.
+     *
+     *  fallback (extractor unsupported / 실패): 기존처럼 원본 sourceUri + sourceTrim* offset 으로
+     *  메타만 박아 BFF render 가 atrim 처리 — 즉시 삽입 보장이 더 중요해서 silent fallback.
+     */
     fun onConfirmBgmTrim() {
         val state = _uiState.value
         val req = state.bgmTrimRequest ?: return
@@ -2371,15 +2380,36 @@ class TimelineViewModel constructor(
         if (state.videoDurationMs > 0L && span > state.videoDurationMs) return
         viewModelScope.launch {
             try {
-                addBgmClip(
-                    projectId = projectId,
-                    sourceUri = req.sourceUri,
-                    sourceDurationMs = req.sourceDurationMs,
-                    startMs = req.insertStartMs,
-                    volumeScale = 1.0f,
-                    sourceTrimStartMs = req.rangeStartMs,
-                    sourceTrimEndMs = req.rangeEndMs,
-                )
+                val prepared = if (audioExtractor.isSupported) {
+                    runCatching {
+                        audioExtractor.prepareSeparationAudio(
+                            sourceUri = req.sourceUri,
+                            sourceKind = AudioSourceKind.AUDIO_COMPATIBLE,
+                            startMs = req.rangeStartMs,
+                            endMs = req.rangeEndMs,
+                        )
+                    }.getOrNull()
+                } else null
+
+                if (prepared != null) {
+                    addBgmClip(
+                        projectId = projectId,
+                        sourceUri = prepared.path,
+                        sourceDurationMs = span,
+                        startMs = req.insertStartMs,
+                        volumeScale = 1.0f,
+                    )
+                } else {
+                    addBgmClip(
+                        projectId = projectId,
+                        sourceUri = req.sourceUri,
+                        sourceDurationMs = req.sourceDurationMs,
+                        startMs = req.insertStartMs,
+                        volumeScale = 1.0f,
+                        sourceTrimStartMs = req.rangeStartMs,
+                        sourceTrimEndMs = req.rangeEndMs,
+                    )
+                }
                 _uiState.update { it.copy(bgmTrimRequest = null) }
                 pushUndoState()
             } catch (e: IllegalArgumentException) {
