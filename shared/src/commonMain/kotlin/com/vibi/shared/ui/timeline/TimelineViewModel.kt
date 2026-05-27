@@ -3309,11 +3309,14 @@ class TimelineViewModel constructor(
             } else {
                 requestedEnd
             }
-            val existing = entry.editingDirectiveId?.let { id ->
-                _uiState.value.separationDirectives.firstOrNull { it.id == id }
-            } ?: _uiState.value.separationDirectives.firstOrNull {
-                it.rangeStartMs == directiveStart && it.rangeEndMs == directiveEnd
-            }
+            // Room Flow 첫 emission 이 uiState 에 도달하기 전에 commit 이 돌면 in-memory 가 비어
+            // existing=null → 새 UUID 로 중복 directive 가 생기는 race 가 있었음. repository 직접 조회로
+            // 권위 원본 (Room) 의 최신 상태를 본다.
+            val persisted = separationDirectiveRepository.getByProject(projectId)
+            val existing = entry.editingDirectiveId?.let { id -> persisted.firstOrNull { it.id == id } }
+                ?: persisted.firstOrNull {
+                    it.rangeStartMs == directiveStart && it.rangeEndMs == directiveEnd
+                }
             val effectiveStart = existing?.rangeStartMs ?: directiveStart
             val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
             separationDirectiveRepository.add(
