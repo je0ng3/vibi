@@ -152,9 +152,8 @@ private fun AudioInsertSheetBody(
             phase = Phase.Idle
         },
     )
-    // Picker 모드에선 Preview 단계 스킵 — 파일이 영상보다 길면 호출부의 BgmTrimSheet 가 파형 +
-    // 미리듣기 + 트림 핸들 + 삽입을 모두 보유한 단일 화면으로 뜨고, 짧으면 즉시 삽입. 사용자가 같은
-    // 파형을 두 번 보지 않게. Recording 은 녹음 결과 확인이 의미 있어 Preview 유지.
+    // Picker 모드에선 Preview 단계 스킵 — 호출부 ViewModel 이 timeline 끝 초과분을 자동 cap 해
+     // 즉시 삽입한다. Recording 은 녹음 결과 확인이 의미 있어 Preview 유지.
     val audioPicker = rememberAudioPicker { uri ->
         if (mode == AudioInsertMode.Picker) {
             onInsert(uri)

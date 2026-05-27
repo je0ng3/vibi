@@ -220,7 +220,6 @@ data class TimelineUiState(
     val selectedBgmClipId: String? = null,
     val isAddingBgm: Boolean = false,
     val bgmError: String? = null,
-    val bgmTrimRequest: BgmTrimRequest? = null,
     val bgmLaneCount: Int = 3,
     /**
      * BGM "배경음 제거" 작업 진행 상태 (clipId → 상태). 캐시(BgmClip.voiceOnlyUri) 가 채워지기
@@ -2304,30 +2303,21 @@ class TimelineViewModel constructor(
                 }
                 val state = _uiState.value
                 val startMs = state.playbackPositionMs
-                // 영상보다 길면 사용자에게 구간 선택 시트 — 실제 삽입은 onConfirmBgmTrim 에서.
-                // videoDurationMs == 0 (empty timeline) 인 경우엔 비교 불가라 그냥 통과 — addBgmClip 이
-                // sourceDurationMs > 0 만 require.
-                if (state.videoDurationMs > 0L && info.durationMs > state.videoDurationMs) {
-                    _uiState.update {
-                        it.copy(
-                            isAddingBgm = false,
-                            bgmTrimRequest = BgmTrimRequest(
-                                sourceUri = uri,
-                                sourceDurationMs = info.durationMs,
-                                insertStartMs = startMs,
-                                rangeStartMs = 0L,
-                                rangeEndMs = state.videoDurationMs,
-                            ),
-                        )
-                    }
-                    return@launch
-                }
+                // BGM 이 timeline 끝을 넘으면 (음원 길이 자체가 영상보다 길거나, 영상 후반에 삽입돼
+                // startMs+duration > 영상 끝) 자동으로 영상 끝까지로 잘라넣어 timeline 이 BGM 으로
+                // 늘어나지 않도록. videoDurationMs == 0 (empty timeline) 분기는 비교 불가 → 음원
+                // 통째 sentinel (sourceTrimEndMs=0).
+                val sourceTrimEndMs = if (state.videoDurationMs > 0L) {
+                    val maxLenMs = (state.videoDurationMs - startMs).coerceAtLeast(0L)
+                    if (info.durationMs > maxLenMs) maxLenMs else 0L
+                } else 0L
                 addBgmClip(
                     projectId = projectId,
                     sourceUri = uri,
                     sourceDurationMs = info.durationMs,
                     startMs = startMs,
                     volumeScale = 1.0f,
+                    sourceTrimEndMs = sourceTrimEndMs,
                 )
                 _uiState.value = _uiState.value.copy(isAddingBgm = false)
                 pushUndoState()
@@ -2338,56 +2328,6 @@ class TimelineViewModel constructor(
                 )
             }
         }
-    }
-
-    /** BgmTrimSheet 의 시작/끝 핸들 drag 진행 시 호출. 음원 범위 안으로만 clamp — 구간이 영상 길이를
-     *  넘는지 여부는 시트의 "삽입" 버튼 enable 판정에 위임 (한쪽 핸들 끌 때 다른 쪽이 따라가지 않도록). */
-    fun onUpdateBgmTrimRange(rangeStartMs: Long, rangeEndMs: Long) {
-        _uiState.update { state ->
-            val req = state.bgmTrimRequest ?: return@update state
-            val source = req.sourceDurationMs
-            val clampedStart = rangeStartMs.coerceIn(0L, source)
-            val clampedEnd = rangeEndMs.coerceIn(clampedStart, source)
-            state.copy(
-                bgmTrimRequest = req.copy(
-                    rangeStartMs = clampedStart,
-                    rangeEndMs = clampedEnd,
-                )
-            )
-        }
-    }
-
-    /** BgmTrimSheet 의 "삽입" 클릭 시 호출. 선택 구간 ≤ 영상 길이일 때만 진행. */
-    fun onConfirmBgmTrim() {
-        val state = _uiState.value
-        val req = state.bgmTrimRequest ?: return
-        val span = req.rangeEndMs - req.rangeStartMs
-        if (span < MIN_RANGE_MS) return
-        if (state.videoDurationMs > 0L && span > state.videoDurationMs) return
-        viewModelScope.launch {
-            try {
-                addBgmClip(
-                    projectId = projectId,
-                    sourceUri = req.sourceUri,
-                    sourceDurationMs = req.sourceDurationMs,
-                    startMs = req.insertStartMs,
-                    volumeScale = 1.0f,
-                    sourceTrimStartMs = req.rangeStartMs,
-                    sourceTrimEndMs = req.rangeEndMs,
-                )
-                _uiState.update { it.copy(bgmTrimRequest = null) }
-                pushUndoState()
-            } catch (e: IllegalArgumentException) {
-                _uiState.update {
-                    it.copy(bgmTrimRequest = null, bgmError = "BGM을 추가하지 못함")
-                }
-            }
-        }
-    }
-
-    /** BgmTrimSheet 의 "취소" 또는 dismiss. BGM 미삽입. */
-    fun onCancelBgmTrim() {
-        _uiState.update { it.copy(bgmTrimRequest = null) }
     }
 
     fun onSelectBgmClip(clipId: String?) = selectExclusively(SelectionTarget.Bgm, clipId)

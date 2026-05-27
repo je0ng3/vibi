@@ -1045,7 +1045,8 @@ fun TimelineScreen(
     )
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — 하단 ~48% peek. 위쪽 타임라인은 그대로 노출.
-    // 삽입 확정 시 onPickBgmAudio 호출 — 영상보다 길면 BgmTrimSheet 가 자동 chain.
+    // 삽입 확정 시 onPickBgmAudio 호출 — 음원이 timeline 끝을 넘으면 ViewModel 이 자동으로
+    // sourceTrimEndMs 를 영상 끝까지로 cap. 추가 sub-range 조정은 lane 위 핸들 drag.
     AudioInsertSheet(
         mode = audioInsertMode,
         modifier = Modifier.align(Alignment.BottomCenter),
@@ -1056,17 +1057,6 @@ fun TimelineScreen(
         onDismiss = { audioInsertMode = null },
     )
     } // close Box wrapper
-
-    // BGM trim 시트 — 영상보다 긴 음원 선택 시 onPickBgmAudio 가 bgmTrimRequest 를 set.
-    state.bgmTrimRequest?.let { req ->
-        BgmTrimSheet(
-            request = req,
-            videoDurationMs = state.videoDurationMs,
-            onUpdateRange = { s, e -> viewModel.onUpdateBgmTrimRange(s, e) },
-            onConfirm = { viewModel.onConfirmBgmTrim() },
-            onCancel = { viewModel.onCancelBgmTrim() },
-        )
-    }
 
     // BGM 클립 액션 sheet 는 폐기됨 — 선택된 BGM 의 볼륨/속도/배경분리/삭제 액션은 SoundDeck 카드 가
     // 담당하고, 트림은 타임라인 위 좌·우 핸들이 담당한다. 화면 하단에서 sheet 가 올라오는 동선은

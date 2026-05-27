@@ -130,7 +130,7 @@ vibi-mobile/
 | 영상 업로드 | InputScreen + MediaPicker (PickVisualMedia / PHPicker) · VideoThumbnailExtractor | (로컬 segment) |
 | 음원 분리 (영상 segment + BGM clip) | AudioSeparationSheet · `StartAudioSeparationUseCase` / `PollSeparationUseCase` | `POST /api/v2/separate` → poll → `POST /api/v2/separate/{id}/mix` |
 | 구간 선택 | UnifiedTimelineBar (인라인) | (로컬 Room) |
-| 음원 삽입 (파일 + 즉시 녹음 + BGM trim) | `AudioPicker` / `AudioRecorder` · BgmTrimSheet | (로컬 BgmClip) |
+| 음원 삽입 (파일 + 즉시 녹음 + BGM trim) | `AudioPicker` / `AudioRecorder` · timeline lane 핸들 | (로컬 BgmClip) |
 | 익스포트 (단일 + multi-variant) | ExportVariantPickerSheet · `EnsureLatestRenderUseCase` · `SaveAllVariantsUseCase` | `POST /api/v2/render/inputs` → `POST /api/v2/render` (× variants, `inputId` 재사용) → poll → `GET /download` |
 
 ## 외부 의존 (BFF 경유, 클라이언트가 직접 호출하지 않음)
