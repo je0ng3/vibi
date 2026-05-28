@@ -1,29 +1,43 @@
 package com.vibi.cmp.platform
 
 import com.vibi.shared.domain.model.IapPlatform
-import com.vibi.shared.platform.currentTimeMillis
-import kotlinx.coroutines.delay
+import com.vibi.shared.platform.AndroidIapClient
+import com.vibi.shared.platform.AndroidPurchaseOutcome
+import org.koin.mp.KoinPlatform
 
 /**
- * Android actual — v1 mock. 실제 결제는 Play Console productId 등록 +
- * BillingClient.launchBillingFlow + 영수증 검증 BFF 라우트 추가 후 교체.
+ * Android actual — Google Play Billing 7.x ([AndroidIapClient]) 에 위임. iOS [IosIapClient]
+ * 와 동일한 패턴 (Koin lazy + outcome 매핑).
+ *
+ * 결제 popup 은 Google Play 시스템이 그린다 (Play 정책). 본 클래스는 trigger + 결과 매핑만.
+ *
+ * [restorePurchases] 는 query 만 트리거하고 결과 처리는 [com.vibi.shared.platform.AndroidIapReconciler]
+ * 가 담당 — Restore 명시 UI 가 호출했을 때도 같은 reconciler 흐름을 재사용.
  */
 actual class PurchaseLauncher actual constructor() {
-    actual suspend fun purchase(productId: String): PurchaseResult {
-        delay(450)
-        return PurchaseResult.Success(
-            productId = productId,
-            transactionId = "mock-android-${currentTimeMillis()}",
-            receipt = "mock-receipt-$productId",
-            platform = IapPlatform.GOOGLE,
-        )
-    }
+    private val client: AndroidIapClient by lazy { KoinPlatform.getKoin().get() }
+
+    actual suspend fun purchase(productId: String): PurchaseResult =
+        when (val outcome = client.purchase(productId)) {
+            is AndroidPurchaseOutcome.Success -> PurchaseResult.Success(
+                productId = outcome.productId,
+                transactionId = outcome.transactionId,
+                receipt = outcome.receipt,
+                platform = IapPlatform.GOOGLE,
+            )
+            AndroidPurchaseOutcome.Cancelled -> PurchaseResult.UserCancelled
+            is AndroidPurchaseOutcome.Failed -> PurchaseResult.Failed(outcome.message)
+        }
 
     actual suspend fun restorePurchases(): RestoreResult {
-        delay(250)
-        return RestoreResult.Failed("복원할 구매 내역이 없습니다.")
+        return runCatching { client.restoreUnconsumed() }
+            .fold(
+                onSuccess = { RestoreResult.Completed },
+                onFailure = { RestoreResult.Failed(it.message ?: "restore_failed") },
+            )
     }
 
-    // Android 는 Play Billing 미연동 mock — 별도 finish queue 없음.
-    actual fun finishTransaction(transactionId: String) = Unit
+    actual fun finishTransaction(transactionId: String) {
+        client.finishTransaction(transactionId)
+    }
 }

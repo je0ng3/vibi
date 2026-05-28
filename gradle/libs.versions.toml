@@ -22,6 +22,7 @@ multiplatformSettings = "1.3.0"
 lifecycleViewModel = "2.10.0"
 lifecycleViewModelCompose = "2.10.0"
 sqliteJdbc = "3.46.1.0"
+playBilling = "7.1.1"
 
 [libraries]
 # Kotlinx
@@ -79,6 +80,9 @@ androidx-lifecycle-viewmodel-compose = { group = "org.jetbrains.androidx.lifecyc
 
 # Multiplatform Settings (KMP key-value 저장 — iOS NSUserDefaults / Android SharedPreferences)
 multiplatform-settings = { group = "com.russhwolf", name = "multiplatform-settings", version.ref = "multiplatformSettings" }
+
+# Google Play Billing (Android only — iOS uses StoreKit2 via IapBridge)
+play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
 
 # Test
 junit = { group = "junit", name = "junit", version.ref = "junit" }

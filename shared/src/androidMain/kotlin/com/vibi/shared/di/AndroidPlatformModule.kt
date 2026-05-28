@@ -7,9 +7,12 @@ import com.vibi.shared.data.repository.AndroidVideoMetadataExtractor
 import com.vibi.shared.data.repository.RemoteRenderExecutor
 import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import android.content.Context
+import com.vibi.shared.platform.ActivityProvider
 import com.vibi.shared.platform.AndroidAppleSignInClient
 import com.vibi.shared.platform.AndroidGoogleSignInClient
 import com.vibi.shared.platform.AndroidAudioExtractor
+import com.vibi.shared.platform.AndroidIapClient
+import com.vibi.shared.platform.AndroidIapReconciler
 import com.vibi.shared.platform.AndroidVideoThumbnailExtractor
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.AudioExtractor
@@ -47,4 +50,10 @@ val androidPlatformModule = module {
     }
     single<GoogleSignInClient> { AndroidGoogleSignInClient() }
     single<AppleSignInClient> { AndroidAppleSignInClient() }
+
+    // Play Billing — ActivityProvider 는 VibiApplication.onCreate 에서 attachTo() 호출.
+    // AndroidIapReconciler.start() 도 같은 시점에 트리거 (KoinHelper 동등 흐름).
+    single { ActivityProvider() }
+    single { AndroidIapClient(appContext = androidContext(), activityProvider = get()) }
+    single { AndroidIapReconciler(iap = get(), creditPurchaseService = get()) }
 }

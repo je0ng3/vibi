@@ -4,6 +4,9 @@ import android.app.Application
 import com.vibi.shared.data.local.db.VibiDatabaseInitializer
 import com.vibi.shared.di.androidPlatformModule
 import com.vibi.shared.di.initKoin
+import com.vibi.shared.platform.ActivityProvider
+import com.vibi.shared.platform.AndroidIapReconciler
+import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.logger.Level
@@ -19,5 +22,9 @@ class VibiApplication : Application() {
             androidLogger(Level.INFO)
             androidContext(this@VibiApplication)
         }
+        // Play Billing launchBillingFlow 가 Activity 필수 — ActivityLifecycleCallbacks 로 추적.
+        get<ActivityProvider>().attachTo(this)
+        // 미완료 purchase (직전 세션의 BFF 가산 실패 / Ask-to-Buy 승인 등) BFF 재제출.
+        get<AndroidIapReconciler>().start()
     }
 }
