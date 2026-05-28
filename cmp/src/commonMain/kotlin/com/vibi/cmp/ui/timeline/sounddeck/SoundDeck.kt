@@ -140,23 +140,27 @@ fun SoundDeck(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Audio",
-                style = typo.titleSm,
-                color = tokens.onBackgroundPrimary,
-            )
-            // 보조 문구는 분리 결과가 있을 때만 "구간 탭" 가이드.
-            // BGM 만 있는 상태는 카드 자체가 의미를 전달하므로 보조 문구 숨김.
-            val hasSeparation = groups.any { it is SoundDeckGroup.Separation }
-            val hint = if (hasSeparation) "Tap a range to adjust the sounds" else null
-            if (hint != null) {
-                Spacer(modifier = Modifier.width(VibiSpacing.xs))
+        // "Audio" 헤더는 삽입된 음원(BGM)이나 분리완료 구간(directive)이 하나라도 있을 때만 노출 —
+        // 둘 다 없으면 빈 라벨만 덩그러니 남던 것 제거. groups = 분리 그룹 + BGM 그룹 (둘 다 없으면 empty).
+        if (groups.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    hint,
-                    style = typo.bodySm,
-                    color = tokens.mutedText,
+                    "Audio",
+                    style = typo.titleSm,
+                    color = tokens.onBackgroundPrimary,
                 )
+                // 보조 문구는 분리 결과가 있을 때만 "구간 탭" 가이드.
+                // BGM 만 있는 상태는 카드 자체가 의미를 전달하므로 보조 문구 숨김.
+                val hasSeparation = groups.any { it is SoundDeckGroup.Separation }
+                val hint = if (hasSeparation) "Tap a range to adjust the sounds" else null
+                if (hint != null) {
+                    Spacer(modifier = Modifier.width(VibiSpacing.xs))
+                    Text(
+                        hint,
+                        style = typo.bodySm,
+                        color = tokens.mutedText,
+                    )
+                }
             }
         }
 

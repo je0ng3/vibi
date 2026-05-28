@@ -76,6 +76,7 @@ import androidx.compose.runtime.DisposableEffect
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.SpeakerPalette
+import com.vibi.cmp.theme.VibiRadius
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.platform.StemMixerSource
@@ -108,6 +109,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1821,247 +1823,30 @@ private fun UnifiedTimelineBar(
                         .associate { (i, b) -> b.id to (i + 1) }
                 }
                 bgmClips.forEach { clip ->
-                    // effectiveDurationMs 는 trim (sourceTrimStart/End) + speed 모두 반영 — 시각 막대 길이를
-                    // BGM 의 실제 timeline 점유와 일치시켜야 사용자가 trim 결과를 즉시 확인 가능.
-                    val isSelected = clip.id == selectedBgmClipId
-                    // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
-                    // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
-                    var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
-                    var dragBaseStartMs by remember(clip.id) { mutableLongStateOf(0L) }
-                    var dragAccumPx by remember(clip.id) { mutableFloatStateOf(0f) }
-                    // trim override — start 핸들 드래그 시 trimStart + startMs 동시 갱신, end 핸들은 trimEnd 만.
-                    var trimOverrideStart by remember(clip.id) { mutableStateOf<Long?>(null) }
-                    var trimOverrideEnd by remember(clip.id) { mutableStateOf<Long?>(null) }
-                    var trimOverrideStartMs by remember(clip.id) { mutableStateOf<Long?>(null) }
-                    // pointerInput 의 코루틴 closure 가 forEach 의 옛 clip 을 capture 하지 않도록
-                    // 항상 최신 clip 을 참조 — 특히 startMs 가 ViewModel 측 갱신 후 onDragStart
-                    // 의 base 값으로 stale 한 옛 값을 잡던 버그 방지.
-                    val currentClip by rememberUpdatedState(clip)
-                    // trim override 가 있으면 그 trim 으로 effectiveDuration 재계산. 없으면 clip 값 그대로.
-                    val effTrimStart = trimOverrideStart ?: clip.sourceTrimStartMs
-                    val effTrimEndRaw = trimOverrideEnd ?: clip.sourceTrimEndMs
-                    val effTrimEnd = if (effTrimEndRaw > 0L) effTrimEndRaw else clip.sourceDurationMs
-                    val effSrcDur = (effTrimEnd - effTrimStart).coerceAtLeast(1L)
-                    val speed = if (clip.speedScale > 0f) clip.speedScale else 1f
-                    val globalDurMs = (effSrcDur.toFloat() / speed).toLong().coerceAtLeast(1L)
-                    val effectiveStartMs = trimOverrideStartMs ?: dragOverrideMs ?: clip.startMs
-                    // Lane 은 호출부 [computeBgmDisplayLayout] 가 결정 — 선택 없으면 0 (한 줄), 선택 시 자동 pack.
-                    val effectiveLane = (bgmLaneByClipId[clip.id] ?: 0).coerceAtLeast(0)
-                    val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
-                    val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
-                    val offsetXDp = laneWidthDp * startFrac
-                    val offsetYDp = bgmRowStrideDp * effectiveLane
-                    val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
-                    val isMuted = clip.volumeScale <= 0f
-                    val isRecording = isBgmRecording(clip)
-                    // 클립 색은 timeline 순서로 cycle (BgmPalette = 4색 muted gradient). 모든 BGM 이 같은
-                    // 팔레트라 양 테마 모두 밝은 톤 → contentColor 는 어두운 잉크로 고정 (대비 안정).
-                    val clipBaseColor = com.vibi.cmp.theme.BgmPalette.colorFor(
-                        bgmIndexByClipId[clip.id], tokens,
-                    )
-                    val clipContentColor = Color(0xFF0C0A09)
-                    // 선택 시 영상 range 선택과 동일 visual 적용 — accent fill 0.32a + top/bottom 2dp
-                    // accent 바. 영상/BGM 양쪽 트랙이 같은 디자인 언어를 공유해 사용자가 "선택 됨" 신호를
-                    // 트랙 종류와 무관하게 동일하게 인지. bgmRangeMode (전체 BGM 레인에 range bar 가 별도로
-                    // 그려지는 모드) 에선 본 per-clip selection visual 은 미렌더 — 두 시각이 겹쳐 noisy.
-                    Box(
-                        modifier = Modifier
-                            .offset(x = offsetXDp, y = offsetYDp)
-                            .width(widthDp)
-                            .height(bgmRowHeight)
-                            .clip(VibiShape.xs)
-                            // alpha 0.9 = 거의 solid — 캡컷의 단단한 컬러 블록 느낌. 0.55 였을 땐 배경이
-                            // 비쳐 텍스트 contrast 가 불안정. muted (볼륨 0) 는 회색조로 시각 차별화.
-                            .background(
-                                if (isMuted) markerColor.copy(alpha = 0.30f)
-                                else clipBaseColor.copy(alpha = 0.90f)
-                            )
-                            .pointerInput(clip.id, bgmTapEnabled) {
-                                // tap 은 BGM 바 자체 영역 (= bgmRowHeight × clip width) 에서만 인식 — lane 의
-                                // 빈 공간 (행 사이 gap, BGM 없는 x 구간) 은 탭 안 됨.
-                                detectTapGestures(onTap = {
-                                    if (bgmTapEnabled) onBgmSelectClip(clip.id)
-                                })
-                            }
-                            .pointerInput(clip.id, totalMs, laneWidthPx, bgmDragEnabled) {
-                                // segment edit 모드에선 drag 자체를 미장착 — pointerInput key 에 포함해
-                                // 모드 진입/이탈 시 detector 재등록.
-                                if (!bgmDragEnabled) return@pointerInput
-                                // Lane 은 선택 시 자동 pack 으로 결정 (수직 드래그 인터랙션 폐기).
-                                // X axis 만 처리 — startMs 갱신.
-                                detectDragGestures(
-                                    onDragStart = {
-                                        dragBaseStartMs = currentClip.startMs
-                                        dragAccumPx = 0f
-                                        dragOverrideMs = currentClip.startMs
-                                    },
-                                    onDrag = { change: PointerInputChange, drag: Offset ->
-                                        change.consume()
-                                        dragAccumPx += drag.x
-                                        if (laneWidthPx > 0f && totalMs > 0L) {
-                                            val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
-                                            val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
-                                            dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
-                                                .coerceIn(0L, maxStart)
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        dragOverrideMs?.let { onBgmUpdateStart(currentClip.id, it) }
-                                        dragOverrideMs = null
-                                    },
-                                    onDragCancel = {
-                                        dragOverrideMs = null
-                                    },
-                                )
-                            },
-                    ) {
-                        // (a) 블록 내부 mini 파형 — trim 적용된 source 구간만 슬라이스해서 그림. 라벨이
-                        // 중앙에 떠 있으므로 파형 색은 너무 강하지 않게 (alpha 0.4) — 파형이 라벨을 가리지 않고
-                        // "내용물 있음" 정도로만 시그널.
-                        val peaks = bgmPeaksByUri[clip.sourceUri].orEmpty()
-                        if (peaks.isNotEmpty() && clip.sourceDurationMs > 0L) {
-                            BgmClipWaveform(
-                                peaks = peaks,
-                                trimStartFrac = (effTrimStart.toFloat() / clip.sourceDurationMs).coerceIn(0f, 1f),
-                                trimEndFrac = (effTrimEnd.toFloat() / clip.sourceDurationMs).coerceIn(0f, 1f),
-                                color = clipContentColor.copy(alpha = 0.40f),
-                                modifier = Modifier.matchParentSize(),
-                            )
-                        }
-                        // 선택 시 accent fill — 영상 RangeFillStrip 의 fillAlpha=0.32 와 동일. 라벨 앞에
-                        // 놓아 라벨 가독성은 그대로, 파형/배경만 accent 톤으로 tint.
-                        if (isSelected && !bgmRangeMode) {
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .background(accent.copy(alpha = 0.32f))
-                            )
-                        }
-                        // (b) 라벨 — 캡컷처럼 수직 중앙에 위치, 좌측에서 시작. 색은 흰색 고정으로 어떤 블록
-                        // 배경(brand accent / 코랄) 위에서도 가독성 확보. 이모지(=Unicode 글리프) 대신
-                        // SVG Material 아이콘으로 플랫폼/폰트 차이 무관하게 균일 렌더.
-                        if (widthDp > 36.dp) {
-                            // 라벨 아이콘+텍스트를 옅은 흰색 plate 위에 얹어 글씨 가독성 확보 — BGM 팔레트
-                            // 색과 그 위에 오는 클립 파형이 라벨 stroke 와 시각 noise 로 충돌해 텍스트가
-                            // 흐릿하게 보이던 케이스 해소. 카드 자체는 그대로 보이도록 plate alpha 는 낮게.
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                modifier = Modifier
-                                    .align(Alignment.CenterStart)
-                                    .padding(horizontal = 4.dp)
-                                    .clip(VibiShape.xs)
-                                    .background(Color(0xFFFFFFFF).copy(alpha = 0.55f))
-                                    .padding(horizontal = 5.dp, vertical = 1.dp),
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = if (isRecording) Icons.Filled.Mic else Icons.Filled.MusicNote,
-                                    contentDescription = null,
-                                    tint = clipContentColor,
-                                    modifier = Modifier.size(12.dp),
-                                )
-                                Text(
-                                    text = bgmClipLabelText(clip, bgmClips),
-                                    color = clipContentColor,
-                                    style = androidx.compose.ui.text.TextStyle(
-                                        fontSize = 11.sp,
-                                        lineHeight = 13.sp,
-                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                                    ),
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        // 선택 시 top/bottom accent 바 — 영상 RangeFillStrip 의 가장자리 바와 동일 두께
-                        // (TimelineBarSpec.RangeBorderThickness = 2dp). align 으로 클립 위·아래 엣지에 flush.
-                        if (isSelected && !bgmRangeMode) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(TimelineBarSpec.RangeBorderThickness)
-                                    .align(Alignment.TopStart)
-                                    .background(accent)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(TimelineBarSpec.RangeBorderThickness)
-                                    .align(Alignment.BottomStart)
-                                    .background(accent)
-                            )
-                        }
-                    }
-                    // (c) 트림 핸들 — 선택된 클립의 좌·우 엣지. bgmRangeMode 면 미렌더 (range 핸들과 충돌 방지).
-                    if (isSelected && bgmDragEnabled && !bgmRangeMode) {
-                        // 영상 range 선택의 chevron 핸들과 동일 디자인 — hit zone 이 boundary 에 centered
-                        // (half-in/half-out straddle). 클립이 timeline 끝에 닿아 hit zone 이 컨테이너 바깥
-                        // 으로 잘릴 땐 [0, laneWidthDp - hit] 로 clamp + chevron 정렬을 boundary 쪽으로
-                        // 바꿔 (CenterStart/CenterEnd) chevron 의 바깥 엣지가 timeline 끝 라인에 flush.
-                        // 핸들 hit zone 이 클립 본체 가장자리 일부를 덮어도 BgmTrimHandle 의 onTap 이
-                        // onBgmSelectClip 으로 흘려보내 재탭 선택해제는 그대로 동작.
-                        val maxHandleOffsetX = (laneWidthDp - TimelineBarSpec.HandleHitWidth)
-                            .coerceAtLeast(0.dp)
-                        val rawLeftOffsetX = offsetXDp - TimelineBarSpec.HandleHitWidth / 2
-                        val rawRightOffsetX = offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2
-                        val leftHandleOffsetX = rawLeftOffsetX.coerceIn(0.dp, maxHandleOffsetX)
-                        val rightHandleOffsetX = rawRightOffsetX.coerceIn(0.dp, maxHandleOffsetX)
-                        val atLeftBoundary = effectiveStartMs <= 0L
-                        val atRightBoundary = effectiveStartMs + globalDurMs >= totalMs
-                        val leftVisualAlign = if (atLeftBoundary) Alignment.CenterStart else Alignment.Center
-                        val rightVisualAlign = if (atRightBoundary) Alignment.CenterEnd else Alignment.Center
-                        // 좌 핸들 — sourceTrimStartMs + startMs 동시 갱신.
-                        BgmTrimHandle(
-                            side = BgmTrimSide.Start,
-                            clipId = clip.id,
-                            currentClip = currentClip,
-                            offsetX = leftHandleOffsetX,
-                            visualAlignment = leftVisualAlign,
-                            offsetY = offsetYDp,
-                            height = bgmRowHeight,
-                            handleColor = accent,
-                            gripColor = markerColor,
-                            laneWidthPx = laneWidthPx,
+                    // 각 클립을 별도 [BgmClipBlock] 으로 — 드래그/트림 시 recomposition 을 그 한 클립으로
+                    // 격리 (부모 UnifiedTimelineBar 전체 recompose 방지). key(clip.id) 로 재정렬 시 override
+                    // state 보존.
+                    key(clip.id) {
+                        BgmClipBlock(
+                            clip = clip,
+                            isSelected = clip.id == selectedBgmClipId,
+                            lane = (bgmLaneByClipId[clip.id] ?: 0).coerceAtLeast(0),
+                            paletteIndex = bgmIndexByClipId[clip.id],
+                            peaks = bgmPeaksByUri[clip.sourceUri].orEmpty(),
+                            label = bgmClipLabelText(clip, bgmClips),
                             totalMs = totalMs,
-                            onLiveUpdate = { newTrimStart, newStartMs ->
-                                trimOverrideStart = newTrimStart
-                                trimOverrideStartMs = newStartMs
-                            },
-                            onCommit = { newTrimStart, newStartMs ->
-                                onBgmUpdateTrim(currentClip.id, newTrimStart, currentClip.sourceTrimEndMs, newStartMs)
-                                trimOverrideStart = null
-                                trimOverrideStartMs = null
-                            },
-                            onCancel = {
-                                trimOverrideStart = null
-                                trimOverrideStartMs = null
-                            },
-                            onTap = { onBgmSelectClip(currentClip.id) },
-                        )
-                        // 우 핸들 — sourceTrimEndMs 만. startMs 불변.
-                        BgmTrimHandle(
-                            side = BgmTrimSide.End,
-                            clipId = clip.id,
-                            currentClip = currentClip,
-                            offsetX = rightHandleOffsetX,
-                            visualAlignment = rightVisualAlign,
-                            offsetY = offsetYDp,
-                            height = bgmRowHeight,
-                            handleColor = accent,
-                            gripColor = markerColor,
+                            laneWidthDp = laneWidthDp,
                             laneWidthPx = laneWidthPx,
-                            totalMs = totalMs,
-                            onLiveUpdate = { newTrimEnd, _ ->
-                                trimOverrideEnd = newTrimEnd
-                            },
-                            onCommit = { newTrimEnd, _ ->
-                                onBgmUpdateTrim(currentClip.id, currentClip.sourceTrimStartMs, newTrimEnd, null)
-                                trimOverrideEnd = null
-                            },
-                            onCancel = {
-                                trimOverrideEnd = null
-                            },
-                            onTap = { onBgmSelectClip(currentClip.id) },
+                            bgmRowHeight = bgmRowHeight,
+                            bgmRowStrideDp = bgmRowStrideDp,
+                            bgmRangeMode = bgmRangeMode,
+                            accent = accent,
+                            markerColor = markerColor,
+                            bgmTapEnabled = bgmTapEnabled,
+                            bgmDragEnabled = bgmDragEnabled,
+                            onBgmSelectClip = onBgmSelectClip,
+                            onBgmUpdateStart = onBgmUpdateStart,
+                            onBgmUpdateTrim = onBgmUpdateTrim,
                         )
                     }
                 }
@@ -2860,6 +2645,342 @@ private fun RangeHandle(
                     .background(gripColor)
             )
         }
+    }
+}
+
+/**
+ * 단일 BGM/녹음 클립 블록 — 본체 막대 + 내부 mini 파형 + 라벨 + (선택 시) 트림 고스트·좌우 트림 핸들.
+ *
+ * **별도 @Composable 로 추출한 이유 = recomposition 격리.** 위치 드래그/트림 드래그는 매 프레임 local
+ * override state(`dragOverrideMs` / `trimOverride*`)를 갱신하는데, 이 state read 가 부모
+ * [UnifiedTimelineBar](룰러·재생바·전 클립을 한 번에 그리는 거대 컴포저블) scope 안에 있으면 손가락이
+ * 한 번 움직일 때마다 타임라인 바 전체가 recompose 돼 클립/오버레이가 많을수록 심하게 버벅인다. 블록을
+ * 떼어내면 드래그 중 invalidation 이 이 함수 scope 로 한정 — 끌고 있는 한 클립만 recompose 된다.
+ * 호출부에서 `key(clip.id)` 로 감싸 리스트 재정렬 시에도 각 블록의 override state 가 보존된다.
+ */
+@Composable
+private fun BgmClipBlock(
+    clip: com.vibi.shared.domain.model.BgmClip,
+    isSelected: Boolean,
+    lane: Int,
+    paletteIndex: Int?,
+    peaks: List<Float>,
+    label: String,
+    totalMs: Long,
+    laneWidthDp: androidx.compose.ui.unit.Dp,
+    laneWidthPx: Float,
+    bgmRowHeight: androidx.compose.ui.unit.Dp,
+    bgmRowStrideDp: androidx.compose.ui.unit.Dp,
+    bgmRangeMode: Boolean,
+    accent: Color,
+    markerColor: Color,
+    bgmTapEnabled: Boolean,
+    bgmDragEnabled: Boolean,
+    onBgmSelectClip: (String) -> Unit,
+    onBgmUpdateStart: (String, Long) -> Unit,
+    onBgmUpdateTrim: (clipId: String, sourceTrimStartMs: Long, sourceTrimEndMs: Long, newStartMs: Long?) -> Unit,
+) {
+    val tokens = LocalVibiColors.current
+    // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
+    // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
+    var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
+    var dragBaseStartMs by remember(clip.id) { mutableLongStateOf(0L) }
+    var dragAccumPx by remember(clip.id) { mutableFloatStateOf(0f) }
+    // trim override — start 핸들 드래그 시 trimStart + startMs 동시 갱신, end 핸들은 trimEnd 만.
+    var trimOverrideStart by remember(clip.id) { mutableStateOf<Long?>(null) }
+    var trimOverrideEnd by remember(clip.id) { mutableStateOf<Long?>(null) }
+    var trimOverrideStartMs by remember(clip.id) { mutableStateOf<Long?>(null) }
+    // pointerInput 의 코루틴 closure 가 옛 clip 을 capture 하지 않도록 항상 최신 clip 참조 — 특히
+    // startMs 가 ViewModel 측 갱신 후 onDragStart 의 base 값으로 stale 한 옛 값을 잡던 버그 방지.
+    val currentClip by rememberUpdatedState(clip)
+    // trim override 가 있으면 그 trim 으로 effectiveDuration 재계산. 없으면 clip 값 그대로.
+    val effTrimStart = trimOverrideStart ?: clip.sourceTrimStartMs
+    val effTrimEndRaw = trimOverrideEnd ?: clip.sourceTrimEndMs
+    val effTrimEnd = if (effTrimEndRaw > 0L) effTrimEndRaw else clip.sourceDurationMs
+    val effSrcDur = (effTrimEnd - effTrimStart).coerceAtLeast(1L)
+    val speed = if (clip.speedScale > 0f) clip.speedScale else 1f
+    val globalDurMs = (effSrcDur.toFloat() / speed).toLong().coerceAtLeast(1L)
+    // 위치 드래그 clamp 가 stale globalDurMs (pointerInput 첫 셋업 시점 값) 를 잡으면, trim 후 사용 구간이
+    // 짧아져도 옛 (더 긴) 길이로 maxStart 를 계산 → 사용 구간 끝이 timeline 끝에 못 닿는다 (잘린 tail 까지
+    // 다 안에 들어가야 하는 것처럼 동작). [currentClip] 과 동일하게 State 로 감싸 onDrag 가 항상 최신
+    // 사용 구간 길이를 읽도록.
+    val currentGlobalDurMs by rememberUpdatedState(globalDurMs)
+    val effectiveStartMs = trimOverrideStartMs ?: dragOverrideMs ?: clip.startMs
+    val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+    val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
+    val offsetXDp = laneWidthDp * startFrac
+    val offsetYDp = bgmRowStrideDp * lane.coerceAtLeast(0)
+    val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
+    val isMuted = clip.volumeScale <= 0f
+    val isRecording = isBgmRecording(clip)
+    // 클립 색은 timeline 순서로 cycle (BgmPalette = 4색 muted gradient). 모든 BGM 이 같은 팔레트라
+    // 양 테마 모두 밝은 톤 → contentColor 는 어두운 잉크로 고정 (대비 안정).
+    val clipBaseColor = com.vibi.cmp.theme.BgmPalette.colorFor(paletteIndex, tokens)
+    val clipContentColor = Color(0xFF0C0A09)
+    // (선택 시) trim 으로 잘려나간 원본 head/tail 을 연한 고스트로 — "원래 얼마나 길었는지" +
+    // "핸들을 어디까지 되돌릴 수 있는지" 를 동시에 시그널. head/tail 각각 source-ms 를 speed 로
+    // 나눠 timeline-space 로 환산 후 [0, totalMs] 안으로 clip → 보이는 고스트 폭이 곧 실제 복원
+    // 가능 drag 범위 (BgmTrimHandle 의 clamp 규칙과 동일). trim override 가 살아있으면 effTrim*
+    // 가 이미 live 값이라 핸들 드래그 중에도 고스트가 즉시 늘고 줄어든다. 본체에 flush 하게 붙도록
+    // 바깥 모서리만 둥글게(xs), 본체와 맞닿는 안쪽 모서리는 직각.
+    if (isSelected && !bgmRangeMode && clip.sourceDurationMs > 0L) {
+        val headGhostMs = (effTrimStart.toFloat() / speed).toLong()
+        val tailGhostMs = ((clip.sourceDurationMs - effTrimEnd).toFloat() / speed).toLong()
+        val ghostFill = if (isMuted) markerColor.copy(alpha = 0.14f)
+            else clipBaseColor.copy(alpha = 0.24f)
+        val ghostWaveColor = clipContentColor.copy(alpha = 0.16f)
+        if (headGhostMs > 0L) {
+            val ghostStartFrac = ((effectiveStartMs - headGhostMs).toFloat() / totalMs)
+                .coerceIn(0f, 1f)
+            val headWidthDp = laneWidthDp * (startFrac - ghostStartFrac)
+            if (headWidthDp > 0.dp) {
+                Box(
+                    modifier = Modifier
+                        .offset(x = laneWidthDp * ghostStartFrac, y = offsetYDp)
+                        .width(headWidthDp)
+                        .height(bgmRowHeight)
+                        .clip(
+                            RoundedCornerShape(
+                                topStart = VibiRadius.xs,
+                                bottomStart = VibiRadius.xs,
+                                topEnd = 0.dp,
+                                bottomEnd = 0.dp,
+                            )
+                        )
+                        .background(ghostFill),
+                ) {
+                    if (peaks.isNotEmpty()) {
+                        BgmClipWaveform(
+                            peaks = peaks,
+                            trimStartFrac = 0f,
+                            trimEndFrac = (effTrimStart.toFloat() / clip.sourceDurationMs)
+                                .coerceIn(0f, 1f),
+                            color = ghostWaveColor,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                    }
+                }
+            }
+        }
+        if (tailGhostMs > 0L) {
+            val tailStartFrac = (startFrac + widthFrac).coerceIn(0f, 1f)
+            val tailEndFrac = ((effectiveStartMs + globalDurMs + tailGhostMs).toFloat() / totalMs)
+                .coerceIn(0f, 1f)
+            val tailWidthDp = laneWidthDp * (tailEndFrac - tailStartFrac)
+            if (tailWidthDp > 0.dp) {
+                Box(
+                    modifier = Modifier
+                        .offset(x = laneWidthDp * tailStartFrac, y = offsetYDp)
+                        .width(tailWidthDp)
+                        .height(bgmRowHeight)
+                        .clip(
+                            RoundedCornerShape(
+                                topStart = 0.dp,
+                                bottomStart = 0.dp,
+                                topEnd = VibiRadius.xs,
+                                bottomEnd = VibiRadius.xs,
+                            )
+                        )
+                        .background(ghostFill),
+                ) {
+                    if (peaks.isNotEmpty()) {
+                        BgmClipWaveform(
+                            peaks = peaks,
+                            trimStartFrac = (effTrimEnd.toFloat() / clip.sourceDurationMs)
+                                .coerceIn(0f, 1f),
+                            trimEndFrac = 1f,
+                            color = ghostWaveColor,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+    // 본체 막대 — 선택 시 영상 range 선택과 동일 visual(accent fill 0.32a + top/bottom 2dp accent 바).
+    // bgmRangeMode 에선 per-clip selection visual 미렌더 (range 바와 겹쳐 noisy).
+    Box(
+        modifier = Modifier
+            .offset(x = offsetXDp, y = offsetYDp)
+            .width(widthDp)
+            .height(bgmRowHeight)
+            .clip(VibiShape.xs)
+            // alpha 0.9 = 거의 solid — 캡컷의 단단한 컬러 블록 느낌. muted (볼륨 0) 는 회색조로 구분.
+            .background(
+                if (isMuted) markerColor.copy(alpha = 0.30f)
+                else clipBaseColor.copy(alpha = 0.90f)
+            )
+            .pointerInput(clip.id, bgmTapEnabled) {
+                // tap 은 BGM 바 자체 영역에서만 인식 — lane 빈 공간은 탭 안 됨.
+                detectTapGestures(onTap = {
+                    if (bgmTapEnabled) onBgmSelectClip(clip.id)
+                })
+            }
+            .pointerInput(clip.id, totalMs, laneWidthPx, bgmDragEnabled) {
+                // segment edit 모드에선 drag 미장착 — key 에 포함해 모드 진입/이탈 시 detector 재등록.
+                if (!bgmDragEnabled) return@pointerInput
+                // X axis 만 처리 — startMs 갱신 (lane 은 선택 시 자동 pack).
+                detectDragGestures(
+                    onDragStart = {
+                        dragBaseStartMs = currentClip.startMs
+                        dragAccumPx = 0f
+                        dragOverrideMs = currentClip.startMs
+                    },
+                    onDrag = { change: PointerInputChange, drag: Offset ->
+                        change.consume()
+                        dragAccumPx += drag.x
+                        if (laneWidthPx > 0f && totalMs > 0L) {
+                            val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
+                            val maxStart = (totalMs - currentGlobalDurMs).coerceAtLeast(0L)
+                            dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
+                                .coerceIn(0L, maxStart)
+                        }
+                    },
+                    onDragEnd = {
+                        dragOverrideMs?.let { onBgmUpdateStart(currentClip.id, it) }
+                        dragOverrideMs = null
+                    },
+                    onDragCancel = {
+                        dragOverrideMs = null
+                    },
+                )
+            },
+    ) {
+        // (a) 블록 내부 mini 파형 — trim 적용된 source 구간만 슬라이스. 라벨 가독성 위해 alpha 0.4.
+        if (peaks.isNotEmpty() && clip.sourceDurationMs > 0L) {
+            BgmClipWaveform(
+                peaks = peaks,
+                trimStartFrac = (effTrimStart.toFloat() / clip.sourceDurationMs).coerceIn(0f, 1f),
+                trimEndFrac = (effTrimEnd.toFloat() / clip.sourceDurationMs).coerceIn(0f, 1f),
+                color = clipContentColor.copy(alpha = 0.40f),
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+        // 선택 시 accent fill — 영상 RangeFillStrip 의 fillAlpha=0.32 와 동일.
+        if (isSelected && !bgmRangeMode) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(accent.copy(alpha = 0.32f))
+            )
+        }
+        // (b) 라벨 — 수직 중앙, 좌측 시작. 옅은 흰색 plate 위에 얹어 가독성 확보.
+        if (widthDp > 36.dp) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(horizontal = 4.dp)
+                    .clip(VibiShape.xs)
+                    .background(Color(0xFFFFFFFF).copy(alpha = 0.55f))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = if (isRecording) Icons.Filled.Mic else Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    tint = clipContentColor,
+                    modifier = Modifier.size(12.dp),
+                )
+                Text(
+                    text = label,
+                    color = clipContentColor,
+                    style = androidx.compose.ui.text.TextStyle(
+                        fontSize = 11.sp,
+                        lineHeight = 13.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    ),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+        }
+        // 선택 시 top/bottom accent 바 — 영상 RangeFillStrip 가장자리 바와 동일 두께.
+        if (isSelected && !bgmRangeMode) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(TimelineBarSpec.RangeBorderThickness)
+                    .align(Alignment.TopStart)
+                    .background(accent)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(TimelineBarSpec.RangeBorderThickness)
+                    .align(Alignment.BottomStart)
+                    .background(accent)
+            )
+        }
+    }
+    // (c) 트림 핸들 — 선택된 클립의 좌·우 엣지. bgmRangeMode 면 미렌더 (range 핸들과 충돌 방지).
+    if (isSelected && bgmDragEnabled && !bgmRangeMode) {
+        // 영상 range 선택의 chevron 핸들과 동일 디자인 — hit zone 이 boundary 에 centered (straddle).
+        // 클립이 timeline 끝에 닿아 hit zone 이 컨테이너 바깥으로 잘릴 땐 [0, laneWidthDp - hit] 로
+        // clamp + chevron 정렬을 boundary 쪽(CenterStart/CenterEnd)으로 바꿔 바깥 엣지가 끝 라인에 flush.
+        val maxHandleOffsetX = (laneWidthDp - TimelineBarSpec.HandleHitWidth)
+            .coerceAtLeast(0.dp)
+        val rawLeftOffsetX = offsetXDp - TimelineBarSpec.HandleHitWidth / 2
+        val rawRightOffsetX = offsetXDp + widthDp - TimelineBarSpec.HandleHitWidth / 2
+        val leftHandleOffsetX = rawLeftOffsetX.coerceIn(0.dp, maxHandleOffsetX)
+        val rightHandleOffsetX = rawRightOffsetX.coerceIn(0.dp, maxHandleOffsetX)
+        val atLeftBoundary = effectiveStartMs <= 0L
+        val atRightBoundary = effectiveStartMs + globalDurMs >= totalMs
+        val leftVisualAlign = if (atLeftBoundary) Alignment.CenterStart else Alignment.Center
+        val rightVisualAlign = if (atRightBoundary) Alignment.CenterEnd else Alignment.Center
+        // 좌 핸들 — sourceTrimStartMs + startMs 동시 갱신.
+        BgmTrimHandle(
+            side = BgmTrimSide.Start,
+            clipId = clip.id,
+            currentClip = currentClip,
+            offsetX = leftHandleOffsetX,
+            visualAlignment = leftVisualAlign,
+            offsetY = offsetYDp,
+            height = bgmRowHeight,
+            handleColor = accent,
+            gripColor = markerColor,
+            laneWidthPx = laneWidthPx,
+            totalMs = totalMs,
+            onLiveUpdate = { newTrimStart, newStartMs ->
+                trimOverrideStart = newTrimStart
+                trimOverrideStartMs = newStartMs
+            },
+            onCommit = { newTrimStart, newStartMs ->
+                onBgmUpdateTrim(currentClip.id, newTrimStart, currentClip.sourceTrimEndMs, newStartMs)
+                trimOverrideStart = null
+                trimOverrideStartMs = null
+            },
+            onCancel = {
+                trimOverrideStart = null
+                trimOverrideStartMs = null
+            },
+            onTap = { onBgmSelectClip(currentClip.id) },
+        )
+        // 우 핸들 — sourceTrimEndMs 만. startMs 불변.
+        BgmTrimHandle(
+            side = BgmTrimSide.End,
+            clipId = clip.id,
+            currentClip = currentClip,
+            offsetX = rightHandleOffsetX,
+            visualAlignment = rightVisualAlign,
+            offsetY = offsetYDp,
+            height = bgmRowHeight,
+            handleColor = accent,
+            gripColor = markerColor,
+            laneWidthPx = laneWidthPx,
+            totalMs = totalMs,
+            onLiveUpdate = { newTrimEnd, _ ->
+                trimOverrideEnd = newTrimEnd
+            },
+            onCommit = { newTrimEnd, _ ->
+                onBgmUpdateTrim(currentClip.id, currentClip.sourceTrimStartMs, newTrimEnd, null)
+                trimOverrideEnd = null
+            },
+            onCancel = {
+                trimOverrideEnd = null
+            },
+            onTap = { onBgmSelectClip(currentClip.id) },
+        )
     }
 }
 
