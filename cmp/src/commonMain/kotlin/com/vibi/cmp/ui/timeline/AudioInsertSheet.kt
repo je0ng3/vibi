@@ -98,7 +98,12 @@ fun AudioInsertSheet(
         enter = slideInVertically(animationSpec = tween(durationMillis = 220)) { it },
         exit = slideOutVertically(animationSpec = tween(durationMillis = 180)) { it },
     ) {
-        stickyMode?.let { m ->
+        // body 가 받는 mode 는 항상 live [mode] 우선 — [stickyMode] 는 mode==null (종료 슬라이드) 동안만
+        // fallback. 예전엔 body 가 stickyMode 만 봤는데 stickyMode 갱신이 위 LaunchedEffect (지연 실행)라,
+        // 모드 전환(예: Upload(Picker) 후 다시 Record) 직후 첫 프레임에 stale 한 이전 mode 로 body 가
+        // 구성돼 엉뚱한 자동 진입(파일 picker)이 발사되던 버그가 있었다 — 그 한 프레임에 picker 가 뜨고
+        // 곧바로 recorder 도 시작돼 picker 가 녹음 stop UI 를 가리는 증상.
+        (mode ?: stickyMode)?.let { m ->
             AudioInsertSheetBody(
                 mode = m,
                 onInsert = onInsert,
