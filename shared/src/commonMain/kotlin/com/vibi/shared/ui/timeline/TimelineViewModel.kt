@@ -1110,13 +1110,15 @@ class TimelineViewModel constructor(
         val segStart = segmentStartOffsetMs(state.segments, seg.id)
         val segEnd = segStart + seg.effectiveDurationMs
         // 탭으로 진입하면 첫 클릭부터 그 지점의 free 구간(음원분리 *진행 중* 제외, 완료 directive 포함)으로
-        // 선택을 좁힌다 — 진입 시 세그먼트 전체(분리중 포함)가 잡히던 문제 해소. 탭 지점이 분리중이거나
-        // free 구간을 못 찾으면 첫 free 구간, 그것도 없으면 segment 전체. tapMs 없으면(비-탭 진입) 전체.
+        // 선택을 좁힌다 — 진입 시 세그먼트 전체(분리중 포함)가 잡히던 문제 해소. 탭 지점이 분리중이면 첫 free
+        // 구간으로 스냅. free 구간이 하나도 없으면(=전체 구간 음원분리 진행 중) 진입 자체를 막는다 — 진입을
+        // 허용하면 같은 free-구간 규칙에 막혀 선택 해제(onSelectSegmentInEdit)도 안 돼 해제 불가 상태에 갇힘.
+        // tapMs 없으면(비-탭 진입) segment 전체.
         // 진입 시 원본 영상으로 강제 reset — 사용자는 편집 결과를 원본 영상에서 확인.
         // 진입 시 음성분리/자막더빙 sheet 들도 같이 닫음 — 영상편집 중엔 노출 금지.
         val range = if (tapMs != null) {
             val frees = freeIntervalsInSegment(segStart, segEnd, excludeCompletedDirectives = false)
-            frees.firstOrNull { tapMs in it } ?: frees.firstOrNull() ?: (segStart..segEnd)
+            frees.firstOrNull { tapMs in it } ?: frees.firstOrNull() ?: return
         } else {
             segStart..segEnd
         }
