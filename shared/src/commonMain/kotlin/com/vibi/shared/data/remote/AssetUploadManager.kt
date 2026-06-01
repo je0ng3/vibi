@@ -28,6 +28,17 @@ class AssetKeyCache(private val settings: Settings) {
 /**
  * 로컬 파일을 R2 에 업로드 보장하고 BFF 가 RenderConfigV3 에 넣을 assetKey 를 반환.
  *
+ * 멱등 — 같은 파일을 여러 번 호출해도 캐시/dedup 으로 PUT 은 한 번만 일어난다. 덕분에 편집 진입
+ * 시점의 선업로드(prewarm)와 저장 시점의 렌더 업로드가 같은 키를 공유하고, 후자는 캐시 히트로
+ * 즉시 반환된다. [com.vibi.shared.data.repository.V3RenderExecutor] 와 prewarm UseCase 가 공유.
+ */
+interface AssetUploader {
+    suspend fun ensureUploaded(localPath: String, ext: String, contentType: String): String
+}
+
+/**
+ * [AssetUploader] 의 R2 구현.
+ *
  * 흐름:
  *   1) 로컬 [AssetKeyCache] hit → 즉시 반환 (sha256/네트워크 호출 모두 skip)
  *   2) sha256 + size + ext + contentType 으로 BFF 에 upload-url 요청
@@ -40,8 +51,8 @@ class AssetKeyCache(private val settings: Settings) {
 class AssetUploadManager(
     private val api: BffApi,
     private val cache: AssetKeyCache,
-) {
-    suspend fun ensureUploaded(
+) : AssetUploader {
+    override suspend fun ensureUploaded(
         localPath: String,
         ext: String,
         contentType: String,

@@ -50,6 +50,7 @@ val viewModelModule = module {
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
             saveAllVariants = get(),
             shareSheetLauncher = get(),
+            prewarmAssetUpload = get(),
             settings = get(),
         )
     }

@@ -8,6 +8,7 @@ import com.vibi.shared.data.repository.BgmClipRepositoryImpl
 import com.vibi.shared.data.repository.EditProjectRepositoryImpl
 import com.vibi.shared.data.remote.AssetKeyCache
 import com.vibi.shared.data.remote.AssetUploadManager
+import com.vibi.shared.data.remote.AssetUploader
 import com.vibi.shared.data.repository.RemoteRenderExecutor
 import com.vibi.shared.data.repository.SegmentRepositoryImpl
 import com.vibi.shared.data.repository.TextOverlayRepositoryImpl
@@ -49,7 +50,7 @@ val repositoryModule = module {
     single { RemoteRenderExecutor(api = get()) }
     // v3 (asset-by-reference) — iOS 전용 흐름. settings 는 platform 모듈이 주입.
     single { AssetKeyCache(settings = get()) }
-    single { AssetUploadManager(api = get(), cache = get()) }
+    single<AssetUploader> { AssetUploadManager(api = get(), cache = get()) }
     single { V3RenderExecutor(api = get(), assetUploader = get()) }
     // FfmpegExecutor 바인딩은 platform 별 module 에서 결정:
     //   iOS    → V3RenderExecutor (v3 asset-by-reference)

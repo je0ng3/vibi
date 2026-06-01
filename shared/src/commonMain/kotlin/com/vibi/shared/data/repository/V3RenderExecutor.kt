@@ -1,6 +1,6 @@
 package com.vibi.shared.data.repository
 
-import com.vibi.shared.data.remote.AssetUploadManager
+import com.vibi.shared.data.remote.AssetUploader
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.dto.RenderBgmClipV3
 import com.vibi.shared.data.remote.dto.RenderConfigV3
@@ -23,7 +23,7 @@ import kotlinx.coroutines.isActive
  * v3 asset-by-reference 렌더 — segment 영상/BGM 을 R2 에 사전 PUT 한 뒤 키만 BFF 로 전송.
  *
  * 흐름:
- *   1) segments 의 distinct sourceFilePath 마다 [AssetUploadManager.ensureUploaded] →
+ *   1) segments 의 distinct sourceFilePath 마다 [AssetUploader.ensureUploaded] →
  *      asset key. 같은 source 영상 반복 사용 시 1회만 sha256/upload.
  *   2) bgmClips 의 distinct audioFilePath 마다 동일 — 같은 BGM 두 directive 사용 시
  *      R2 PUT 1회만 (v2 multipart 의 BGM dedup 누락 해결).
@@ -34,7 +34,7 @@ import kotlinx.coroutines.isActive
  */
 class V3RenderExecutor(
     private val api: BffApi,
-    private val assetUploader: AssetUploadManager,
+    private val assetUploader: AssetUploader,
 ) : FfmpegExecutor {
 
     override suspend fun renderProject(

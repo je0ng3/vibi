@@ -36,6 +36,7 @@ import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
 import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
 import com.vibi.shared.domain.usecase.save.ExportVariant
+import com.vibi.shared.domain.usecase.save.PrewarmAssetUploadUseCase
 import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
@@ -300,6 +301,7 @@ class TimelineViewModel constructor(
     private val bffBaseUrl: String,
     private val saveAllVariants: SaveAllVariantsUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
+    private val prewarmAssetUpload: PrewarmAssetUploadUseCase,
     /** 멀티플랫폼 영속 설정 — 현재는 "음원분리 취소 경고 다시 보지 않기" 플래그에만 사용. */
     private val settings: Settings,
 ) : ViewModel() {
@@ -349,6 +351,9 @@ class TimelineViewModel constructor(
     private enum class TriggerGate { ARMED, FIRED }
     private var separationGate = TriggerGate.ARMED
     private var separationRefreshGate = TriggerGate.ARMED
+
+    // 영상 원본 R2 선업로드(prewarm) 가드 — segment flow 가 재emit 돼도 편집 진입당 1회만 fire.
+    private var prewarmGate = TriggerGate.ARMED
 
     init {
         loadSegments()
@@ -590,6 +595,7 @@ class TimelineViewModel constructor(
             segmentRepository.observeByProjectId(projectId).collect { segments ->
                 val first = segments.firstOrNull()
                 val total = segments.sumOf { it.effectiveDurationMs }
+                maybePrewarmAssetUpload(segments)
                 // _uiState.update {} (atomic CAS) — 같은 mutation 시 splitSegment 와 updateSegmentVolume
                 // 두 transaction commit 이 Room invalidation 으로 별개 emit 을 만든다. 사이에 사용자가
                 // 다른 segment 를 탭해 click 핸들러의 `_uiState.value = state.copy(...)` 가 stale
@@ -615,6 +621,22 @@ class TimelineViewModel constructor(
                 }
             }
         }
+    }
+
+    /**
+     * 편집 진입 시 영상 원본을 R2 에 미리 올려, 저장 시점의 업로드 대기를 없앤다. segment flow 는
+     * 매 편집마다 재emit 되므로 [prewarmGate] 로 진입당 1회만 fire. 업로드는 best-effort 라 실패해도
+     * 저장 경로가 평소대로 처리하므로 회귀가 없다. segment flow 처리를 막지 않도록 별도 launch.
+     */
+    private fun maybePrewarmAssetUpload(segments: List<Segment>) {
+        if (prewarmGate != TriggerGate.ARMED) return
+        val videoPaths = segments
+            .filter { it.type == SegmentType.VIDEO }
+            .map { it.sourceUri }
+            .filter { it.isNotBlank() }
+        if (videoPaths.isEmpty()) return
+        prewarmGate = TriggerGate.FIRED
+        viewModelScope.launch { prewarmAssetUpload(videoPaths) }
     }
 
     private fun selectedSegmentGlobalTrim(

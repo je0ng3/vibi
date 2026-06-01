@@ -7,6 +7,7 @@ import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegment
 import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.ValidateVideoUseCase
 import com.vibi.shared.domain.usecase.save.ExportRenderCache
+import com.vibi.shared.domain.usecase.save.PrewarmAssetUploadUseCase
 import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
@@ -42,6 +43,7 @@ val useCaseModule = module {
             renderCache = get(),
         )
     }
+    factory { PrewarmAssetUploadUseCase(uploader = get()) }
     factoryOf(::StartAudioSeparationUseCase)
     factoryOf(::PollSeparationUseCase)
     factoryOf(::AddBgmClipUseCase)
