@@ -1349,9 +1349,13 @@ class TimelineViewModel constructor(
      * 사용자가 영상편집 중 적용한 복제/삭제/볼륨/속도 변경을 모두 무효화.
      */
     /**
-     * 영상편집 모드의 ✓(체크) — 편집 확정. 영상 segment 자체는 그대로 두고, 자막·더빙·음원분리·BGM
-     * 결과와 메인 timeline undo 스택을 모두 초기화 (사용자에게 안내문구로 명시).
+     * 영상편집 모드의 ✓(체크) — 편집 확정. 영상 segment 와 다른 트랙 산출물은 그대로 두고 모드만 종료.
      * BFF 호출 없음 — 단순 로컬 상태 리셋만.
+     *
+     * **undo/redo 는 보존한다** — 영상 전체 삭제처럼 다듬기 모드에서 한 편집도 확정 후 되돌릴 수
+     * 있어야 한다. (과거엔 commit 이 산출물을 wipe 해 undo 가 inconsistent → 스택을 clear 했지만,
+     * 정책 변경으로 더 이상 wipe 하지 않으므로 clear 는 회귀를 만든다. 스냅샷은 full-state 라 commit
+     * 경계를 넘어 복원해도 안전.)
      */
     fun onCommitSegmentEdit() {
         viewModelScope.launch { commitSegmentEdit() }
@@ -1366,7 +1370,6 @@ class TimelineViewModel constructor(
      * BGM/stem 시간축 보정은 별도 sync (후속 phase) 로 다룬다.
      */
     private suspend fun commitSegmentEdit() {
-        mainUndoManager.clear()
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             isSegmentEditMode = false,
@@ -1375,7 +1378,10 @@ class TimelineViewModel constructor(
             showRangeActionSheet = false,
             selectedSegmentId = null,
         )
-        pushUndoState()
+        // commit 은 콘텐츠를 바꾸지 않고 (모드 플래그만, 스냅샷에 미포함) 직전 편집 액션이 이미 undo
+        // 스냅샷을 push 했다. 여기서 또 push 하면 동일 상태가 중복 적재돼 "첫 undo 가 헛도는" 문제가
+        // 생기므로 push 하지 않고 canUndo/canRedo 만 갱신.
+        updateUndoRedoState()
     }
 
     /**

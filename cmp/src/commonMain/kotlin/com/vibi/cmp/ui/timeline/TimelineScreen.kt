@@ -47,6 +47,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -84,6 +85,7 @@ import com.vibi.cmp.theme.VibiRadius
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.platform.StemMixerSource
+import com.vibi.cmp.platform.rememberMediaPickerLauncher
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.hasNonTrivialEdits
@@ -173,6 +175,9 @@ fun TimelineScreen(
     //  - "다시 보지 않기" 는 VM 의 skipSeparationCancelWarning (Settings 영속) 으로 관리.
     var selectedProcessingToken by remember { mutableStateOf<String?>(null) }
     var cancelWarnToken by remember { mutableStateOf<String?>(null) }
+
+    // 영상이 모두 삭제된 빈 상태의 "+" → 갤러리에서 새 영상 선택 → 세그먼트로 추가(append 흐름 재사용).
+    val addVideoLauncher = rememberMediaPickerLauncher { uri -> viewModel.onAppendVideoSegment(uri) }
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. Entry sheet 의 두 카드가 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
@@ -581,8 +586,28 @@ fun TimelineScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             } else if (state.videoUri.isEmpty()) {
-                // 영상 Box bg 가 항상 검정이므로 라이트 모드에서도 흰색 텍스트 유지.
-                Text("No video", color = Color.White)
+                // 영상이 삭제된 빈 상태 — "No video" 텍스트 대신 "+" 버튼. 탭하면 갤러리에서 새 영상 선택.
+                // (영상 Box bg 가 항상 검정이므로 라이트 모드에서도 흰색 유지.)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    modifier = Modifier.clickable { addVideoLauncher() },
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(VibiSpacing.xxl)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Add video",
+                            tint = Color.White,
+                        )
+                    }
+                    Text("Add video", color = Color.White, style = typo.bodySm)
+                }
             }
 
         }
@@ -590,59 +615,63 @@ fun TimelineScreen(
         // Transport row — 좌: 전체화면 / 중앙: 재생 정지 / 우: undo·redo. 세 영역을 Box 의 align 으로
         // 절대 배치해 중앙 버튼이 화면 너비와 무관하게 정확히 가운데 위치. 버튼 크기는 touchMin(44dp)
         // 균일 — iOS HIG 44pt / Material 3 48dp 기준 충족.
-        if (state.videoUri.isNotEmpty()) {
+        // undo/redo 는 영상이 없을 때(영상 전체 삭제 후)에도 노출 — 삭제를 되돌릴 수 있어야 하므로
+        // 행 자체는 항상 렌더하고, 전체화면·재생만 영상이 있을 때로 가둔다.
+        run {
             val btnSize = VibiSpacing.touchMin
             val iconSize = 20.dp
             Box(modifier = Modifier.fillMaxWidth().height(btnSize)) {
-                // Left — 전체화면 진입.
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .size(btnSize)
-                        .clip(CircleShape)
-                        .background(tokens.chipBg)
-                        .clickable { fullscreenOpen = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Fullscreen,
-                        contentDescription = "Fullscreen",
-                        tint = tokens.onBackgroundPrimary,
-                        modifier = Modifier.size(iconSize),
-                    )
-                }
-                // Center — 재생/정지 + 현재s/전체s 라벨. Row 로 묶어 align(Center) 하면 (버튼+텍스트)
-                // 두 자식의 합산 폭이 화면 중앙에 위치 — 버튼만 정중앙에 두고 텍스트를 오른쪽에 띄우는
-                // 절대 offset 보다 자연스럽고 너비 변동(예: 999s vs 9s) 에 안전.
-                Row(
-                    modifier = Modifier.align(Alignment.Center),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-                ) {
+                if (state.videoUri.isNotEmpty()) {
+                    // Left — 전체화면 진입.
                     Box(
                         modifier = Modifier
+                            .align(Alignment.CenterStart)
                             .size(btnSize)
                             .clip(CircleShape)
-                            .background(tokens.onBackgroundPrimary)
-                            .clickable { viewModel.onTogglePlayback() },
+                            .background(tokens.chipBg)
+                            .clickable { fullscreenOpen = true },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (state.isPlaying) "Pause" else "Play",
-                            tint = tokens.backgroundPrimary,
+                            imageVector = Icons.Filled.Fullscreen,
+                            contentDescription = "Fullscreen",
+                            tint = tokens.onBackgroundPrimary,
                             modifier = Modifier.size(iconSize),
                         )
                     }
-                    Text(
-                        // ms→s 는 올림 — 4.87s 영상이 라벨에서 "4s" 로 잘려 보이지 않도록.
-                        // (ms + 999) / 1000 = ceil(ms/1000). ms ≥ 0 보장 컨텍스트.
-                        text = "${(state.playbackPositionMs + 999) / 1000}s/${(state.videoDurationMs + 999) / 1000}s",
-                        style = typo.bodySm,
-                        color = tokens.mutedText,
-                    )
+                    // Center — 재생/정지 + 현재s/전체s 라벨. Row 로 묶어 align(Center) 하면 (버튼+텍스트)
+                    // 두 자식의 합산 폭이 화면 중앙에 위치 — 버튼만 정중앙에 두고 텍스트를 오른쪽에 띄우는
+                    // 절대 offset 보다 자연스럽고 너비 변동(예: 999s vs 9s) 에 안전.
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(btnSize)
+                                .clip(CircleShape)
+                                .background(tokens.onBackgroundPrimary)
+                                .clickable { viewModel.onTogglePlayback() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (state.isPlaying) "Pause" else "Play",
+                                tint = tokens.backgroundPrimary,
+                                modifier = Modifier.size(iconSize),
+                            )
+                        }
+                        Text(
+                            // ms→s 는 올림 — 4.87s 영상이 라벨에서 "4s" 로 잘려 보이지 않도록.
+                            // (ms + 999) / 1000 = ceil(ms/1000). ms ≥ 0 보장 컨텍스트.
+                            text = "${(state.playbackPositionMs + 999) / 1000}s/${(state.videoDurationMs + 999) / 1000}s",
+                            style = typo.bodySm,
+                            color = tokens.mutedText,
+                        )
+                    }
                 }
-                // Right — undo / redo.
+                // Right — undo / redo. 영상 유무와 무관하게 항상 노출.
                 Row(
                     modifier = Modifier.align(Alignment.CenterEnd),
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
