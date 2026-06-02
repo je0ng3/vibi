@@ -101,6 +101,7 @@ class V3RenderExecutor(
                         },
                         startMs = c.startMs,
                         volume = c.volume,
+                        speed = c.speed,
                         sourceTrimStartMs = c.sourceTrimStartMs,
                         sourceTrimEndMs = c.sourceTrimEndMs,
                     )
