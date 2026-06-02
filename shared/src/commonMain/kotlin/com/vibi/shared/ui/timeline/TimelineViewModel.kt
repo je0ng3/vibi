@@ -16,6 +16,7 @@ import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.model.DirectiveAnchor
 import com.vibi.shared.domain.model.cloneForSegment
 import com.vibi.shared.domain.model.isContiguousMergeableRun
+import com.vibi.shared.domain.model.isContiguousMergeableWith
 import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.addProcessingSeparation
@@ -1754,52 +1755,73 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 다중 세그먼트 범위 복제 — 병합 가능(연속 order·동일 source·내부 경계 연속·동일 speed/volume)하면 복제본을
-     * **단일 세그먼트**로 범위 끝(마지막 세그먼트) 뒤에 삽입한다. [a|b|c] 에서 a+b 복제 → [a|b|ab|c].
-     * 병합 불가면 null 반환 → 호출자가 per-segment 복제로 폴백. 원본은 건드리지 않는다(복제본만 추가).
+     * 다중 세그먼트 범위 복제 — 복제본(범위 내용)을 **범위 끝 바로 뒤**에 삽입한다. 삽입 자리를 만들기 위해
+     * **범위 끝(마지막 세그먼트)만 그 지점에서 split** 한다(b1b2 → b1|b2). 시작·중간 세그먼트는 **안 쪼갠다**.
+     * [a1a2|b1b2] 에서 a2b1 복제 → [a1a2 | b1 | a2b1 | b2] (A 그대로, B만 b1|b2, 복제본은 b1 뒤).
      *
-     * 복제본 trim = [첫 slice localStart, 마지막 slice localEnd] (같은 source 의 연속 구간). 범위 내 세그먼트에
-     * 앵커된 directive 중 복제 source 구간에 든 것은 복제본에 같은 local 좌표로 clone (분리도 따라감).
+     * 복제본 trim = [첫 slice localStart, 마지막 slice localEnd] — 같은 source 연속이면 한 덩어리.
+     * 다른 source 면 각 slice 구간을 조각별로(순서 유지) 범위 끝 뒤에 그룹 삽입.
      */
     private suspend fun duplicateRangeAsMergedBlock(slices: List<SegmentRangeSlice>): Segment? {
         val ordered = slices.sortedBy { it.order }
         if (ordered.size < 2) return null
-        val segs = _uiState.value.segments.associateBy { it.id }
-        val pieces = ordered.map { segs[it.segmentId] ?: return null }
-        // 병합복제는 복제본(duplicatedFromId 있음)도 다시 합쳐 복제 가능해야 하므로 allowDuplicates=true.
-        if (!pieces.isContiguousMergeableRun(allowDuplicates = true)) return null
-        val first = pieces.first()
-        val last = pieces.last()
-        val mergedTrimStart = ordered.first().localStart
-        val mergedTrimEnd = ordered.last().localEnd
-        if (mergedTrimEnd - mergedTrimStart < MIN_RANGE_MS) return null
+        val pieces = ordered.map { _uiState.value.segments.firstOrNull { seg -> seg.id == it.segmentId } ?: return null }
+        val mergeable = pieces.isContiguousMergeableRun(allowDuplicates = true)
 
-        val insertionOrder = last.order + 1
+        // 범위 끝 세그먼트만 그 지점에서 split → 복제본이 들어갈 자리(끝 조각 뒤) 생성. 시작·중간은 보존.
+        val lastSlice = ordered.last()
+        val lastMid = runCatching { splitSegment(lastSlice.segmentId, lastSlice.localStart, lastSlice.localEnd) }
+            .getOrNull()?.middle ?: return null
+        refreshSegmentsStateFromDb()
+        val insertionOrder = (_uiState.value.segments.firstOrNull { it.id == lastMid.id }?.order
+            ?: return null) + 1
+
+        val copies: List<Segment> = if (mergeable) {
+            listOf(
+                pieces.first().copy(
+                    id = generateId(),
+                    order = insertionOrder,
+                    trimStartMs = ordered.first().localStart,
+                    trimEndMs = ordered.last().localEnd,
+                    duplicatedFromId = pieces.first().id,
+                )
+            )
+        } else {
+            ordered.mapIndexed { i, s ->
+                pieces[i].copy(
+                    id = generateId(),
+                    order = insertionOrder + i,
+                    trimStartMs = s.localStart,
+                    trimEndMs = s.localEnd,
+                    duplicatedFromId = s.segmentId,
+                )
+            }
+        }
+
         segmentRepository.getByProjectId(projectId)
             .filter { it.order >= insertionOrder }
             .sortedByDescending { it.order }
-            .forEach { segmentRepository.updateSegment(it.copy(order = it.order + 1)) }
+            .forEach { segmentRepository.updateSegment(it.copy(order = it.order + copies.size)) }
+        copies.forEach { segmentRepository.addSegment(it) }
 
-        val dup = first.copy(
-            id = generateId(),
-            order = insertionOrder,
-            trimStartMs = mergedTrimStart,
-            trimEndMs = mergedTrimEnd,
-            duplicatedFromId = first.id,
-        )
-        segmentRepository.addSegment(dup)
-
-        // directive 따라가기 — 범위 내 세그먼트에 앵커된 directive 중 복제 source 구간에 든 것을 복제본에
-        // 같은 local 좌표로 clone (같은 source 라 좌표 그대로 유효). jobId 는 dedup 충돌 방지로 null.
-        val rangeSegIds = pieces.map { it.id }.toSet()
-        val clones = separationDirectiveRepository.getByProject(projectId)
-            .filter {
-                it.segmentId in rangeSegIds &&
-                    it.localStartMs >= mergedTrimStart && it.localEndMs <= mergedTrimEnd
+        // directive 따라가기 — 범위 내 세그먼트에 앵커된 directive(범위 source 구간에 든 것)를 복제본에 clone.
+        val allDirectives = separationDirectiveRepository.getByProject(projectId)
+        val clones = if (copies.size == 1) {
+            val dup = copies.first()
+            val ids = pieces.map { it.id }.toSet()
+            allDirectives.filter {
+                it.segmentId in ids &&
+                    it.localStartMs >= dup.trimStartMs && it.localEndMs <= dup.effectiveTrimEndMs
+            }.map { it.cloneForSegment(dup.id) }
+        } else {
+            ordered.flatMapIndexed { i, s ->
+                allDirectives.filter {
+                    it.segmentId == s.segmentId && it.localStartMs >= s.localStart && it.localEndMs <= s.localEnd
+                }.map { it.cloneForSegment(copies[i].id) }
             }
-            .map { it.cloneForSegment(dup.id) }
+        }
         if (clones.isNotEmpty()) separationDirectiveRepository.addAll(clones)
-        return dup
+        return copies.first()
     }
 
     fun onDeleteRange() {
@@ -3629,28 +3651,63 @@ class TimelineViewModel constructor(
         separationStarting = true
         viewModelScope.launch {
             try {
-                // 병합 후 분리 — 선택 범위가 여러 병합 가능한 영상 세그먼트(split 조각)에 걸치면 하나로 합친
-                // 뒤 단일 세그먼트로 분리. 병합되면 directive 가 그 세그먼트에 offset=0 으로 앵커돼 export 도 정확.
+                // 음원분리도 복제/삭제처럼 선택 구간 경계에서 세그먼트를 **split** 해 분리 구간을 독립 블록으로
+                // 만든다 → directive 가 그 세그먼트에 1:1 앵커. 범위가 여러 세그먼트에 걸치면 split 된 가운데
+                // 조각들을 하나로 **병합**해 단일 분리 세그먼트로. 분리 대상 segmentId 만 그 세그먼트로 교체하고
+                // 범위([rs,re])는 유지(= 그 세그먼트의 timeline 범위와 동일).
                 val rs = sep0.rangeStartMs
                 val re = sep0.rangeEndMs
-                var mergedAny = false
+                var structureChanged = false
                 if (rs != null && re != null) {
-                    val spannedIds = sliceGlobalRange(rs, re).map { it.segmentId }.distinct()
-                    if (spannedIds.size > 1) {
-                        val merged = mergeSegments(spannedIds)
-                        if (merged != null) {
+                    val slices = sliceGlobalRange(rs, re).sortedByDescending { it.order }
+                    if (slices.isNotEmpty()) {
+                        val middleIds = mutableListOf<String>()
+                        var primaryMidId: String? = null
+                        slices.forEach { s ->
+                            val r = runCatching { splitSegment(s.segmentId, s.localStart, s.localEnd) }.getOrNull()
+                            if (r != null) {
+                                middleIds += r.middle.id
+                                // 사용자가 분리를 연 세그먼트에서 잘려나온 in-range 조각을 기억(아래 run 선택용).
+                                if (s.segmentId == sep0.segmentId) primaryMidId = r.middle.id
+                                if (r.pre != null || r.post != null) structureChanged = true
+                            }
+                        }
+                        if (middleIds.isNotEmpty()) {
                             refreshSegmentsStateFromDb()
+                            // 격리된 in-range 조각들을 최대 병합 가능 run 으로 분할한다. 범위가 다른 source/비연속
+                            // 경계(서로 다른 영상에 걸친 선택 등)를 포함해도 임의 첫 조각만 분리하고 나머지를 조용히
+                            // 누락하던 갭 제거 — 사용자가 분리를 연 세그먼트를 포함하는 run(없으면 가장 큰 run)을
+                            // 합쳐 분리 대상으로 삼는다. (같은 source 단일 run 이면 종전과 동일하게 전부 병합.)
+                            val midSegs = _uiState.value.segments
+                                .filter { it.id in middleIds.toSet() }
+                                .sortedBy { it.order }
+                            val runs = mutableListOf<MutableList<Segment>>()
+                            midSegs.forEach { seg ->
+                                val cur = runs.lastOrNull()
+                                val joinable = cur != null &&
+                                    cur.last().isContiguousMergeableWith(seg) &&
+                                    cur.last().duplicatedFromId == null && seg.duplicatedFromId == null
+                                if (joinable) cur!!.add(seg) else runs.add(mutableListOf(seg))
+                            }
+                            val chosen = runs.firstOrNull { run -> run.any { it.id == primaryMidId } }
+                                ?: runs.maxByOrNull { it.size }
+                            val targetId = when {
+                                chosen == null -> middleIds.first()
+                                chosen.size > 1 ->
+                                    mergeSegments(chosen.map { it.id })?.also { structureChanged = true }?.id
+                                        ?: chosen.first().id
+                                else -> chosen.first().id
+                            }
                             reanchorDirectiveCache()
                             _uiState.update { st ->
-                                st.copy(audioSeparation = st.audioSeparation?.copy(segmentId = merged.id))
+                                st.copy(audioSeparation = st.audioSeparation?.copy(segmentId = targetId))
                             }
-                            mergedAny = true
                         }
                     }
                 }
-                // 병합으로 세그먼트 구조가 바뀌었으면 undo 스냅샷 — 분리가 실패해도 병합을 되돌릴 수 있게.
+                // 구조가 바뀌었으면 undo 스냅샷 — 분리가 실패해도 split/병합을 되돌릴 수 있게.
                 // (분리 성공 시 commit 이 undo 스택을 clear 하고 새 baseline 을 push 하므로 중복 없음.)
-                if (mergedAny) pushUndoState()
+                if (structureChanged) pushUndoState()
                 startSeparationResolved()
             } finally {
                 separationStarting = false

@@ -2294,7 +2294,11 @@ private fun UnifiedTimelineBar(
                 val bgmFillWidthDp = laneWidthDp * (bgmRangeEndFrac - bgmRangeStartFrac).coerceAtLeast(0f)
                 // 선택된 BGM 의 lane y offset 계산 — multi-lane 일 때 overlay 가 그 행의 정확한 위치·높이에 맞도록.
                 val selectedBgmForOverlay = bgmClips.firstOrNull { it.id == selectedBgmClipId }
-                val bgmLaneYDp = bgmRowStrideDp * (selectedBgmForOverlay?.lane?.coerceAtLeast(0) ?: 0)
+                // fill/핸들 Y 는 클립 블록과 동일하게 **표시 lane**(자동 pack 결과)을 써야 한다 — 겹쳐서
+                // 아래로 펼쳐진 경우 clip.lane(저장값)과 표시 lane 이 달라 핸들이 다른 줄에 떠 있던 문제.
+                val selectedDisplayLane = selectedBgmClipId?.let { bgmLaneByClipId[it] }
+                    ?: selectedBgmForOverlay?.lane ?: 0
+                val bgmLaneYDp = bgmRowStrideDp * selectedDisplayLane.coerceAtLeast(0)
                 // (range fill+border 는 BGM 막대 위에 보이도록 bgmClips.forEach 뒤에서 그린다.)
                 // BGM 클립 색은 createdAt(추가 순서) 1-based 인덱스로 BgmPalette cycle (4색). 같은
                 // 통합 매핑을 SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을
