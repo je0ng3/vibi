@@ -1501,9 +1501,9 @@ class TimelineViewModel constructor(
         }
         val clip = state.bgmClips.firstOrNull { it.id == clipId } ?: return
         _uiState.value = state.copy(
-            // 음원 클릭은 "선택 + 하단 편집 버튼" 만 — range 선택(핸들) 모드로 진입하지 않는다(사용자 요청).
-            // editTargets=Bgm + pendingRange(클립 전체) 만 세팅하면 하단 패널 Apply 가 클립 전체에 적용됨.
-            isRangeSelecting = false,
+            // 음원 클릭 → 선택 표시 + 양 끝 구간 핸들 + 하단 편집 버튼(in-timeline range edit). 별도 분리 시트로는
+            // 진입하지 않음(이건 이 함수가 아예 안 여는 경로라 무관). 핸들/선택 UI 는 showRange=isRangeSelecting 필요.
+            isRangeSelecting = true,
             isSegmentEditMode = false,
             editTargets = setOf(EditTarget.Bgm(clipId)),
             selectedBgmClipId = clipId,
@@ -2902,7 +2902,37 @@ class TimelineViewModel constructor(
 
     fun onSelectBgmClip(clipId: String?) = selectExclusively(SelectionTarget.Bgm, clipId)
 
+    // BGM 클립 위치 드래그 중 pendingRange(구간 핸들/fill)를 클립과 함께 라이브 이동시키기 위한 baseline.
+    private var bgmDragClipBaseMs: Long? = null
+    private var bgmDragRangeBase: Pair<Long, Long>? = null
+
+    /**
+     * BGM 클립 위치 드래그 **중**(라이브) 호출 — 그 클립이 구간편집 대상(BGM range)이면 pendingRange 를
+     * 클립 이동량만큼 같이 옮겨 핸들/ fill 이 클립과 함께 움직이게 한다. DB 쓰기/undo 없음(시각만).
+     * 커밋은 [onUpdateBgmStartMs] (드래그 종료).
+     */
+    fun onBgmDragLive(clipId: String, newStartMs: Long) {
+        val state = _uiState.value
+        if (state.editTargets.none { it is EditTarget.Bgm && it.clipId == clipId }) return
+        if (bgmDragClipBaseMs == null) {
+            bgmDragClipBaseMs = state.bgmClips.firstOrNull { it.id == clipId }?.startMs ?: return
+            bgmDragRangeBase = state.pendingRangeStartMs to state.pendingRangeEndMs
+        }
+        val base = bgmDragClipBaseMs ?: return
+        val (rs, re) = bgmDragRangeBase ?: return
+        val delta = newStartMs.coerceAtLeast(0L) - base
+        _uiState.update {
+            it.copy(
+                pendingRangeStartMs = (rs + delta).coerceAtLeast(0L),
+                pendingRangeEndMs = (re + delta).coerceAtLeast(0L),
+            )
+        }
+    }
+
     fun onUpdateBgmStartMs(clipId: String, newStartMs: Long) {
+        // 라이브 드래그 baseline 초기화 — pendingRange 는 라이브에서 이미 동반 이동됨(커밋 시 재이동 안 함).
+        bgmDragClipBaseMs = null
+        bgmDragRangeBase = null
         viewModelScope.launch {
             try {
                 updateBgmClip(clipId, startMs = newStartMs.coerceAtLeast(0L))

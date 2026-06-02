@@ -830,6 +830,7 @@ fun TimelineScreen(
                     viewModel.onEnterBgmRangeEditMode(clipId)
                 },
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
+                onBgmDragLive = viewModel::onBgmDragLive,
                 onBgmUpdateTrim = viewModel::onUpdateBgmTrim,
                 bgmPeaksByUri = bgmPeaks,
                 // segment edit 모드에서도 BGM 표시 — range-edit (volume/speed/duplicate/delete) 가
@@ -856,7 +857,8 @@ fun TimelineScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                 ) {
-                    if (!state.isSegmentEditMode && viewModel.isSeparationSupported) {
+                    // BGM(음원) 구간편집 중엔 영상 분리용 버튼 숨김 — 음원 클릭 시 분리 버튼이 뜨던 문제.
+                    if (!state.isSegmentEditMode && !state.editTargets.hasBgm() && viewModel.isSeparationSupported) {
                         // 탭 후 VM state 가 isRangeSelecting=false 로 emit 되어 row 가 사라지기 전까지
                         // 사용자가 다시 탭하면 같은 구간이 중복 큐잉됨. 첫 탭 즉시 disable 로 가드.
                         var submitting by remember(state.pendingRangeStartMs, state.pendingRangeEndMs) {
@@ -1692,6 +1694,8 @@ private fun UnifiedTimelineBar(
     bgmDragEnabled: Boolean = true,
     onBgmSelectClip: (String) -> Unit = {},
     onBgmUpdateStart: (String, Long) -> Unit = { _, _ -> },
+    /** BGM 위치 드래그 중(라이브) — 구간편집 대상이면 pendingRange 동반 이동(핸들/ fill 이 클립과 같이 움직임). */
+    onBgmDragLive: (String, Long) -> Unit = { _, _ -> },
     /**
      * 선택된 BGM 의 좌·우 트림 핸들 드래그 시 호출. start 핸들이면 [newStartMs] 가 동반 (CapCut 의미상
      * 좌측 잘릴 때 timeline 좌측 엣지가 손가락 위치에 머묾), end 핸들이면 null.
@@ -2291,54 +2295,7 @@ private fun UnifiedTimelineBar(
                 // 선택된 BGM 의 lane y offset 계산 — multi-lane 일 때 overlay 가 그 행의 정확한 위치·높이에 맞도록.
                 val selectedBgmForOverlay = bgmClips.firstOrNull { it.id == selectedBgmClipId }
                 val bgmLaneYDp = bgmRowStrideDp * (selectedBgmForOverlay?.lane?.coerceAtLeast(0) ?: 0)
-                if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
-                    var bgmFillBaseStartMs by remember { mutableLongStateOf(0L) }
-                    var bgmFillAccumPx by remember { mutableFloatStateOf(0f) }
-                    // 평행 이동도 선택된 BGM 의 bounds 안에서만 — 영상 timeline 전체로 슬라이드되지 않도록.
-                    val translateMin = selectedBgmForOverlay?.startMs ?: 0L
-                    val translateMaxStart = selectedBgmForOverlay?.let {
-                        (it.startMs + it.effectiveDurationMs - (rangeEndMs - rangeStartMs)).coerceAtLeast(it.startMs)
-                    } ?: (totalMs - (rangeEndMs - rangeStartMs)).coerceAtLeast(0L)
-                    Box(
-                        modifier = Modifier
-                            .offset(x = bgmFillStartDp, y = bgmLaneYDp)
-                            .width(bgmFillWidthDp)
-                            .height(bgmRowHeight)
-                            .background(accent.copy(alpha = 0.32f))
-                            .pointerInput(totalWidthPx, totalMs, translateMin, translateMaxStart) {
-                                // fill drag → 영상 strip 의 onTranslateRange 와 동일 — range 전체 평행 이동.
-                                detectHorizontalDragGestures(
-                                    onDragStart = {
-                                        bgmFillBaseStartMs = currentRangeStart
-                                        bgmFillAccumPx = 0f
-                                    },
-                                    onHorizontalDrag = { _, dragAmount ->
-                                        bgmFillAccumPx += dragAmount
-                                        if (totalWidthPx > 0f && totalMs > 0L) {
-                                            val deltaMs = (bgmFillAccumPx / totalWidthPx) * totalMs
-                                            val newStart = (bgmFillBaseStartMs + deltaMs).toLong()
-                                                .coerceIn(translateMin, translateMaxStart)
-                                            onTranslateRange(newStart)
-                                        }
-                                    }
-                                )
-                            }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .offset(x = bgmFillStartDp, y = bgmLaneYDp)
-                            .width(bgmFillWidthDp)
-                            .height(TimelineBarSpec.RangeBorderThickness)
-                            .background(accent)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .offset(x = bgmFillStartDp, y = bgmLaneYDp + bgmRowHeight - TimelineBarSpec.RangeBorderThickness)
-                            .width(bgmFillWidthDp)
-                            .height(TimelineBarSpec.RangeBorderThickness)
-                            .background(accent)
-                    )
-                }
+                // (range fill+border 는 BGM 막대 위에 보이도록 bgmClips.forEach 뒤에서 그린다.)
                 // BGM 클립 색은 createdAt(추가 순서) 1-based 인덱스로 BgmPalette cycle (4색). 같은
                 // 통합 매핑을 SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을
                 // 매칭. **createdAt 기준** 이라 사용자가 클립을 좌우 drag 해 위치(startMs) 가 바뀌어도
@@ -2374,9 +2331,38 @@ private fun UnifiedTimelineBar(
                             locked = clip.id in separatingBgmClipIds,
                             onBgmSelectClip = onBgmSelectClip,
                             onBgmUpdateStart = onBgmUpdateStart,
+                            onBgmDragLive = onBgmDragLive,
                             onBgmUpdateTrim = onBgmUpdateTrim,
                         )
                     }
+                }
+                // range fill + 상·하 border — BGM 막대 **위에** 그려 영상 strip 처럼 반투명하게 보이도록
+                // (이전엔 막대 아래라 트랙에 가려 안 보였음). fill drag → 구간 전체 평행 이동.
+                if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
+                    // 시각 전용 fill — 드래그(이동)는 아래 클립 본체가 받아 클립을 옮기고, pendingRange 도 함께
+                    // 이동하므로(VM onUpdateBgmStartMs) fill/핸들이 클립과 같이 움직인다. pointerInput 없음 →
+                    // 터치는 아래 클립 블록으로 통과(클립 본체 드래그 = 위치 이동).
+                    Box(
+                        modifier = Modifier
+                            .offset(x = bgmFillStartDp, y = bgmLaneYDp)
+                            .width(bgmFillWidthDp)
+                            .height(bgmRowHeight)
+                            .background(accent.copy(alpha = 0.32f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(x = bgmFillStartDp, y = bgmLaneYDp)
+                            .width(bgmFillWidthDp)
+                            .height(TimelineBarSpec.RangeBorderThickness)
+                            .background(accent)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(x = bgmFillStartDp, y = bgmLaneYDp + bgmRowHeight - TimelineBarSpec.RangeBorderThickness)
+                            .width(bgmFillWidthDp)
+                            .height(TimelineBarSpec.RangeBorderThickness)
+                            .background(accent)
+                    )
                 }
                 // BGM lane 의 range handles — top-most layer 로 BGM bar 위에 표시. hit zone 은 그 행 높이만큼만
                 // 잡아 다른 lane 행 / playback strip 의 핸들과 충돌 안 함.
@@ -3225,6 +3211,7 @@ private fun BgmClipBlock(
     locked: Boolean,
     onBgmSelectClip: (String) -> Unit,
     onBgmUpdateStart: (String, Long) -> Unit,
+    onBgmDragLive: (String, Long) -> Unit = { _, _ -> },
     onBgmUpdateTrim: (clipId: String, sourceTrimStartMs: Long, sourceTrimEndMs: Long, newStartMs: Long?) -> Unit,
 ) {
     val tokens = LocalVibiColors.current
@@ -3379,8 +3366,10 @@ private fun BgmClipBlock(
                         if (laneWidthPx > 0f && totalMs > 0L) {
                             val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
                             val maxStart = (totalMs - currentGlobalDurMs).coerceAtLeast(0L)
-                            dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
-                                .coerceIn(0L, maxStart)
+                            val next = (dragBaseStartMs + deltaMs).toLong().coerceIn(0L, maxStart)
+                            dragOverrideMs = next
+                            // 라이브로 구간 핸들/fill 도 같이 이동 (선택된 BGM range 일 때).
+                            onBgmDragLive(currentClip.id, next)
                         }
                     },
                     onDragEnd = {
