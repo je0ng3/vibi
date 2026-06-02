@@ -48,6 +48,7 @@ import platform.AVFoundation.insertTimeRange
 import platform.AVFoundation.pause
 import platform.AVFoundation.play
 import platform.AVFoundation.rate
+import platform.AVFoundation.replaceCurrentItemWithPlayerItem
 import platform.AVFoundation.scaleTimeRange
 import platform.AVFoundation.seekToTime
 import platform.AVFoundation.setForwardPlaybackEndTime
@@ -303,6 +304,9 @@ private fun SingleItemVideoPlayer(
             NSNotificationCenter.defaultCenter.removeObserver(interruptionObserver)
             NSNotificationCenter.defaultCenter.removeObserver(routeChangeObserver)
             player.pause()
+            // trim/speed 편집마다 player rebuild → 옛 AVPlayerItem 의 decode 버퍼를 즉시 버려
+            // ARC 지연 회수 동안 메모리가 쌓이지 않게 한다.
+            player.replaceCurrentItemWithPlayerItem(null)
         }
     }
 
@@ -470,6 +474,9 @@ private fun MultiSegmentVideoPlayer(
             NSNotificationCenter.defaultCenter.removeObserver(interruptionObserver)
             NSNotificationCenter.defaultCenter.removeObserver(routeChangeObserver)
             p.pause()
+            // playlistKey 변경마다 composition player rebuild → 옛 AVPlayerItem(composition) 의
+            // decode 버퍼 즉시 해제.
+            p.replaceCurrentItemWithPlayerItem(null)
         }
     }
 

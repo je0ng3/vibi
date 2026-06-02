@@ -1,8 +1,9 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
 
 package com.vibi.cmp.platform
 
 import com.vibi.shared.platform.iosCachesDirectory
+import kotlinx.cinterop.autoreleasepool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSBundle
@@ -43,19 +44,23 @@ internal fun resolveAbsoluteAudioUrl(url: String): String {
  * @param prefix 임시 파일명 prefix ("preview" / "stem" 등 — 로그/회수 디버깅용)
  * @return 저장된 임시 파일 절대 경로. caller 가 [deleteCachedAudio] 로 정리.
  */
-internal suspend fun downloadAudioToCache(url: String, prefix: String): String? {
-    val nsUrl = NSURL.URLWithString(url) ?: return null
-    val data = withContext(Dispatchers.Default) {
-        NSData.dataWithContentsOfURL(nsUrl)
-    } ?: return null
-    val ext = url.substringAfterLast('.', "").substringBefore('?').lowercase()
-        .ifEmpty { "audio" }
-    val cachesDir = iosCachesDirectory() ?: return null
-    val tempPath = "$cachesDir/${prefix}_${NSUUID().UUIDString()}.$ext"
-    @Suppress("CAST_NEVER_SUCCEEDS")
-    if (!data.writeToFile(tempPath, atomically = true)) return null
-    return tempPath
-}
+internal suspend fun downloadAudioToCache(url: String, prefix: String): String? =
+    withContext(Dispatchers.Default) {
+        val nsUrl = NSURL.URLWithString(url) ?: return@withContext null
+        // NSData 가 파일 전체를 메모리에 올린다 (autorelease 객체). Dispatchers.Default 워커엔 pool 을
+        // 비울 run loop 가 없어 StemMixer 가 여러 stem 을 연달아 받으면 누적된다. write 까지 pool 로
+        // 감싸 함수 반환 즉시 회수. (autoreleasepool 은 inline 이라 return@withContext 통과 OK.)
+        autoreleasepool {
+            val data = NSData.dataWithContentsOfURL(nsUrl) ?: return@withContext null
+            val ext = url.substringAfterLast('.', "").substringBefore('?').lowercase()
+                .ifEmpty { "audio" }
+            val cachesDir = iosCachesDirectory() ?: return@withContext null
+            val tempPath = "$cachesDir/${prefix}_${NSUUID().UUIDString()}.$ext"
+            @Suppress("CAST_NEVER_SUCCEEDS")
+            if (!data.writeToFile(tempPath, atomically = true)) return@withContext null
+            tempPath
+        }
+    }
 
 internal fun deleteCachedAudio(path: String) {
     NSFileManager.defaultManager.removeItemAtPath(path, null)

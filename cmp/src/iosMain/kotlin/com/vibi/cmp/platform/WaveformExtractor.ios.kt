@@ -7,10 +7,14 @@ import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.FloatVar
 import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.autoreleasepool
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.reinterpret
+import platform.CoreFoundation.CFRelease
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.AVFAudio.AVAudioFile
 import platform.AVFAudio.AVAudioPCMBuffer
@@ -39,8 +43,17 @@ import platform.Foundation.NSURL
 /**
  * 추출 결과 캐시 — 같은 URL 을 sheet 가 여러 번 열어도 PCM 디코딩은 1회. samples 키 포함해
  * UI 막대 수가 다른 두 호출은 별도 캐시.
+ *
+ * 세션 내내 무한 증가하지 않도록 FIFO 상한. 엔트리는 samples 개 Float 라 가볍지만 (수십 KB),
+ * 프로젝트를 오래 편집하며 stem/BGM URL 이 누적되면 불필요하게 보존된다. mutableMapOf 는
+ * LinkedHashMap 이라 keys.first() 가 가장 오래된 엔트리.
  */
+private const val PEAKS_CACHE_MAX = 64
 private val peaksCache = mutableMapOf<String, List<Float>>()
+// extractAudioPeaks 는 Dispatchers.Default(멀티스레드)에서 돌고 AudioSeparationSheet 가 stem 마다
+// 동시 호출하므로 peaksCache 접근은 반드시 lock. 특히 eviction 의 keys 이터레이터가 동시 수정과
+// 만나면 ConcurrentModificationException/손상.
+private val peaksCacheLock = Mutex()
 
 /**
  * AVAudioFile 로 전체 frames 를 메모리에 읽고 (processingFormat = Float32 PCM 보장),
@@ -61,7 +74,7 @@ actual suspend fun extractAudioPeaks(localPath: String, samples: Int): List<Floa
     withContext(Dispatchers.Default) {
         if (samples <= 0) return@withContext emptyList()
         val cacheKey = "$localPath#$samples"
-        peaksCache[cacheKey]?.let { return@withContext it }
+        peaksCacheLock.withLock { peaksCache[cacheKey] }?.let { return@withContext it }
 
         val absolute = resolveAbsoluteAudioUrl(localPath)
         val isRemote = absolute.startsWith("http://") || absolute.startsWith("https://")
@@ -90,7 +103,14 @@ actual suspend fun extractAudioPeaks(localPath: String, samples: Int): List<Floa
             // AVAudioFile 실패 — 영상 컨테이너(mp4/mov) 가능성. AVAssetReader 로 audio track 디코딩.
             extractPeaksViaAssetReader(readableUrl, samples)
         }
-        if (peaks.isNotEmpty()) peaksCache[cacheKey] = peaks
+        if (peaks.isNotEmpty()) {
+            peaksCacheLock.withLock {
+                if (peaksCache.size >= PEAKS_CACHE_MAX) {
+                    peaksCache.keys.firstOrNull()?.let { peaksCache.remove(it) }
+                }
+                peaksCache[cacheKey] = peaks
+            }
+        }
         peaks
     }
 
@@ -207,28 +227,34 @@ private fun extractPeaksViaAssetReader(url: NSURL, samples: Int): List<Float> {
     while (reader.status == AVAssetReaderStatusReading) {
         val sample = output.copyNextSampleBuffer() ?: break
         try {
-            val block = CMSampleBufferGetDataBuffer(sample) ?: continue
-            val totalBytes = CMBlockBufferGetDataLength(block)
-            val floatCount = (totalBytes / 4u).toInt()
-            if (floatCount <= 0) continue
-            memScoped {
-                val buf = allocArray<FloatVar>(floatCount)
-                val err = CMBlockBufferCopyDataBytes(block, 0u, totalBytes, buf.reinterpret<ByteVar>())
-                if (err == 0) {
-                    for (i in 0 until floatCount) {
-                        val bucketIdx = (((globalFrameIdx + i).toDouble() * samples) / estimatedTotalFrames)
-                            .toInt().coerceIn(0, samples - 1)
-                        val v = buf[i].toDouble()
-                        sumSqPerBucket[bucketIdx] += v * v
-                        countPerBucket[bucketIdx]++
+            // 30분 영상이면 수천 chunk. ObjC 임시객체가 백그라운드 스레드 (run loop 없음) 에
+            // 누적되지 않도록 chunk 단위 autoreleasepool. memScoped 의 native alloc 은 블록 끝에서 해제.
+            autoreleasepool {
+                val block = CMSampleBufferGetDataBuffer(sample) ?: return@autoreleasepool
+                val totalBytes = CMBlockBufferGetDataLength(block)
+                val floatCount = (totalBytes / 4u).toInt()
+                if (floatCount <= 0) return@autoreleasepool
+                memScoped {
+                    val buf = allocArray<FloatVar>(floatCount)
+                    val err = CMBlockBufferCopyDataBytes(block, 0u, totalBytes, buf.reinterpret<ByteVar>())
+                    if (err == 0) {
+                        for (i in 0 until floatCount) {
+                            val bucketIdx = (((globalFrameIdx + i).toDouble() * samples) / estimatedTotalFrames)
+                                .toInt().coerceIn(0, samples - 1)
+                            val v = buf[i].toDouble()
+                            sumSqPerBucket[bucketIdx] += v * v
+                            countPerBucket[bucketIdx]++
+                        }
                     }
                 }
+                globalFrameIdx += floatCount
             }
-            globalFrameIdx += floatCount
         } finally {
-            // copyNextSampleBuffer 는 +1 retained CMSampleBufferRef 반환. K/N cinterop 이 CFRelease
-            // 를 노출하지 않을 수 있어 CMSampleBufferInvalidate 로 internal resource 해제 후 GC 에 위임.
+            // copyNextSampleBuffer 는 Create Rule — +1 retained CMSampleBufferRef. K/N 은 CF 객체를
+            // 자동 release 하지 않으므로 CMSampleBufferInvalidate (internal media buffer 해제) 후
+            // CFRelease 로 +1 소유권까지 반환해야 wrapper 가 누수되지 않는다.
             CMSampleBufferInvalidate(sample)
+            CFRelease(sample)
         }
     }
 

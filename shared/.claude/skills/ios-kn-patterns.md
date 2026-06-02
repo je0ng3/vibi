@@ -141,3 +141,42 @@ private class IosXHandle(private val scope: CoroutineScope) : XHandle {
 ```
 
 **적용 사이트** (참고): `cmp/.../platform/AudioPreviewer.ios.kt` (변환 후 통과), `StemMixer.ios.kt` (원래부터 이 패턴이라 충돌 없었음). 새 `@Composable` actual 작성 시 캡처 많아질 것 같으면 처음부터 class 로.
+
+## CF "Create Rule" 객체 누수 — K/N 은 Copy/Create 반환값을 자동 release 안 함
+
+**증상**: 영상/오디오를 다루며 긴 세션을 돌리면 메모리가 야금야금 증가해 iOS jetsam(메모리 초과)으로 강제 종료. 한 번에 큰 할당이 아니라 누적 패턴.
+
+**원인**: 이름에 `Copy`/`Create` 가 든 CoreFoundation/CoreGraphics/CoreMedia 함수는 **Create Rule** — 호출자가 +1 소유권을 받고 직접 release 해야 한다. K/N 은 Objective-C 객체는 ARC 로 관리하지만 `CGImageRef`/`CMSampleBufferRef` 같은 CF 타입은 **자동 release 하지 않는다**. UIImage 등이 retain 해도 원래 +1 은 남아 누수.
+
+**해결**:
+```kotlin
+import platform.CoreGraphics.CGImageRelease
+import platform.CoreFoundation.CFRelease
+
+// CGImage — copyCGImageAtTime 등
+val cg = generator.copyCGImageAtTime(...) ?: return null
+val data = try { UIImage.imageWithCGImage(cg).let { UIImageJPEGRepresentation(it, 0.8) } }
+           finally { CGImageRelease(cg) }   // 인코딩 실패해도 release 되게 finally
+
+// CMSampleBuffer — copyNextSampleBuffer 등. Invalidate 는 내부 media 만 해제, +1 wrapper 는 안 푼다.
+val sample = output.copyNextSampleBuffer() ?: break
+try { ... } finally { CMSampleBufferInvalidate(sample); CFRelease(sample) }
+```
+`CFRelease` 는 K/N `platform.CoreFoundation` 에 노출돼 있다 (예전 "노출 안 될 수 있음" 주석은 틀림).
+
+**적용 사이트**: `IosVideoThumbnailExtractor.kt`(copyCGImageAtTime), `WaveformExtractor.ios.kt`(copyNextSampleBuffer).
+
+## autoreleasepool — 백그라운드 스레드의 autorelease 객체 누적
+
+**증상**: `Dispatchers.Default`/IO 워커에서 `UIImage`/`NSData`/`UIImageJPEGRepresentation` 등을 만드는 코드가 배치(awaitAll fan-out)나 루프로 돌면 메모리 급증. 객체는 autorelease 인데 워커 스레드엔 pool 을 비울 run loop 가 없어 함수가 끝날 때까지 안 풀림.
+
+**해결**: `kotlinx.cinterop.autoreleasepool { ... }` 로 감싼다. inline 이라 `return@withContext` 비지역 반환·`continue`/`break` 통과 OK. 루프면 **iteration 본문**을 감싸 chunk 마다 회수.
+```kotlin
+withContext(Dispatchers.Default) {
+    autoreleasepool {
+        val data = NSData.dataWithContentsOfURL(url) ?: return@withContext null
+        ... ; tempPath
+    }
+}
+```
+**적용 사이트**: `IosVideoThumbnailExtractor.kt`, `WaveformExtractor.ios.kt`(AssetReader 루프), `IosAudioCache.kt`(downloadAudioToCache).
