@@ -744,14 +744,23 @@ fun TimelineScreen(
         if (state.videoDurationMs > 0) {
             val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
             // range 정보 없는 entry (BGM/whole-video) 는 영상 전체로 fallback.
-            val processingOverlays = remember(state.processingSeparations, state.videoDurationMs) {
+            val processingOverlays = remember(state.processingSeparations, state.segments, state.videoDurationMs) {
                 state.processingSeparations
                     .filter { it.segmentId.isNotBlank() }
                     .map { p ->
-                        val s = p.rangeStartMs
-                        val e = p.rangeEndMs
-                        val (start, end) = if (s != null && e != null && e > s) s to e
-                        else 0L to state.videoDurationMs
+                        // 분리는 격리된 세그먼트(segmentId)에 앵커 — overlay 를 그 세그먼트의 *현재* timeline
+                        // 위치로 그려 재정렬로 세그먼트가 이동해도 반투명 fill 이 함께 움직인다. 세그먼트가
+                        // 없으면(이례적) 캐시 range, 그것도 없으면 영상 전체로 폴백.
+                        val seg = state.segments.firstOrNull { s -> s.id == p.segmentId }
+                        val (start, end) = if (seg != null) {
+                            val s = state.segments.filter { it.order < seg.order }
+                                .sumOf { it.effectiveDurationMs }
+                            s to (s + seg.effectiveDurationMs)
+                        } else {
+                            val s = p.rangeStartMs
+                            val e = p.rangeEndMs
+                            if (s != null && e != null && e > s) s to e else 0L to state.videoDurationMs
+                        }
                         ProcessingSeparationOverlay(start, end, p.progress, p.clientToken)
                     }
             }

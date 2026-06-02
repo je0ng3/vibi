@@ -5,6 +5,7 @@ package com.vibi.shared.ui.timeline
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vibi.shared.platform.currentTimeMillis
+import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
@@ -1070,6 +1071,7 @@ class TimelineViewModel constructor(
                 .forEach { separationDirectiveRepository.delete(it.id) }
             removeSegment(segmentId)
             refreshSegmentsStateFromDb()
+            purgeOrphanedDirectives()
             reanchorDirectiveCache()
             _uiState.value = _uiState.value.copy(
                 selectedSegmentId = null,
@@ -1094,11 +1096,18 @@ class TimelineViewModel constructor(
         processing: List<ProcessingSeparation> = _uiState.value.processingSeparations,
         excludeCompletedDirectives: Boolean = true,
     ): List<LongRange> {
-        // rangeStart/End 가 null 이면 전체 영상 분리 — segStart..segEnd 전체를 점유.
+        // 진행 중 분리는 격리된 분리 세그먼트(segmentId)에 앵커 — 점유 구간을 그 세그먼트의 *현재* timeline
+        // 범위로 계산해 재정렬로 세그먼트가 이동해도 점유가 따라온다(정적 캐시 range 의 stale 방지). 세그먼트가
+        // 없으면(이례적) 캐시 range 로 폴백, range 도 null 이면 전체 영상 분리로 보고 segStart..segEnd 점유.
+        val segs = _uiState.value.segments
         val processingRanges = processing.map { p ->
-            val s = p.rangeStartMs ?: segStart
-            val e = p.rangeEndMs ?: segEnd
-            s..e
+            val seg = segs.firstOrNull { it.id == p.segmentId }
+            if (seg != null) {
+                val s = segmentStartOffsetMs(segs, seg.id)
+                s..(s + seg.effectiveDurationMs)
+            } else {
+                (p.rangeStartMs ?: segStart)..(p.rangeEndMs ?: segEnd)
+            }
         }
         val committedRanges = if (excludeCompletedDirectives)
             _uiState.value.separationDirectives.map { it.rangeStartMs..it.rangeEndMs }
@@ -1116,27 +1125,21 @@ class TimelineViewModel constructor(
         return free
     }
 
-    /** point 가 속한 자유 구간 (없으면 null — directive 안에 있음). */
-    private fun freeIntervalContaining(point: Long): LongRange? {
-        val state = _uiState.value
-        val total = state.videoDurationMs.coerceAtLeast(0L)
-        val all = freeIntervalsInSegment(0L, total)
-        return all.firstOrNull { point in it }
-    }
-
     fun onEnterRangeMode(segmentId: String) {
         val state = _uiState.value
-        val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
-        if (seg.type != SegmentType.VIDEO) return
-        // Default range covers the full tapped segment in GLOBAL timeline ms
-        // (TimelineScreen passes identity offsets). Using segment-local ms
-        // here would place the range at 0 instead of the segment's on-screen
-        // position after deletes/splits shift later segments rightward.
-        val segStart = segmentStartOffsetMs(state.segments, seg.id)
-        val segEnd = segStart + seg.effectiveDurationMs
-        // 이미 분리된 directive 와 겹치지 않는 첫 자유 구간을 default 로 사용. 자유 구간 없으면 진입 거부.
-        val free = freeIntervalsInSegment(segStart, segEnd)
-        val defaultRange = free.firstOrNull() ?: return
+        // 자유 구간(분리중/완료 directive 제외)이 있는 첫 비디오 세그먼트로 진입. 첫 세그먼트가 분리중이라
+        // 자유 구간이 없어도 다른 세그먼트에서 새 분리를 시작할 수 있게 — 종전엔 항상 첫 세그먼트만 보고
+        // 자유 구간이 없으면 진입 자체를 거부해 "음원분리 버튼이 안 눌리는" 문제가 있었다. 어디에도 자유
+        // 구간이 없으면(전 구간 분리중/완료) 거부.
+        val target = state.segments
+            .filter { it.type == SegmentType.VIDEO }
+            .firstNotNullOfOrNull { s ->
+                val segStart = segmentStartOffsetMs(state.segments, s.id)
+                val segEnd = segStart + s.effectiveDurationMs
+                freeIntervalsInSegment(segStart, segEnd).firstOrNull()?.let { s to it }
+            } ?: return
+        val seg = target.first
+        val defaultRange = target.second
         _uiState.value = state.copy(
             isRangeSelecting = true,
             isSegmentEditMode = false,
@@ -1165,7 +1168,15 @@ class TimelineViewModel constructor(
         tapMs: Long? = null,
     ) {
         val state = _uiState.value
-        val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
+        // tapMs 가 주어지면 그 지점이 속한 비디오 세그먼트로 진입한다 — 첫 세그먼트가 분리중이어도 탭한
+        // 세그먼트를 편집할 수 있게(UI 가 항상 첫 세그먼트 id 를 넘기던 한계 보정). 없으면 넘어온 segmentId.
+        val seg = (if (tapMs != null) {
+            state.segments.firstOrNull { sg ->
+                if (sg.type != SegmentType.VIDEO) return@firstOrNull false
+                val s = segmentStartOffsetMs(state.segments, sg.id)
+                tapMs in s..(s + sg.effectiveDurationMs)
+            }
+        } else null) ?: state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
         val segStart = segmentStartOffsetMs(state.segments, seg.id)
         val segEnd = segStart + seg.effectiveDurationMs
@@ -1562,14 +1573,18 @@ class TimelineViewModel constructor(
             val clip = state.bgmClips.firstOrNull { it.id == bgmTarget.clipId }
             if (clip != null) return clip.startMs to (clip.startMs + clip.effectiveDurationMs)
         }
-        if (state.isSegmentEditMode) {
-            val frees = freeIntervalsInSegment(0L, total, excludeCompletedDirectives = false)
-            val containing = frees.firstOrNull { state.pendingRangeStartMs in it }
-                ?: frees.firstOrNull { state.pendingRangeEndMs in it }
-            return (containing?.first ?: 0L) to (containing?.last ?: total)
-        }
-        val freeFromEnd = freeIntervalContaining(state.pendingRangeEndMs)
-        return (freeFromEnd?.first ?: 0L) to (freeFromEnd?.last ?: total)
+        // 영상편집: 진행 중 분리만 침범 금지(완료 directive 는 편집 가능). 음원분리: 진행 중 + 완료 모두 제외.
+        val frees = freeIntervalsInSegment(0L, total, excludeCompletedDirectives = !state.isSegmentEditMode)
+        if (frees.isEmpty()) return 0L to total
+        // 현재 선택을 담는 free interval 로 clamp — 핸들이 그 경계(=분리중 구간 가장자리)를 넘지 못한다.
+        // 어느 끝도 free interval 안에 없으면(이례적) 전체로 풀지 말고 선택 중점에 가장 가까운 interval 로
+        // 가둔다 — 종전 `?: total` 폴백이 분리중 구간으로 핸들이 넘어가게 두던 문제 차단.
+        val mid = (state.pendingRangeStartMs + state.pendingRangeEndMs) / 2
+        val containing = frees.firstOrNull { state.pendingRangeStartMs in it }
+            ?: frees.firstOrNull { state.pendingRangeEndMs in it }
+            ?: frees.minByOrNull { minOf(abs(it.first - mid), abs(it.last - mid)) }
+            ?: return 0L to total
+        return containing.first to containing.last
     }
 
     fun onSetPendingRangeStart(globalMs: Long) {
@@ -1846,7 +1861,12 @@ class TimelineViewModel constructor(
             refreshSegmentsStateFromDb()
             // delete 는 글로벌 ms 를 직접 옮기는(global-truth) 연산 — 앵커를 새 글로벌로 재동기화해
             // 이후 복제/이동의 reanchor 가 stale 앵커로 clobber 하지 않게 한다.
-            if (applyToVideo) resyncDirectiveAnchorsFromGlobal()
+            if (applyToVideo) {
+                // 삭제된 세그먼트(분리 구간 포함)에 앵커된 directive 를 먼저 정리 — 남으면 SoundDeck 카드가
+                // 안 사라짐. 글로벌 ms ripple 의 stale 캐시 의존을 앵커 기반 purge 로 보강.
+                purgeOrphanedDirectives()
+                resyncDirectiveAnchorsFromGlobal()
+            }
             if (wasSegmentEdit) {
                 _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
                     ?.id?.let { selectSegmentInEditInternal(it) }
@@ -2342,6 +2362,19 @@ class TimelineViewModel constructor(
      * 세그먼트 위치만 바뀌고 directive 의 source-local 좌표는 그대로인 연산 직후 호출 — directive 가
      * 새 위치를 자동으로 따라간다(per-operation 글로벌 ripple 대체). repo 가 권위 원본.
      */
+    /**
+     * 앵커 세그먼트가 더 이상 존재하지 않는 directive 를 삭제한다. 분리 구간을 포함해 영상을 삭제하면
+     * `removeSegmentRange` 가 그 구간 세그먼트를 지우지만 거기 앵커된 directive 는 남아(고아) SoundDeck
+     * 카드가 사라지지 않던 문제를 막는다. 비앵커(legacy, segmentId 빈 값) directive 는 글로벌 range 로만
+     * 사는 것이라 건드리지 않는다. 호출 전 [refreshSegmentsStateFromDb] 로 세그먼트가 최신이어야 한다.
+     */
+    private suspend fun purgeOrphanedDirectives() {
+        val segIds = _uiState.value.segments.map { it.id }.toSet()
+        separationDirectiveRepository.getByProject(projectId)
+            .filter { it.segmentId.isNotEmpty() && it.segmentId !in segIds }
+            .forEach { separationDirectiveRepository.delete(it.id) }
+    }
+
     private suspend fun reanchorDirectiveCache() {
         val updates = DirectiveAnchor.reanchor(
             separationDirectiveRepository.getByProject(projectId),
