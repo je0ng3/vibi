@@ -321,6 +321,13 @@ class TimelineViewModel constructor(
     // 불필요한 코루틴 spawn 만 막는 가드.
     private val prewarmedSourceUris = mutableSetOf<String>()
 
+    /**
+     * 마지막으로 저장/공유에 성공한 시점의 출력-결정 콘텐츠 키. 현재 편집 상태의 키가 이 값과 다르면
+     * 저장/공유 체크(DONE)는 stale 이므로 [clearStaleExportStatus] 가 해제한다. 편집으로 출력이
+     * 바뀌었는지의 판정 기준 — 동일 데이터 재emit(Room invalidation 등)엔 키가 같아 허위 해제 없음.
+     */
+    private var savedExportKey: String? = null
+
     init {
         loadSegments()
         observeProject()
@@ -364,6 +371,7 @@ class TimelineViewModel constructor(
                         bgmLaneCount = current.bgmLaneCount.coerceAtLeast(minLaneCount),
                     )
                 }
+                clearStaleExportStatus()
             }
         }
     }
@@ -406,6 +414,7 @@ class TimelineViewModel constructor(
                 // atomic CAS — 다른 observer / mutation 핸들러와 race 시 stale state read-modify-write
                 // 방지 (loadSegments / observeBgmClips / observeProject / observeClips 와 동일 패턴).
                 _uiState.update { it.copy(separationDirectives = directives) }
+                clearStaleExportStatus()
             }
         }
     }
@@ -570,6 +579,7 @@ class TimelineViewModel constructor(
                         trimEndMs = globalTrimEnd,
                     )
                 }
+                clearStaleExportStatus()
             }
         }
     }
@@ -869,9 +879,10 @@ class TimelineViewModel constructor(
         )
         result.fold(
             onSuccess = {
+                // 홈 이동·프로젝트 삭제 안 함 — 에디터에 머물며 저장 버튼에 체크 표시 유지. 이어서 편집
+                // 가능. 체크는 편집으로 출력이 달라지면 [clearStaleExportStatus] 가 해제한다.
+                savedExportKey = exportContentKey(_uiState.value)
                 _uiState.update { it.copy(saveStatus = SaveStatus.DONE) }
-                runCatching { editProjectRepository.deleteProject(projectId) }
-                _navigateBackHome.emit(Unit)
             },
             onFailure = { e ->
                 com.vibi.shared.platform.logError("TimelineVM", "save failed", e)
@@ -882,6 +893,52 @@ class TimelineViewModel constructor(
 
     fun onClearSaveStatus() {
         _uiState.update { it.copy(saveStatus = SaveStatus.IDLE) }
+    }
+
+    /**
+     * 출력에 영향을 주는 편집 상태(영상 세그먼트·BGM·음원분리)를 결정적 문자열로 직렬화한 키.
+     * 저장/공유 체크의 신선도 판정용 — [exportSignature] 가 렌더에 쓰는 필드와 동일 의미.
+     * stem 의 audioUrl 은 제외한다: 분리 폴링이 같은 stem 의 URL 만 갱신해도(콘텐츠 동일) 체크가
+     * 허위 해제되는 것을 막기 위함(stemId/volume/selected 변화는 실제 편집이라 포함).
+     */
+    private fun exportContentKey(s: TimelineUiState): String = buildString {
+        s.segments.sortedWith(compareBy({ it.order }, { it.id })).forEach { seg ->
+            append(seg.sourceUri).append(';').append(seg.order).append(';')
+                .append(seg.trimStartMs).append(';').append(seg.trimEndMs).append(';')
+                .append(seg.volumeScale).append(';').append(seg.speedScale).append('|')
+        }
+        append("#bgm#")
+        s.bgmClips.sortedBy { it.id }.forEach { c ->
+            append(c.sourceUri).append(';').append(c.startMs).append(';').append(c.volumeScale)
+                .append(';').append(c.speedScale).append(';').append(c.sourceTrimStartMs)
+                .append(';').append(c.sourceTrimEndMs).append('|')
+        }
+        append("#dir#")
+        s.separationDirectives.sortedBy { it.id }.forEach { d ->
+            append(d.rangeStartMs).append(';').append(d.rangeEndMs).append(';')
+                .append(d.muteOriginalSegmentAudio).append(';').append(d.sourceOffsetMs)
+            d.selections.sortedBy { it.stemId }.forEach { sel ->
+                append(',').append(sel.stemId).append('=').append(sel.volume)
+                    .append('@').append(sel.selected)
+            }
+            append('|')
+        }
+    }
+
+    /**
+     * 편집으로 출력이 [savedExportKey] 와 달라졌으면 저장/공유 체크(DONE)를 해제한다. 영상 추가·트림·
+     * 볼륨·속도·BGM·분리 등 출력에 영향 주는 변경이 collector 를 통해 state 에 반영된 직후 호출.
+     */
+    private fun clearStaleExportStatus() {
+        val saved = savedExportKey ?: return
+        if (exportContentKey(_uiState.value) == saved) return
+        savedExportKey = null
+        _uiState.update { s ->
+            s.copy(
+                saveStatus = if (s.saveStatus is SaveStatus.DONE) SaveStatus.IDLE else s.saveStatus,
+                shareStatus = if (s.shareStatus is ShareStatus.DONE) ShareStatus.IDLE else s.shareStatus,
+            )
+        }
     }
 
     /** Timeline 헤더 "공유" 버튼 — 원본 영상을 렌더 후 share sheet. */
@@ -919,6 +976,7 @@ class TimelineViewModel constructor(
                     title = "vibi",
                 ).fold(
                     onSuccess = {
+                        savedExportKey = exportContentKey(_uiState.value)
                         _uiState.update { it.copy(shareStatus = ShareStatus.DONE) }
                     },
                     onFailure = { e ->

@@ -62,6 +62,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -206,7 +207,8 @@ fun TimelineScreen(
     // 펼치면 화자 색, 닫히면 단일 highlight.
     var expandedSeparationIds by remember { mutableStateOf(emptySet<String>()) }
 
-    // 저장 완료 → InputScreen 복귀. ViewModel 의 _navigateBackHome SharedFlow 가 1회성 신호.
+    // navigateBackHome 신호 시 InputScreen 복귀. 저장 완료로는 더 이상 emit 하지 않는다(저장 후
+    // 에디터에 머물며 Export 버튼 체크로 알림) — 명시적 나가기 등 향후 신호용으로 collector 유지.
     LaunchedEffect(viewModel) {
         viewModel.navigateBackHome.collect { onSaved() }
     }
@@ -555,9 +557,12 @@ fun TimelineScreen(
             )
             val saving = state.saveStatus is SaveStatus.RUNNING
             val sharing = state.shareStatus is ShareStatus.RUNNING
+            val isSaved = state.saveStatus is SaveStatus.DONE
+            val isShared = state.shareStatus is ShareStatus.DONE
             var exportSheetOpen by remember { mutableStateOf(false) }
             // 내보내기 진입점 — accent 배경 CTA. 분리 진행 중이거나 저장·공유 중엔 버튼 비활성.
-            // 진행 표시는 전체화면 원형 링 오버레이(사진 앱 스타일)가 담당 — 버튼 라벨은 항상 "Export".
+            // 진행 표시는 전체화면 원형 링 오버레이(사진 앱 스타일)가 담당. 현재 편집 상태가 이미
+            // 저장/공유됐으면 라벨 옆 체크 — 편집으로 출력이 바뀌면 VM 이 상태를 IDLE 로 돌려 체크가 사라짐.
             Button(
                 enabled = !sharing && !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
                 onClick = { exportSheetOpen = true },
@@ -572,10 +577,22 @@ fun TimelineScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.sm, vertical = 0.dp),
                 modifier = Modifier.height(VibiSpacing.xxl),
             ) {
-                Text("Export", style = typo.bodySm)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Export", style = typo.bodySm)
+                    if (isSaved || isShared) {
+                        Spacer(Modifier.width(VibiSpacing.xxs))
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = "내보내기 완료됨",
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
             if (exportSheetOpen) {
                 ExportOptionsSheet(
+                    saved = isSaved,
+                    shared = isShared,
                     onSave = {
                         exportSheetOpen = false
                         viewModel.onSaveAllVariants()
@@ -3003,6 +3020,8 @@ private data class SegmentSpan(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun ExportOptionsSheet(
+    saved: Boolean,
+    shared: Boolean,
     onSave: () -> Unit,
     onShare: () -> Unit,
     onDismiss: () -> Unit,
@@ -3040,6 +3059,11 @@ private fun ExportOptionsSheet(
                     )
                     Spacer(Modifier.width(VibiSpacing.xs))
                     Text("Save", style = typo.bodySm)
+                    // 현재 편집 상태가 이미 갤러리에 저장됐음을 표시. 편집하면 VM 이 해제(체크 사라짐).
+                    if (saved) {
+                        Spacer(Modifier.weight(1f))
+                        ExportDoneCheck(tokens.accent)
+                    }
                 }
             }
             OutlinedButton(
@@ -3059,11 +3083,25 @@ private fun ExportOptionsSheet(
                     )
                     Spacer(Modifier.width(VibiSpacing.xs))
                     Text("Share", style = typo.bodySm)
+                    if (shared) {
+                        Spacer(Modifier.weight(1f))
+                        ExportDoneCheck(tokens.accent)
+                    }
                 }
             }
             Spacer(Modifier.height(VibiSpacing.sm))
         }
     }
+}
+
+/** 저장/공유 완료 체크 마크 — "현재 편집 상태가 이미 export 됨" 표시. 편집으로 출력이 바뀌면 숨김. */
+@Composable
+private fun ExportDoneCheck(tint: Color) {
+    Icon(
+        imageVector = androidx.compose.material.icons.Icons.Filled.CheckCircle,
+        contentDescription = "완료됨",
+        tint = tint,
+    )
 }
 
 // BgmActionSheet 폐기 — 선택된 BGM 의 볼륨/속도/배경분리/삭제 액션은 SoundDeck 카드 가 담당하고,
