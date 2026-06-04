@@ -2550,25 +2550,34 @@ class TimelineViewModel constructor(
     fun onUpdateBgmStartMs(clipId: String, newStartMs: Long) {
         // 드래그 종료 커밋. 드래그 **중**엔 UI(UnifiedTimelineBar)가 clip 본체와 range overlay(fill/핸들)를
         // 로컬 graphicsLayer 로만 따라오게 하고 VM emit 을 하지 않는다(매 tick emit → 전체 bar 재구성 "버벅임"
-        // 제거). 따라서 라이브에서 못 옮긴 pendingRange 를 여기서 클립 이동량(delta)만큼 한 번에 평행 이동한다.
+        // 제거).
         val state = _uiState.value
         val target = newStartMs.coerceAtLeast(0L)
         val oldStart = state.bgmClips.firstOrNull { it.id == clipId }?.startMs
         val isRangeTarget = state.editTargets.any { it is EditTarget.Bgm && it.clipId == clipId }
-        if (isRangeTarget && oldStart != null) {
-            val delta = target - oldStart
-            if (delta != 0L) {
-                _uiState.update {
-                    it.copy(
-                        pendingRangeStartMs = (it.pendingRangeStartMs + delta).coerceAtLeast(0L),
-                        pendingRangeEndMs = (it.pendingRangeEndMs + delta).coerceAtLeast(0L),
-                    )
-                }
+        val delta = if (oldStart != null) target - oldStart else 0L
+        // optimistic — clip.startMs 를 state 에 즉시 반영. observeClips 는 Room DAO Flow(비동기 emit) 라
+        // 쓰기 직후엔 옛 startMs 라서, 이걸 안 하면 drag 손 떼는 순간 clip 본체가 옛 위치로 깜빡였다가(왔다갔다)
+        // DB emit 후 새 위치로 점프했다. 동시에 라이브에서 못 옮긴 pendingRange(range overlay)도 같은 delta 로
+        // 평행 이동 → 클립과 함께 머문다.
+        if (oldStart != null && delta != 0L) {
+            _uiState.update { st ->
+                st.copy(
+                    bgmClips = st.bgmClips.map { if (it.id == clipId) it.copy(startMs = target) else it },
+                    pendingRangeStartMs = if (isRangeTarget)
+                        (st.pendingRangeStartMs + delta).coerceAtLeast(0L) else st.pendingRangeStartMs,
+                    pendingRangeEndMs = if (isRangeTarget)
+                        (st.pendingRangeEndMs + delta).coerceAtLeast(0L) else st.pendingRangeEndMs,
+                )
             }
         }
         viewModelScope.launch {
             try {
                 updateBgmClip(clipId, startMs = target)
+                // DAO Flow 비동기 emit 보정 — 쓰기 직후 1회 동기 reload 로 lane override 까지 canonical 반영
+                // (optimistic 값과 동일하면 점프 없음).
+                val fresh = applyBgmLaneOverrides(bgmClipRepository.observeClips(projectId).first())
+                _uiState.update { it.copy(bgmClips = fresh) }
                 pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(bgmError = e.message)

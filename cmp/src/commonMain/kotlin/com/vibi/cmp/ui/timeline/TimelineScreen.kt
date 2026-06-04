@@ -1798,6 +1798,15 @@ private fun UnifiedTimelineBar(
                     return@detectTapGestures
                 }
 
+                // BGM 구간편집 중(bgmRangeMode) 영상 strip 탭 → 영상 편집(segment edit)으로 전환 — neutral
+                // 영상 탭과 동일 진입(onEnterSegmentEditMode: isSegmentEditMode=true + editTargets=Video +
+                // selectedBgmClipId 해제). 이게 없으면 아래 free-interval → onSelectVideoRange 가 editTargets=Bgm
+                // 인 채 range 만 잡아, 하단 버튼은 BGM·range 핸들은 BGM 레인에 뜨는 꼬임(트랙 전환 실패)이 났음.
+                if (bgmRangeMode) {
+                    onWaveformTapInNeutral(ms)
+                    return@detectTapGestures
+                }
+
                 // 진행 중 음원분리 바 위 탭 → 취소 UI 노출 (점유 no-op 보다 우선).
                 processingSeparations.firstOrNull { ms in it.startMs..it.endMs }?.let {
                     onProcessingTap(it.clientToken)
@@ -2176,8 +2185,9 @@ private fun UnifiedTimelineBar(
                                 }
                             }
                             .then(
-                                // 드래그 중엔 블록을 불투명 카드로 채워 reflow(밀려남)가 또렷이 보이게 —
-                                // 들린 블록은 accent, 나머지는 track 색 카드. 평소엔 outline 만(파형 노출).
+                                // 드래그 중엔 블록을 카드로 채워 reflow(밀려남)가 또렷이 보이게 — 들린 블록은
+                                // accent, 나머지는 track 색. 그 위에 자기 세그먼트 파형(아래 content)을 얹어
+                                // "파형이 블록과 함께 이동". 평소엔 outline 만(뒤 연속 파형 노출).
                                 when {
                                     isDragging -> Modifier.background(accent.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
                                     dragSegId != null -> Modifier.background(trackColor, RoundedCornerShape(4.dp))
@@ -2189,7 +2199,27 @@ private fun UnifiedTimelineBar(
                                 if (isDragging) accent else segmentColor.copy(alpha = 0.85f),
                                 RoundedCornerShape(4.dp),
                             )
-                    )
+                    ) {
+                        // 재정렬 드래그 중엔 각 블록이 자기 세그먼트의 파형 슬라이스를 품어 파형이 블록과 함께
+                        // 떠오르고/reflow → 연속 파형이 카드만 따라 못 움직여 "점프" 하던 혼란 없이 맥락 유지.
+                        // 평소(dragSegId==null)엔 비워 두고 뒤 TimelineWaveformBackground 가 노출됨.
+                        // primarySource 가 아닌 세그먼트는 peak 없음 → 단색 카드 그대로.
+                        if (dragSegId != null && videoPeaks.isNotEmpty() && primarySourceDurationMs > 0L &&
+                            seg.sourceUri == primarySourceUri) {
+                            BgmClipWaveform(
+                                peaks = videoPeaks,
+                                trimStartFrac = (seg.trimStartMs.toFloat() / primarySourceDurationMs)
+                                    .coerceIn(0f, 1f),
+                                trimEndFrac = (seg.effectiveTrimEndMs.toFloat() / primarySourceDurationMs)
+                                    .coerceIn(0f, 1f),
+                                // muted(volume 0) 세그먼트는 옅게 — 연속 파형의 volume 반영을 색으로 근사.
+                                color = markerColor.copy(alpha = if (seg.volumeScale <= 0f) 0.25f else 0.65f),
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clip(RoundedCornerShape(4.dp)),
+                            )
+                        }
+                    }
                 }
 
             }
@@ -3338,12 +3368,21 @@ private fun BgmClipBlock(
     // 다 안에 들어가야 하는 것처럼 동작). [currentClip] 과 동일하게 State 로 감싸 onDrag 가 항상 최신
     // 사용 구간 길이를 읽도록.
     val currentGlobalDurMs by rememberUpdatedState(globalDurMs)
-    val effectiveStartMs = trimOverrideStartMs ?: dragOverrideMs ?: clip.startMs
+    // 위치 드래그(dragOverrideMs)는 layout(effectiveStartMs)에서 제외하고 graphicsLayer translationX
+    // ([dragDeltaPx], draw phase)로만 반영 — range overlay(fill/핸들)도 동일 draw-phase 라 빠른 드래그에서도
+    // 둘이 같은 프레임에 정확히 일치(이전엔 본체만 .offset=recompose 경로라 한 프레임 어긋났음). trim 드래그
+    // (trimOverrideStartMs)는 자체 핸들도 recompose 경로라 그대로 layout 에 반영해 서로 일치 유지.
+    val effectiveStartMs = trimOverrideStartMs ?: clip.startMs
     val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
     val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
     val offsetXDp = laneWidthDp * startFrac
     val offsetYDp = bgmRowStrideDp * lane.coerceAtLeast(0)
     val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
+    // 위치 드래그 delta(px). graphicsLayer 람다 안에서만 dragOverrideMs 를 읽어 recompose 를 일으키지 않고
+    // 매 프레임 draw 단계에서만 본체/고스트를 평행 이동 → overlay 와 frame-perfect 동기.
+    val dragDeltaPx: () -> Float = {
+        dragOverrideMs?.let { ((it - effectiveStartMs).toFloat() / totalMs) * laneWidthPx } ?: 0f
+    }
     val isMuted = clip.volumeScale <= 0f
     val isRecording = isBgmRecording(clip)
     // 클립 색은 timeline 순서로 cycle (BgmPalette = 4색 muted gradient). 모든 BGM 이 같은 팔레트라
@@ -3370,6 +3409,7 @@ private fun BgmClipBlock(
                 Box(
                     modifier = Modifier
                         .offset(x = laneWidthDp * ghostStartFrac, y = offsetYDp)
+                        .graphicsLayer { translationX = dragDeltaPx() }
                         .width(headWidthDp)
                         .height(bgmRowHeight)
                         .clip(
@@ -3404,6 +3444,7 @@ private fun BgmClipBlock(
                 Box(
                     modifier = Modifier
                         .offset(x = laneWidthDp * tailStartFrac, y = offsetYDp)
+                        .graphicsLayer { translationX = dragDeltaPx() }
                         .width(tailWidthDp)
                         .height(bgmRowHeight)
                         .clip(
@@ -3435,6 +3476,7 @@ private fun BgmClipBlock(
     Box(
         modifier = Modifier
             .offset(x = offsetXDp, y = offsetYDp)
+            .graphicsLayer { translationX = dragDeltaPx() }
             .width(widthDp)
             .height(bgmRowHeight)
             .clip(VibiShape.xs)
