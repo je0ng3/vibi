@@ -864,7 +864,6 @@ fun TimelineScreen(
                     viewModel.onEnterBgmRangeEditMode(clipId)
                 },
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
-                onBgmDragLive = viewModel::onBgmDragLive,
                 onBgmUpdateTrim = viewModel::onUpdateBgmTrim,
                 bgmPeaksByUri = bgmPeaks,
                 // segment edit 모드에서도 BGM 표시 — range-edit (volume/speed/duplicate/delete) 가
@@ -1728,8 +1727,6 @@ private fun UnifiedTimelineBar(
     bgmDragEnabled: Boolean = true,
     onBgmSelectClip: (String) -> Unit = {},
     onBgmUpdateStart: (String, Long) -> Unit = { _, _ -> },
-    /** BGM 위치 드래그 중(라이브) — 구간편집 대상이면 pendingRange 동반 이동(핸들/ fill 이 클립과 같이 움직임). */
-    onBgmDragLive: (String, Long) -> Unit = { _, _ -> },
     /**
      * 선택된 BGM 의 좌·우 트림 핸들 드래그 시 호출. start 핸들이면 [newStartMs] 가 동반 (CapCut 의미상
      * 좌측 잘릴 때 timeline 좌측 엣지가 손가락 위치에 머묾), end 핸들이면 null.
@@ -1998,9 +1995,12 @@ private fun UnifiedTimelineBar(
                         totalMs = totalMs,
                         directives = directives,
                         stemPeaksByUrl = stemPeaksByUrl,
-                        defaultBarColor = markerColor.copy(alpha = 0.45f),
+                        // 불투명 흰 패널 위에서 파형이 또렷하게 — 기존 0.45 는 흰 배경에서 밋밋한 중간 회색.
+                        defaultBarColor = markerColor.copy(alpha = 0.65f),
                         highlightBarColor = accent,
-                        trackBg = trackColor.copy(alpha = 0.55f),
+                        // 불투명 surface-card 패널 — 라이트=순백(#FFF), 다크=elevated #1C1917. 테두리 없이도
+                        // 캔버스와 대비돼 레인이 구분됨. 기존 반투명 트랙(거의 안 보임)이 "테두리만" 처럼 보이던 문제 해결.
+                        trackBg = tokens.panelBg,
                         expandedDirectiveIds = expandedDirectiveIds,
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -2026,7 +2026,8 @@ private fun UnifiedTimelineBar(
                             .fillMaxWidth()
                             .height(contentHeight)
                             .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
-                            .background(trackColor)
+                            // 파형 strip 과 동일 패널 — 로드 전/후 레인 룩 일관.
+                            .background(tokens.panelBg)
                     )
                     if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
                         DirectiveOverlayRow(
@@ -2335,6 +2336,20 @@ private fun UnifiedTimelineBar(
                 val selectedDisplayLane = selectedBgmClipId?.let { bgmLaneByClipId[it] }
                     ?: selectedBgmForOverlay?.lane ?: 0
                 val bgmLaneYDp = bgmRowStrideDp * selectedDisplayLane.coerceAtLeast(0)
+                // 선택된 BGM 클립을 좌우 드래그하는 **동안** range overlay(fill/핸들)를 클립과 함께 따라오게 하는
+                // 로컬 라이브 위치. (선택클립 id, 라이브 startMs). RangeHandle 자기 드래그와 동일한 optimistic
+                // 패턴 — VM 라운드트립(매 tick uiState emit → 전체 bar 재구성 "버벅임") 대신 graphicsLayer
+                // translationX 로 draw phase 에서만 평행 이동. 이 state 는 graphicsLayer 람다 **안에서만** 읽혀
+                // (아래 [bgmRangeLiveTranslateX]) 매 tick 갱신돼도 bar 재구성은 일어나지 않는다. 커밋(드래그 끝)
+                // 은 onBgmUpdateStart 가 pendingRange 를 동일 delta 로 한 번에 옮기므로 점프 없이 인계된다.
+                var bgmDragLive by remember { mutableStateOf<Pair<String, Long>?>(null) }
+                val bgmRangeLiveTranslateX: () -> Float = {
+                    val live = bgmDragLive
+                    val base = selectedBgmForOverlay?.startMs
+                    if (live != null && base != null && live.first == selectedBgmClipId && totalMs > 0L)
+                        ((live.second - base).toFloat() / totalMs) * laneWidthPx
+                    else 0f
+                }
                 // (range fill+border 는 BGM 막대 위에 보이도록 bgmClips.forEach 뒤에서 그린다.)
                 // BGM 클립 색은 createdAt(추가 순서) 1-based 인덱스로 BgmPalette cycle (4색). 같은
                 // 통합 매핑을 SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을
@@ -2370,8 +2385,17 @@ private fun UnifiedTimelineBar(
                             bgmDragEnabled = bgmDragEnabled,
                             locked = clip.id in separatingBgmClipIds,
                             onBgmSelectClip = onBgmSelectClip,
-                            onBgmUpdateStart = onBgmUpdateStart,
-                            onBgmDragLive = onBgmDragLive,
+                            onBgmUpdateStart = { id, finalMs ->
+                                // 커밋 시 라이브 override 해제 → translationX 0 으로 복귀. 동시에 VM 이
+                                // pendingRange 를 같은 delta 로 옮기므로(handles base offsetX 갱신) 점프 없음.
+                                bgmDragLive = null
+                                onBgmUpdateStart(id, finalMs)
+                            },
+                            // 드래그 중(라이브): VM 으로 보내지 않고 로컬 state 만 갱신 — 선택된 클립일 때만
+                            // overlay 가 따라오면 되므로 그 경우만 기록.
+                            onBgmDragLive = { id, next ->
+                                if (id == selectedBgmClipId) bgmDragLive = id to next
+                            },
                             onBgmUpdateTrim = onBgmUpdateTrim,
                         )
                     }
@@ -2379,12 +2403,14 @@ private fun UnifiedTimelineBar(
                 // range fill + 상·하 border — BGM 막대 **위에** 그려 영상 strip 처럼 반투명하게 보이도록
                 // (이전엔 막대 아래라 트랙에 가려 안 보였음). fill drag → 구간 전체 평행 이동.
                 if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
-                    // 시각 전용 fill — 드래그(이동)는 아래 클립 본체가 받아 클립을 옮기고, pendingRange 도 함께
-                    // 이동하므로(VM onUpdateBgmStartMs) fill/핸들이 클립과 같이 움직인다. pointerInput 없음 →
-                    // 터치는 아래 클립 블록으로 통과(클립 본체 드래그 = 위치 이동).
+                    // 시각 전용 fill — 드래그(이동)는 아래 클립 본체가 받아 클립을 옮긴다. 드래그 중엔
+                    // graphicsLayer translationX([bgmRangeLiveTranslateX]) 로 클립과 함께 따라오고(draw phase
+                    // 만, 재구성 없음), 커밋 시 pendingRange 가 같은 delta 로 옮겨지며 인계된다. pointerInput
+                    // 없음 → 터치는 아래 클립 블록으로 통과(클립 본체 드래그 = 위치 이동).
                     Box(
                         modifier = Modifier
                             .offset(x = bgmFillStartDp, y = bgmLaneYDp)
+                            .graphicsLayer { translationX = bgmRangeLiveTranslateX() }
                             .width(bgmFillWidthDp)
                             .height(bgmRowHeight)
                             .background(accent.copy(alpha = 0.32f))
@@ -2392,6 +2418,7 @@ private fun UnifiedTimelineBar(
                     Box(
                         modifier = Modifier
                             .offset(x = bgmFillStartDp, y = bgmLaneYDp)
+                            .graphicsLayer { translationX = bgmRangeLiveTranslateX() }
                             .width(bgmFillWidthDp)
                             .height(TimelineBarSpec.RangeBorderThickness)
                             .background(accent)
@@ -2399,6 +2426,7 @@ private fun UnifiedTimelineBar(
                     Box(
                         modifier = Modifier
                             .offset(x = bgmFillStartDp, y = bgmLaneYDp + bgmRowHeight - TimelineBarSpec.RangeBorderThickness)
+                            .graphicsLayer { translationX = bgmRangeLiveTranslateX() }
                             .width(bgmFillWidthDp)
                             .height(TimelineBarSpec.RangeBorderThickness)
                             .background(accent)
@@ -2427,6 +2455,7 @@ private fun UnifiedTimelineBar(
                         baseMsProvider = { currentRangeStart },
                         clamp = { it.coerceIn(bgmMinMs, (currentRangeEnd - minGap).coerceAtLeast(bgmMinMs)) },
                         onChange = onRangeStartChange,
+                        liveTranslateX = bgmRangeLiveTranslateX,
                     )
                     RangeHandle(
                         offsetX = bgmFillStartDp + bgmFillWidthDp - handleHitWidth / 2,
@@ -2442,6 +2471,7 @@ private fun UnifiedTimelineBar(
                         baseMsProvider = { currentRangeEnd },
                         clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(bgmMaxMs), bgmMaxMs) },
                         onChange = onRangeEndChange,
+                        liveTranslateX = bgmRangeLiveTranslateX,
                     )
                 }
             }
@@ -3161,6 +3191,12 @@ private fun RangeHandle(
      * chevron 이 영상 끝 라인에 flush 하게.
      */
     contentAlignment: Alignment = Alignment.Center,
+    /**
+     * 외부(예: BGM 클립 본체 드래그)에서 핸들을 라이브로 평행 이동시키는 px translate. 람다 안에서만 읽혀
+     * graphicsLayer(draw phase)로만 반영 → 재구성 없이 따라옴. 기본 0(영향 없음). 핸들 자체 드래그 중엔
+     * 외부 드래그가 없어 0 이므로 [renderOffsetX] optimistic 과 충돌하지 않는다.
+     */
+    liveTranslateX: () -> Float = { 0f },
 ) {
     // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
@@ -3178,6 +3214,7 @@ private fun RangeHandle(
     Box(
         modifier = Modifier
             .offset(x = renderOffsetX, y = offsetY)
+            .graphicsLayer { translationX = liveTranslateX() }
             .width(hitWidth)
             .height(hitHeight)
             .pointerInput(totalWidthPx, totalMs) {
