@@ -31,6 +31,8 @@ data class VibiColors(
     val accent: Color,
     /** 통합 타임라인 바 — 가운데 얇은 배경 strip. */
     val timelineBarTrack: Color,
+    /** 영상 파형 strip 배경 — 라이트는 흰 패널 위 밝은 회색, 다크는 elevated surface plate. */
+    val timelineWaveformStripBg: Color,
     /** 통합 타임라인 바 — 기본 segment / directive 블록. 중성 회색. */
     val timelineBarSegment: Color,
     /**
@@ -71,6 +73,7 @@ val LightVibiColors = VibiColors(
     mutedText = Color(0xFF777169),  // muted
     accent = Color(0xFF292524),  // primary — ink pill (유일한 CTA 색)
     timelineBarTrack = Color(0xFFE7E5E4),  // hairline
+    timelineWaveformStripBg = Color(0xFFF5F5F5),  // 흰 패널(#FFFFFF) 위 한 단계 밝은 회색
     timelineBarSegment = Color(0xFFA8A29E),  // muted-soft — 중성, accent (ink) 와 분리
     timelineBarSegmentEdited = Color(0xFFC8B8E0),  // gradient-lavender — 편집 강조
     timelineBarDirective = Color(0xFFC8B8E0),  // gradient-lavender — 편집 강조와 동일 (사용자 요청)
@@ -96,6 +99,7 @@ val DarkVibiColors = VibiColors(
     mutedText = Color(0xFFA8A29E),  // dark-body
     accent = Color(0xFFFAFAFA),  // primary inverted — white pill on dark canvas
     timelineBarTrack = Color(0xFF292524),  // dark-hairline
+    timelineWaveformStripBg = Color(0xFF1C1917),  // surface-card 와 동일 plate (panelBgSoft 와 같음)
     timelineBarSegment = Color(0xFF777169),  // muted — dark bg 위 중성
     timelineBarSegmentEdited = Color(0xFFC8B8E0),  // gradient-lavender — atmosphere 그대로
     timelineBarDirective = Color(0xFFC8B8E0),  // gradient-lavender — 편집 강조와 동일 (사용자 요청)

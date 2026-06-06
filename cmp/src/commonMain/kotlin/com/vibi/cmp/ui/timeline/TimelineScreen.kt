@@ -2007,9 +2007,8 @@ private fun UnifiedTimelineBar(
                         // 불투명 흰 패널 위에서 파형이 또렷하게 — 기존 0.45 는 흰 배경에서 밋밋한 중간 회색.
                         defaultBarColor = markerColor.copy(alpha = 0.65f),
                         highlightBarColor = accent,
-                        // panelBgSoft(#FAFAFA)보다 한 단계 어두운 surface(chipBg) — 라이트 #F0EFED, 다크 #1C1917.
-                        // 흰 패널이 너무 밝아 보이던 것 톤다운. 테두리 없음.
-                        trackBg = tokens.chipBg,
+                        // 라이트 #F5F5F5 (흰 패널 위 밝은 회색), 다크 #1C1917 (elevated plate). 테두리 없음.
+                        trackBg = tokens.timelineWaveformStripBg,
                         expandedDirectiveIds = expandedDirectiveIds,
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -2036,7 +2035,7 @@ private fun UnifiedTimelineBar(
                             .height(contentHeight)
                             // 파형 strip 과 동일 — 로드 전/후 레인 일관. 테두리 없음.
                             .clip(VibiShape.lg)
-                            .background(tokens.chipBg)
+                            .background(tokens.timelineWaveformStripBg)
                     )
                     if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
                         DirectiveOverlayRow(
