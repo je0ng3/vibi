@@ -2274,6 +2274,11 @@ private fun UnifiedTimelineBar(
                 val rangeWidthDp = totalWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
                 val rangeFillHeight = TimelineBarSpec.WaveformHeight
 
+                // 세그먼트 편집 모드(영상 다듬기, showSegments=isSegmentEditMode)에선 구간 조정 비활성 —
+                // 선택은 탭한 세그먼트/구간으로 고정하고, fill 하이라이트는 선택 표시로 유지. 음원분리 구간
+                // 선택 모드(isSegmentEditMode=false)에선 종전대로 조정 가능.
+                val rangeAdjustable = !showSegments
+
                 var fillBaseStartMs by remember { mutableLongStateOf(0L) }
                 var fillAccumPx by remember { mutableFloatStateOf(0f) }
                 RangeFillStrip(
@@ -2283,21 +2288,22 @@ private fun UnifiedTimelineBar(
                     playbackRegionHeight = playbackRegionHeight,
                     accent = accent,
                     fillAlpha = 0.32f,
-                    fillModifier = Modifier.pointerInput(totalWidthPx, totalMs) {
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                fillBaseStartMs = currentRangeStart
-                                fillAccumPx = 0f
-                            },
-                            onHorizontalDrag = { _, dragAmount ->
-                                fillAccumPx += dragAmount
-                                if (totalWidthPx > 0f && totalMs > 0L) {
-                                    val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
-                                    onTranslateRange((fillBaseStartMs + deltaMs).toLong())
+                    fillModifier = if (!rangeAdjustable) Modifier else
+                        Modifier.pointerInput(totalWidthPx, totalMs) {
+                            detectHorizontalDragGestures(
+                                onDragStart = {
+                                    fillBaseStartMs = currentRangeStart
+                                    fillAccumPx = 0f
+                                },
+                                onHorizontalDrag = { _, dragAmount ->
+                                    fillAccumPx += dragAmount
+                                    if (totalWidthPx > 0f && totalMs > 0L) {
+                                        val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
+                                        onTranslateRange((fillBaseStartMs + deltaMs).toLong())
+                                    }
                                 }
-                            }
-                        )
-                    },
+                            )
+                        },
                 )
 
                 // 좌/우 chevron 핸들 — BGM 트림 핸들과 동일 디자인. hit zone 은 파형 높이만큼만.
@@ -2305,47 +2311,50 @@ private fun UnifiedTimelineBar(
                 // 바깥으로 절반 잘려 chevron 이 안 보이던 문제 차단. boundary 닿을 때 chevron 정렬을
                 // Center → CenterStart/CenterEnd 로 바꿔, chevron 의 바깥 엣지가 영상 시작·끝 라인에
                 // flush. range 가운데 영역에선 기존처럼 boundary 에 centered (straddle).
-                val minGap = TimelineBarSpec.MinRangeGapMs
-                val rangeHandleOffsetY = (playbackRegionHeight - rangeFillHeight) / 2
-                val maxHandleOffsetX = (totalWidthDp - handleHitWidth).coerceAtLeast(0.dp)
-                val atLeftBoundary = rangeStartMs <= 0L
-                val atRightBoundary = rangeEndMs >= totalMs
-                RangeHandle(
-                    offsetX = (rangeStartDp - handleHitWidth / 2)
-                        .coerceIn(0.dp, maxHandleOffsetX),
-                    offsetY = rangeHandleOffsetY,
-                    hitWidth = handleHitWidth,
-                    hitHeight = rangeFillHeight,
-                    visualWidth = handleVisualWidth,
-                    handleColor = accent,
-                    gripColor = markerColor,
-                    gripHeight = rangeFillHeight,
-                    chevron = BgmTrimSide.Start,
-                    contentAlignment = if (atLeftBoundary) Alignment.CenterStart else Alignment.Center,
-                    totalWidthPx = totalWidthPx,
-                    totalMs = totalMs,
-                    baseMsProvider = { currentRangeStart },
-                    clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
-                    onChange = onRangeStartChange,
-                )
-                RangeHandle(
-                    offsetX = (rangeStartDp + rangeWidthDp - handleHitWidth / 2)
-                        .coerceIn(0.dp, maxHandleOffsetX),
-                    offsetY = rangeHandleOffsetY,
-                    hitWidth = handleHitWidth,
-                    hitHeight = rangeFillHeight,
-                    visualWidth = handleVisualWidth,
-                    handleColor = accent,
-                    gripColor = markerColor,
-                    gripHeight = rangeFillHeight,
-                    chevron = BgmTrimSide.End,
-                    contentAlignment = if (atRightBoundary) Alignment.CenterEnd else Alignment.Center,
-                    totalWidthPx = totalWidthPx,
-                    totalMs = totalMs,
-                    baseMsProvider = { currentRangeEnd },
-                    clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
-                    onChange = onRangeEndChange,
-                )
+                // chevron 트림 핸들은 구간 조정 가능할 때만 노출 — 세그먼트 편집 모드에선 숨겨 선택 고정.
+                if (rangeAdjustable) {
+                    val minGap = TimelineBarSpec.MinRangeGapMs
+                    val rangeHandleOffsetY = (playbackRegionHeight - rangeFillHeight) / 2
+                    val maxHandleOffsetX = (totalWidthDp - handleHitWidth).coerceAtLeast(0.dp)
+                    val atLeftBoundary = rangeStartMs <= 0L
+                    val atRightBoundary = rangeEndMs >= totalMs
+                    RangeHandle(
+                        offsetX = (rangeStartDp - handleHitWidth / 2)
+                            .coerceIn(0.dp, maxHandleOffsetX),
+                        offsetY = rangeHandleOffsetY,
+                        hitWidth = handleHitWidth,
+                        hitHeight = rangeFillHeight,
+                        visualWidth = handleVisualWidth,
+                        handleColor = accent,
+                        gripColor = markerColor,
+                        gripHeight = rangeFillHeight,
+                        chevron = BgmTrimSide.Start,
+                        contentAlignment = if (atLeftBoundary) Alignment.CenterStart else Alignment.Center,
+                        totalWidthPx = totalWidthPx,
+                        totalMs = totalMs,
+                        baseMsProvider = { currentRangeStart },
+                        clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
+                        onChange = onRangeStartChange,
+                    )
+                    RangeHandle(
+                        offsetX = (rangeStartDp + rangeWidthDp - handleHitWidth / 2)
+                            .coerceIn(0.dp, maxHandleOffsetX),
+                        offsetY = rangeHandleOffsetY,
+                        hitWidth = handleHitWidth,
+                        hitHeight = rangeFillHeight,
+                        visualWidth = handleVisualWidth,
+                        handleColor = accent,
+                        gripColor = markerColor,
+                        gripHeight = rangeFillHeight,
+                        chevron = BgmTrimSide.End,
+                        contentAlignment = if (atRightBoundary) Alignment.CenterEnd else Alignment.Center,
+                        totalWidthPx = totalWidthPx,
+                        totalMs = totalMs,
+                        baseMsProvider = { currentRangeEnd },
+                        clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
+                        onChange = onRangeEndChange,
+                    )
+                }
             }
 
         }
