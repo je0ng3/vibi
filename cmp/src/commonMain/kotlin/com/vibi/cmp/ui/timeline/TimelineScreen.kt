@@ -917,7 +917,10 @@ fun TimelineScreen(
                             onClick = {
                                 if (submitting) return@Button
                                 submitting = true
-                                val segId = state.segments.firstOrNull()?.id ?: return@Button
+                                // 분리 대상은 현재 선택 범위가 놓인 클립(rangeTargetSegmentId) — 종전엔
+                                // 무조건 첫 세그먼트를 넘겨, 재정렬 후 의도와 다른 클립이 분리되던 버그.
+                                val segId = state.rangeTargetSegmentId
+                                    ?: state.segments.firstOrNull()?.id ?: return@Button
                                 viewModel.onCancelRangeMode()
                                 // SETUP sheet 만 열고 분리는 시작하지 않음 — 사용자가 비용/잔액
                                 // (CostPreviewRow) 을 보고 sheet 의 Start 버튼으로 명시적 confirm.

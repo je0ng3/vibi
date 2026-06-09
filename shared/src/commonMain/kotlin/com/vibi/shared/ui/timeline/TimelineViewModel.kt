@@ -1095,17 +1095,28 @@ class TimelineViewModel constructor(
 
     fun onEnterRangeMode(segmentId: String) {
         val state = _uiState.value
-        // 자유 구간(분리중/완료 directive 제외)이 있는 첫 비디오 세그먼트로 진입. 첫 세그먼트가 분리중이라
-        // 자유 구간이 없어도 다른 세그먼트에서 새 분리를 시작할 수 있게 — 종전엔 항상 첫 세그먼트만 보고
-        // 자유 구간이 없으면 진입 자체를 거부해 "음원분리 버튼이 안 눌리는" 문제가 있었다. 어디에도 자유
-        // 구간이 없으면(전 구간 분리중/완료) 거부.
-        val target = state.segments
-            .filter { it.type == SegmentType.VIDEO }
-            .firstNotNullOfOrNull { s ->
-                val segStart = segmentStartOffsetMs(state.segments, s.id)
-                val segEnd = segStart + s.effectiveDurationMs
-                freeIntervalsInSegment(segStart, segEnd).firstOrNull()?.let { s to it }
-            } ?: return
+        // 자유 구간(분리중/완료 directive 제외) 이 있는 비디오 세그먼트로 진입.
+        fun freeTargetFor(s: Segment): Pair<Segment, LongRange>? {
+            if (s.type != SegmentType.VIDEO) return null
+            val segStart = segmentStartOffsetMs(state.segments, s.id)
+            val segEnd = segStart + s.effectiveDurationMs
+            return freeIntervalsInSegment(segStart, segEnd).firstOrNull()?.let { s to it }
+        }
+        // 분리 대상 클립은 **클립 정체성** 으로 정한다. 종전엔 무조건 order 0(첫) 세그먼트만 잡아,
+        // [A|B]→[B|A] 로 재정렬한 뒤 분리하면 의도한 클립이 아닌 첫 클립이 분리되던 버그가 있었다.
+        // 우선순위: 1) 재생 헤드가 놓인(=사용자가 보고 있는) 클립  2) 호출자가 지정한 segmentId
+        //          3) 자유 구간이 있는 첫 비디오(폴백). 어디에도 자유 구간이 없으면(전 구간 분리중/완료) 거부.
+        val playhead = state.playbackPositionMs
+        val atPlayhead = state.segments.firstOrNull { s ->
+            if (s.type != SegmentType.VIDEO) return@firstOrNull false
+            val st = segmentStartOffsetMs(state.segments, s.id)
+            playhead in st until (st + s.effectiveDurationMs)
+        }?.let { freeTargetFor(it) }
+        val requested = state.segments.firstOrNull { it.id == segmentId }?.let { freeTargetFor(it) }
+        val target = atPlayhead
+            ?: requested
+            ?: state.segments.firstNotNullOfOrNull { freeTargetFor(it) }
+            ?: return
         val seg = target.first
         val defaultRange = target.second
         _uiState.value = state.copy(
@@ -1404,9 +1415,22 @@ class TimelineViewModel constructor(
         if (e - s < MIN_RANGE_MS) return
         // 재생바(playhead)는 선택 구간과 무관하게 현재 위치 유지 — 클립/구간 선택 시 따라 이동·clamp 하지 않음.
         if (state.isRangeSelecting) {
+            // 음원분리 범위 모드(영상편집·BGM 아님)에서는 범위가 옮겨가면 분리 대상 클립도 그 범위가
+            // 놓인 클립으로 따라가야 한다 — rangeTargetSegmentId 가 첫 클립에 고정돼 있으면 여러 클립에
+            // 걸친 선택의 primary 판정([onStartSeparation])이 엉켜 의도와 다른 클립이 분리된다.
+            val retarget = if (!state.isSegmentEditMode && !state.editTargets.hasBgm()) {
+                val mid = (s + e) / 2
+                state.segments.firstOrNull { sg ->
+                    if (sg.type != SegmentType.VIDEO) return@firstOrNull false
+                    val st = segmentStartOffsetMs(state.segments, sg.id)
+                    mid in st until (st + sg.effectiveDurationMs)
+                }?.id
+            } else null
             _uiState.value = state.copy(
                 pendingRangeStartMs = s,
                 pendingRangeEndMs = e,
+                rangeTargetSegmentId = retarget ?: state.rangeTargetSegmentId,
+                selectedSegmentId = retarget ?: state.selectedSegmentId,
             )
         } else {
             // range 모드 진입 — 첫 video segment 를 타깃으로. 슬라이더 valueRange 는 이후 영상 전체.
