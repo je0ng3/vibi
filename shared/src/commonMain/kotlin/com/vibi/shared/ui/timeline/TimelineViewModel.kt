@@ -312,6 +312,13 @@ class TimelineViewModel constructor(
 
     private var hasSeededUndoSnapshot = false
 
+    // undo baseline 은 segments/directives/bgm 첫 emit 이 모두 도착한 뒤 찍는다 — 종전엔 observeProject
+    // 첫 emit 에서 찍어, 다른 Room flow 가 아직 로드 전이면 baseline 이 빈 상태로 굳어 진입 후 첫 편집
+    // (예: '][' 구간분리) undo 시 영상/분리결과가 통째로 사라지던 race fix. ([maybeSeedUndoBaseline])
+    private var seedSegmentsReady = false
+    private var seedDirectivesReady = false
+    private var seedBgmReady = false
+
     // 음원분리 자동 재개·refresh 가드 — project 가 다시 emit 되어도 한 번만 fire.
     private enum class TriggerGate { ARMED, FIRED }
     private var separationGate = TriggerGate.ARMED
@@ -373,6 +380,8 @@ class TimelineViewModel constructor(
                         bgmLaneCount = current.bgmLaneCount.coerceAtLeast(minLaneCount),
                     )
                 }
+                seedBgmReady = true
+                maybeSeedUndoBaseline()
                 clearStaleExportStatus()
             }
         }
@@ -416,6 +425,8 @@ class TimelineViewModel constructor(
                 // atomic CAS — 다른 observer / mutation 핸들러와 race 시 stale state read-modify-write
                 // 방지 (loadSegments / observeBgmClips / observeProject / observeClips 와 동일 패턴).
                 _uiState.update { it.copy(separationDirectives = directives) }
+                seedDirectivesReady = true
+                maybeSeedUndoBaseline()
                 clearStaleExportStatus()
             }
         }
@@ -430,10 +441,6 @@ class TimelineViewModel constructor(
                             projectTitle = project.title,
                             separationStatus = project.separationStatus,
                         )
-                    }
-                    if (!hasSeededUndoSnapshot) {
-                        hasSeededUndoSnapshot = true
-                        pushUndoState()
                     }
                     maybeTriggerAutoPipelines(project)
                 }
@@ -581,6 +588,8 @@ class TimelineViewModel constructor(
                         trimEndMs = globalTrimEnd,
                     )
                 }
+                seedSegmentsReady = true
+                maybeSeedUndoBaseline()
                 clearStaleExportStatus()
             }
         }
@@ -670,6 +679,19 @@ class TimelineViewModel constructor(
     private fun pushUndoState() {
         mainUndoManager.pushState(buildSnapshot())
         updateUndoRedoState()
+    }
+
+    /**
+     * undo baseline 1회 seed — segments/directives/bgm 의 첫 Room emit 이 모두 도착한 뒤에만 찍어,
+     * baseline 이 완전한 진입 상태를 담도록 보장한다. 세 flow 모두 초기값(빈 list 포함)을 즉시 emit
+     * 하므로 영영 막히지 않는다. (각 collector 가 자기 flag 를 세우고 본 함수를 호출.)
+     */
+    private fun maybeSeedUndoBaseline() {
+        if (hasSeededUndoSnapshot) return
+        if (seedSegmentsReady && seedDirectivesReady && seedBgmReady) {
+            hasSeededUndoSnapshot = true
+            pushUndoState()
+        }
     }
 
     private fun updateUndoRedoState() {
