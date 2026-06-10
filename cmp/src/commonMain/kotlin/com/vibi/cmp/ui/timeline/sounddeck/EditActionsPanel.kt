@@ -84,8 +84,8 @@ fun EditActionsPanel(
         modifier = modifier
             .fillMaxWidth()
             .background(tokens.panelBg, VibiShape.lg)
-            .padding(VibiSpacing.sm),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(VibiSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
     ) {
         // 헤더(닫기/제목)는 액션 버튼 행과 분리 — 4 액션 버튼이 행 폭을 가로질러 양 끝 flush 로
         // 분포되도록 SpaceBetween. 헤더가 같은 Row 에 있으면 weight(1f) 가 빈 공간을 흡수해 액션 4개가
@@ -133,7 +133,7 @@ fun EditActionsPanel(
                 OutlinedButton(
                     onClick = { expanded = if (expanded == "volume") null else "volume" },
                     contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
-                    modifier = Modifier.height(VibiSpacing.touchMin),
+                    modifier = Modifier.height(VibiSpacing.xxl),
                     border = null,
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
@@ -149,7 +149,7 @@ fun EditActionsPanel(
             OutlinedButton(
                 onClick = { expanded = if (expanded == "speed") null else "speed" },
                 contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
-                modifier = Modifier.height(VibiSpacing.touchMin),
+                modifier = Modifier.height(VibiSpacing.xxl),
                 border = null,
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (expanded == "speed") tokens.accent else tokens.onBackgroundPrimary,
@@ -164,7 +164,7 @@ fun EditActionsPanel(
             OutlinedButton(
                 onClick = onSecondaryAction,
                 contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
-                modifier = Modifier.height(VibiSpacing.touchMin),
+                modifier = Modifier.height(VibiSpacing.xxl),
                 border = null,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
             ) {
@@ -178,7 +178,7 @@ fun EditActionsPanel(
             OutlinedButton(
                 onClick = onDelete,
                 contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
-                modifier = Modifier.height(VibiSpacing.touchMin),
+                modifier = Modifier.height(VibiSpacing.xxl),
                 border = null,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
             ) {
@@ -195,7 +195,7 @@ fun EditActionsPanel(
                     onClick = onTertiaryAction,
                     enabled = tertiaryActionEnabled,
                     contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
-                    modifier = Modifier.height(VibiSpacing.touchMin),
+                    modifier = Modifier.height(VibiSpacing.xxl),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
                 ) {
                     Text(

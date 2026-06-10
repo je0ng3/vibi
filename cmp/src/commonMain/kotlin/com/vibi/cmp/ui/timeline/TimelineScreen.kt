@@ -2891,7 +2891,6 @@ private fun BoxScope.TimelineActionBottomBar(
     viewModel: com.vibi.shared.ui.timeline.TimelineViewModel,
     modifier: Modifier = Modifier,
 ) {
-    val tokens = LocalVibiColors.current
     androidx.compose.animation.AnimatedVisibility(
         visible = target !is BottomActionTarget.None,
         modifier = modifier,
@@ -2902,12 +2901,13 @@ private fun BoxScope.TimelineActionBottomBar(
             animationSpec = androidx.compose.animation.core.tween(durationMillis = 160),
         ) { it },
     ) {
+        // 회색 backdrop 제거 — 흰 EditActionsPanel(패널 자체 배경) 만 떠오르게 해 사운드덱을 덜 가림.
+        // 패널은 좌우 여백을 둔 floating 카드로 노출. vertical 여백도 축소.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(tokens.backgroundPrimary)
                 .navigationBarsPadding()
-                .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
+                .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.xs),
         ) {
             when (target) {
                 is BottomActionTarget.None -> Unit
