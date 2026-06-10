@@ -541,12 +541,14 @@ fun TimelineScreen(
             state.processingSeparations.isNotEmpty()
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top,
+            // 뒤로가기 버튼·제목·Export 버튼 높이가 달라(특히 Export 축소 후) Top 정렬이면 어긋나 보임
+            // → 세로 중앙 정렬로 통일. 뒤로가기 버튼도 Export 와 같은 xl 높이로 맞춤.
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
         ) {
             Box(
                 modifier = Modifier
-                    .size(VibiSpacing.xxl)
+                    .size(VibiSpacing.xl)
                     .clip(CircleShape)
                     .background(tokens.chipBg)
                     .clickable(onClick = onBack),
