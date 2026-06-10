@@ -522,16 +522,14 @@ fun TimelineScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
     val bottomTarget = state.bottomActionTarget()
-    val bottomReserve = if (bottomTarget !is BottomActionTarget.None) BottomBarReserveDp else 0.dp
-    // 상단(헤더~타임라인)은 고정, 사운드덱만 스크롤 — 메인 Column 자체는 스크롤 안 함.
-    // 아래쪽 사운드덱 영역을 weight(1f) + verticalScroll Column 으로 감싸 남은 세로를 차지·스크롤.
+    // 상단(헤더~타임라인)은 고정, 사운드덱만 스크롤 — 메인 Column 자체는 스크롤 안 함. 편집 액션바는
+    // 컬럼 in-flow 최하단(아래)에 둬 나타날 때 덱을 밀어올린다(overlay 로 가리지 않음) — reserve 불필요.
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(VibiSpacing.base)
-            .padding(bottom = bottomReserve),
+            .padding(VibiSpacing.base),
         verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
     ) {
         // 헤더: 뒤로 + 단계 타이틀 + 공유/저장. 백그라운드 잡 진행 중이면 저장 disabled.
@@ -1074,6 +1072,15 @@ fun TimelineScreen(
             else -> Unit
         }
         } // 사운드덱 스크롤 Column 끝
+
+        // 영상/BGM 편집 액션바 — overlay 가 아니라 컬럼 in-flow 최하단. 나타날 때 덱(weight)을 밀어올려
+        // 가리지 않는다. None 이면 AnimatedVisibility 0 높이.
+        TimelineActionBottomBar(
+            target = bottomTarget,
+            state = state,
+            viewModel = viewModel,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 
     // A/B (원본/내믹스) 미리듣기 바는 UI 에서 일단 제거 — 추후 재추가 예정. VM 의 [state.previewMode] +
@@ -1213,14 +1220,8 @@ fun TimelineScreen(
         }
     }
 
-    // 통합 하단바 — bottomTarget 가 None 이 아니면 슬라이드업.
-    // AudioInsertSheet 가 열리면 sheet 가 본 bar 위로 겹쳐 자동 가림 (sheet 선언이 뒤라 z-order 최상단).
-    TimelineActionBottomBar(
-        target = bottomTarget,
-        state = state,
-        viewModel = viewModel,
-        modifier = Modifier.align(Alignment.BottomCenter),
-    )
+    // 편집 액션바는 메인 Column in-flow 최하단으로 이동(overlay 제거) — 덱을 밀어올려 가리지 않음.
+    // AudioInsertSheet/EntrySheet 는 여전히 BottomCenter overlay 라 필요 시 그 위를 덮는다.
 
     // 음원 삽입 진입 시트 — Add audio 카드 탭 시 슬라이드 업, 두 큰 카드 (Record / Upload) 노출.
     // 카드 탭 → entry close + audioInsertMode set → 같은 BottomCenter 위치에서 AudioInsertSheet 가 이어 슬라이드 업.
@@ -2856,8 +2857,6 @@ private data class DirectiveScaleOverlay(
     val includeOriginal: Boolean = true,
     val sourceOffsetMs: Long = 0L,
 )
-/** 하단바 노출 시 Column 마지막 콘텐츠가 가려지지 않도록 예약하는 padding 높이. */
-private val BottomBarReserveDp = 160.dp
 
 /** 현재 하단 액션바의 표시 대상 — 단일 진실. TimelineScreen 의 padding 계산 + 바 내부 분기 양쪽 공유. */
 private sealed interface BottomActionTarget {
@@ -2885,7 +2884,7 @@ private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): Bo
  * 탭해 진입 → 하단바로 thumb 도달 거리에서 조작.
  */
 @Composable
-private fun BoxScope.TimelineActionBottomBar(
+private fun TimelineActionBottomBar(
     target: BottomActionTarget,
     state: com.vibi.shared.ui.timeline.TimelineUiState,
     viewModel: com.vibi.shared.ui.timeline.TimelineViewModel,
@@ -2901,12 +2900,11 @@ private fun BoxScope.TimelineActionBottomBar(
             animationSpec = androidx.compose.animation.core.tween(durationMillis = 160),
         ) { it },
     ) {
-        // 회색 backdrop 제거 — 흰 EditActionsPanel(패널 자체 배경) 만 떠오르게 해 사운드덱을 덜 가림.
-        // 패널은 좌우 여백을 둔 floating 카드로 노출. vertical 여백도 축소.
+        // 회색 backdrop 제거 — 흰 EditActionsPanel(패널 자체 배경) 만 노출. in-flow 라 덱을 밀어올림.
+        // navbar 여백은 부모 메인 Column 이 이미 처리하므로 여기선 없음. 좌우 여백 둔 floating 카드.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
                 .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.xs),
         ) {
             when (target) {
