@@ -1004,10 +1004,11 @@ fun TimelineScreen(
                         )
                     }
                     Spacer(Modifier.weight(1f))
-                    AddAudioButton(
-                        enabled = !state.isAddingBgm,
-                        onClick = { audioEntryOpen = true },
-                    )
+                    // 음원추가 버튼 임시 숨김 — 나중에 복구 예정.
+                    // AddAudioButton(
+                    //     enabled = !state.isAddingBgm,
+                    //     onClick = { audioEntryOpen = true },
+                    // )
                 }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
                 // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영. 헤더는 위 Row 가 담당.
