@@ -11,6 +11,8 @@ import com.vibi.shared.platform.ActivityProvider
 import com.vibi.shared.platform.AndroidAppleSignInClient
 import com.vibi.shared.platform.AndroidGoogleSignInClient
 import com.vibi.shared.platform.AndroidAudioExtractor
+import com.vibi.shared.platform.AndroidSeparationNotifier
+import com.vibi.shared.platform.SeparationNotifier
 import com.vibi.shared.platform.AndroidIapClient
 import com.vibi.shared.platform.AndroidIapReconciler
 import com.vibi.shared.platform.AndroidVideoThumbnailExtractor
@@ -40,6 +42,7 @@ val androidPlatformModule = module {
     single<VideoThumbnailExtractor> { AndroidVideoThumbnailExtractor(androidContext()) }
     single<AudioMetadataExtractor> { AndroidAudioMetadataExtractor(androidContext()) }
     single<AudioExtractor> { AndroidAudioExtractor() }
+    single<SeparationNotifier> { AndroidSeparationNotifier() }
     single<GallerySaver> { AndroidGallerySaver(androidContext()) }
     single<ShareSheetLauncher> { AndroidShareSheetLauncher(androidContext()) }
 

@@ -24,6 +24,8 @@ import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.AudioSourceKind
+import com.vibi.shared.platform.SeparationNotice
+import com.vibi.shared.platform.SeparationNotifier
 import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.generateId
@@ -104,6 +106,7 @@ class InputViewModel constructor(
     private val pollSeparation: PollSeparationUseCase,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val audioExtractor: AudioExtractor,
+    private val separationNotifier: SeparationNotifier,
     private val bffBaseUrl: String,
 ) : ViewModel() {
 
@@ -266,6 +269,8 @@ class InputViewModel constructor(
     private fun startWholeVideo(projectId: String) {
         if (!audioExtractor.isSupported) return
         if (separationJobs[projectId]?.isActive == true) return
+        // 분리 시작 시점에 알림 권한을 미리 요청 — 완료 시점(=앱을 벗어났을 수 있음)엔 이미 허용 상태가 되도록.
+        separationNotifier.requestPermission()
         setProgress(projectId, SepProgress(progress = 0, reason = null))
         val job = viewModelScope.launch {
             val segment = runCatching { segmentRepository.getByProjectId(projectId) }
@@ -321,6 +326,8 @@ class InputViewModel constructor(
     private fun maybeResume(projectId: String, persisted: PersistedSeparationJob) {
         if (!audioExtractor.isSupported) return
         if (separationJobs[projectId]?.isActive == true) return
+        // 앱 재실행 후 재개 — 완료/실패 알림을 위해 권한 보장(멱등).
+        separationNotifier.requestPermission()
         setProgress(projectId, SepProgress(progress = 0, reason = null))
         val job = viewModelScope.launch {
             val segments = runCatching { segmentRepository.getByProjectId(projectId) }
@@ -417,6 +424,12 @@ class InputViewModel constructor(
         // progress map 에서 제거 → 카드가 "작업 준비중"에서 사라지고 drafts 로 내려간다.
         clearProgress(projectId)
         separationJobs.remove(projectId)
+        // 앱을 벗어난 사이 끝났을 수 있으므로 디바이스 알림. 포그라운드면 OS 가 표시 보류(iOS).
+        separationNotifier.post(
+            SeparationNotice.COMPLETE_ID,
+            SeparationNotice.COMPLETE_TITLE,
+            SeparationNotice.COMPLETE_BODY,
+        )
     }
 
     private suspend fun markProjectFailed(projectId: String, jobId: String) {
@@ -426,6 +439,12 @@ class InputViewModel constructor(
                 touchActivity = false,
             )
         }
+        // 폴링 단계 실패(네트워크/서버/stem 없음)는 백그라운드에서 일어날 수 있어 알림으로 통지.
+        separationNotifier.post(
+            SeparationNotice.FAILED_ID,
+            SeparationNotice.FAILED_TITLE,
+            SeparationNotice.FAILED_BODY,
+        )
     }
 
     private fun setProgress(projectId: String, value: SepProgress) {

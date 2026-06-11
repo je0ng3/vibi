@@ -17,6 +17,8 @@ import com.vibi.shared.platform.IosGoogleSignInClient
 import com.vibi.shared.platform.IosIapClient
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.IosAudioExtractor
+import com.vibi.shared.platform.IosSeparationNotifier
+import com.vibi.shared.platform.SeparationNotifier
 import com.vibi.shared.platform.IosVideoThumbnailExtractor
 import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.russhwolf.settings.NSUserDefaultsSettings
@@ -58,6 +60,7 @@ val iosPlatformModule = module {
     single<VideoThumbnailExtractor> { IosVideoThumbnailExtractor() }
     single<AudioMetadataExtractor> { IosAudioMetadataExtractor() }
     single<AudioExtractor> { IosAudioExtractor() }
+    single<SeparationNotifier> { IosSeparationNotifier() }
 
     // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
     // 호출 시 별도 module 로 주입.
