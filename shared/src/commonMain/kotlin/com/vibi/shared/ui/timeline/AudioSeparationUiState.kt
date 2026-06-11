@@ -1,5 +1,6 @@
 package com.vibi.shared.ui.timeline
 
+import com.vibi.shared.domain.model.SeparationCost
 import com.vibi.shared.domain.model.Stem
 
 enum class AudioSeparationStep {
@@ -28,16 +29,11 @@ data class BgmRemovalCostPrompt(
 )
 
 /**
- * 분리 시작 전 비용 미리보기. BFF `/credits/cost` 응답을 그대로 들고 있고, 부족하면 UI 가
- * Start 버튼 disable + "충전 필요" 분기를 한다. null = 아직 fetch 안 됨 (sheet 막 열린 직후
- * 짧은 window — 그 동안은 Start 버튼이 "Loading…" 으로 표시).
+ * 분리 시작 전 비용 미리보기. BFF `/credits/cost` 응답 도메인 모델([SeparationCost])을 그대로 UI 가
+ * 들고 있다 — 필드가 동일해 별도 매핑 없이 재사용. 부족하면 UI 가 Start 버튼 disable + "충전 필요"
+ * 분기를 한다. null = 아직 fetch 안 됨 (sheet 막 열린 직후 짧은 window — Start 버튼 "Loading…" 표시).
  */
-data class CreditCostPreview(
-    val durationMs: Long,
-    val credits: Int,
-    val balance: Int,
-    val sufficient: Boolean,
-)
+typealias CreditCostPreview = SeparationCost
 
 data class AudioSeparationUiState(
     val segmentId: String,

@@ -45,9 +45,7 @@ class MergeSegmentsUseCase(
 
         // order 0..n-1 연속 재배치.
         val remaining = segmentRepository.getByProjectId(head.projectId).sortedBy { it.order }
-        remaining.forEachIndexed { i, s ->
-            if (s.order != i) segmentRepository.updateSegment(s.copy(order = i))
-        }
+        segmentRepository.compactOrders(remaining)
         return merged
     }
 }

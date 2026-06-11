@@ -15,10 +15,6 @@ class RemoveSegmentUseCase constructor(
         segmentRepository.deleteSegment(segmentId)
 
         // Compact orders so they stay contiguous starting at 0.
-        for ((index, seg) in remaining.withIndex()) {
-            if (seg.order != index) {
-                segmentRepository.updateSegment(seg.copy(order = index))
-            }
-        }
+        segmentRepository.compactOrders(remaining)
     }
 }

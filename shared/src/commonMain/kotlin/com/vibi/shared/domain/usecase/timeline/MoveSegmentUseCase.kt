@@ -29,9 +29,7 @@ class MoveSegmentUseCase(
         // 결과 순서가 동일하면 no-op.
         if (without.map { it.id } == ordered.map { it.id }) return null
 
-        without.forEachIndexed { i, seg ->
-            if (seg.order != i) segmentRepository.updateSegment(seg.copy(order = i))
-        }
+        segmentRepository.compactOrders(without)
         return without.indexOfFirst { it.id == segmentId }
     }
 }

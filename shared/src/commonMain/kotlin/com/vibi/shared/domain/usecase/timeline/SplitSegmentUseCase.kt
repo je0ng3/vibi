@@ -54,12 +54,7 @@ class SplitSegmentUseCase constructor(
         val newInsertCount = (if (needsPre) 1 else 0) + (if (needsPost) 1 else 0)
 
         if (newInsertCount > 0) {
-            val following = segmentRepository.getByProjectId(original.projectId)
-                .filter { it.order > original.order }
-                .sortedByDescending { it.order }
-            for (s in following) {
-                segmentRepository.updateSegment(s.copy(order = s.order + newInsertCount))
-            }
+            segmentRepository.shiftOrdersAfter(original.projectId, original.order, newInsertCount)
         }
 
         // pre 는 원본 그대로 trim 만 줄임 — duplicatedFromId 가 있었다면 그대로 보존.

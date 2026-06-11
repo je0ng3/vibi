@@ -11,6 +11,8 @@ import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.model.StemKind
+import com.vibi.shared.domain.util.absoluteMediaUrl
+import com.vibi.shared.domain.util.withAbsoluteUrl
 import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
@@ -2886,14 +2888,7 @@ class TimelineViewModel constructor(
                         val prompt = current.bgmRemovalCostPrompt
                         if (prompt == null || prompt.clipId != clipId) return@update current
                         current.copy(
-                            bgmRemovalCostPrompt = prompt.copy(
-                                costPreview = CreditCostPreview(
-                                    durationMs = cost.durationMs,
-                                    credits = cost.credits,
-                                    balance = cost.balance,
-                                    sufficient = cost.sufficient,
-                                ),
-                            )
+                            bgmRemovalCostPrompt = prompt.copy(costPreview = cost)
                         )
                     }
                 }
@@ -2938,7 +2933,6 @@ class TimelineViewModel constructor(
                     when (status) {
                         is SeparationStatus.Processing -> { /* keep Processing state */ }
                         is SeparationStatus.Ready -> {
-                            val baseTrim = bffBaseUrl.trimEnd('/')
                             // Perso 분리 결과 화자 수 기반 voice 트랙 선택:
                             //   - 1명: speaker_0 — voice_all 은 의미상 동일하지만 BFF 가 1명 케이스에선
                             //     아예 skip. Perso 가 reactions 를 별도 화자로 분리하지 않은 케이스라
@@ -2961,8 +2955,7 @@ class TimelineViewModel constructor(
                                 )
                                 return@collect
                             }
-                            val absUrl = if (voiceStem.url.startsWith("http")) voiceStem.url
-                                else "$baseTrim/${voiceStem.url.trimStart('/')}"
+                            val absUrl = absoluteMediaUrl(bffBaseUrl, voiceStem.url)
                             // 최신 clip 다시 가져오기 — 사용자가 분리 진행 중 clip 의 다른 속성
                             // (volume/startMs 등) 을 바꿨을 수 있어 stale copy 로 덮어쓰면 안 됨.
                             val latest = _uiState.value.bgmClips.firstOrNull { it.id == clipId }
@@ -3150,11 +3143,7 @@ class TimelineViewModel constructor(
                         it.copy(progress = status.progress, progressReason = status.progressReason)
                     }
                     is SeparationStatus.Ready -> {
-                        val baseTrim = bffBaseUrl.trimEnd('/')
-                        val absStems = status.stems.map { stem ->
-                            if (stem.url.startsWith("http")) stem
-                            else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
-                        }
+                        val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
                         updateSeparation {
                             // BGM 분리: 배경음 stem + VOICE_ALL ("모든 화자") 제외하고 화자별 SPEAKER stem 만 default 선택.
                             // VOICE_ALL 은 화자별 stem 으로 중복이라 mix 에 포함되면 보컬이 두 번 들림.
@@ -3238,14 +3227,7 @@ class TimelineViewModel constructor(
                         val sep = current.audioSeparation
                         if (sep == null || sep.segmentId != segment.id) return@update current
                         current.copy(
-                            audioSeparation = sep.copy(
-                                costPreview = CreditCostPreview(
-                                    durationMs = cost.durationMs,
-                                    credits = cost.credits,
-                                    balance = cost.balance,
-                                    sufficient = cost.sufficient,
-                                ),
-                            )
+                            audioSeparation = sep.copy(costPreview = cost)
                         )
                     }
                 }
@@ -3664,11 +3646,7 @@ class TimelineViewModel constructor(
                     is SeparationStatus.Ready -> {
                         // BFF 응답 stem.url 이 path-only (`/api/v2/...`) — iOS AVAudioPlayer 가
                         // host 없는 URL silent fail. 여기서 base URL prepend 해 absolute 로.
-                        val baseTrim = bffBaseUrl.trimEnd('/')
-                        val absStems = status.stems.map { stem ->
-                            if (stem.url.startsWith("http")) stem
-                            else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
-                        }
+                        val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
                         // 모든 stem default 선택 — 단, VOICE_ALL ("모든 화자") 은 화자별 SPEAKER stem 으로
                         // 분리되므로 중복 → default 비선택. 사용자가 directive 막대 탭으로 사후 편집 가능.
                         // EditProject 의 separationStatus=READY 중간 write 는 곧바로 clearSeparation 으로
@@ -4032,18 +4010,20 @@ class TimelineViewModel constructor(
     }
 
     private fun updateSeparation(transform: (AudioSeparationUiState) -> AudioSeparationUiState) {
-        val current = _uiState.value.audioSeparation ?: return
-        val next = transform(current)
-        // 분리는 시작 직후 sheet 를 닫지만 FAILED 가 되면 사용자에게 즉시 사유를 보여줄
-        // 채널이 사라짐 — 다시 열어 errorMessage 노출. 단, 사용자가 진행 중 sheet 를
-        // 명시적으로 닫았다면(userDismissed) 의사 존중하고 자동 reopen 안 함.
-        val reopen = next.step == AudioSeparationStep.FAILED &&
-            current.step != AudioSeparationStep.FAILED &&
-            !next.userDismissed
-        _uiState.value = _uiState.value.copy(
-            audioSeparation = next,
-            showAudioSeparationSheet = if (reopen) true else _uiState.value.showAudioSeparationSheet,
-        )
+        _uiState.update { state ->
+            val current = state.audioSeparation ?: return@update state
+            val next = transform(current)
+            // 분리는 시작 직후 sheet 를 닫지만 FAILED 가 되면 사용자에게 즉시 사유를 보여줄
+            // 채널이 사라짐 — 다시 열어 errorMessage 노출. 단, 사용자가 진행 중 sheet 를
+            // 명시적으로 닫았다면(userDismissed) 의사 존중하고 자동 reopen 안 함.
+            val reopen = next.step == AudioSeparationStep.FAILED &&
+                current.step != AudioSeparationStep.FAILED &&
+                !next.userDismissed
+            state.copy(
+                audioSeparation = next,
+                showAudioSeparationSheet = if (reopen) true else state.showAudioSeparationSheet,
+            )
+        }
     }
 
     companion object {

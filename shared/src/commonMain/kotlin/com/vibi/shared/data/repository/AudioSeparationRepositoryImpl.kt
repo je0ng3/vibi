@@ -9,6 +9,7 @@ import com.vibi.shared.data.remote.dto.SeparationSpec
 import com.vibi.shared.domain.error.InsufficientCreditsException
 import com.vibi.shared.domain.model.SeparationCost
 import com.vibi.shared.domain.model.Stem
+import com.vibi.shared.domain.util.absoluteMediaUrl
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.platform.AudioExtractException
@@ -32,11 +33,8 @@ class AudioSeparationRepositoryImpl(
     private val userSession: UserSession? = null,
 ) : AudioSeparationRepository {
 
-    /** stem URL 이 path-only (`/api/v2/...`) 면 BFF base 와 join 해 absolute URL 로 — iOS AVPlayer
-     * 가 host 없는 URL 을 silent fail 처리하는 것 회피. */
-    private fun absUrl(pathOrUrl: String): String =
-        if (pathOrUrl.startsWith("http")) pathOrUrl
-        else "${bffBaseUrl.trimEnd('/')}/${pathOrUrl.trimStart('/')}"
+    /** stem URL 이 path-only (`/api/v2/...`) 면 BFF base 와 join 해 absolute URL 로. */
+    private fun absUrl(pathOrUrl: String): String = absoluteMediaUrl(bffBaseUrl, pathOrUrl)
 
     override suspend fun getCost(durationMs: Long): Result<SeparationCost> = runCatching {
         val resp = api.getCreditCost(durationMs)

@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 class SeparationDirectiveRepositoryImpl(
     private val dao: SeparationDirectiveDao
@@ -58,7 +57,7 @@ class SeparationDirectiveRepositoryImpl(
         rangeEndMs = rangeEndMs,
         numberOfSpeakers = numberOfSpeakers,
         muteOriginalSegmentAudio = muteOriginalSegmentAudio,
-        selectionsJson = json.encodeToString(
+        selectionsJson = persistedJson.encodeToString(
             kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
             selections.map { StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath) }
         ),
@@ -72,7 +71,7 @@ class SeparationDirectiveRepositoryImpl(
 
     private fun SeparationDirectiveEntity.toDomain(): SeparationDirective {
         val selections: List<StemSelection> = runCatching {
-            json.decodeFromString(
+            persistedJson.decodeFromString(
                 kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
                 selectionsJson.ifBlank { "[]" }
             ).map { StemSelection(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath) }
@@ -105,5 +104,4 @@ class SeparationDirectiveRepositoryImpl(
         val localPath: String? = null
     )
 
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 }

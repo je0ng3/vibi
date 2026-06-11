@@ -15,6 +15,7 @@ import com.vibi.shared.domain.model.VideoInfo
 import com.vibi.shared.domain.model.addProcessingSeparation
 import com.vibi.shared.domain.model.clearSeparation
 import com.vibi.shared.domain.model.removeProcessingSeparation
+import com.vibi.shared.domain.util.withAbsoluteUrl
 import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
@@ -381,11 +382,7 @@ class InputViewModel constructor(
     ) {
         // stem.url 이 path-only(`/api/v2/...`) 면 절대 URL 로 보정 — iOS AVAudioPlayer 가 host 없는
         // URL 을 silent fail.
-        val baseTrim = bffBaseUrl.trimEnd('/')
-        val absStems = status.stems.map { stem ->
-            if (stem.url.startsWith("http")) stem
-            else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
-        }
+        val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
         // 모든 stem default 선택. 단 VOICE_ALL("모든 화자") 은 화자별 SPEAKER stem 과 중복이라 비선택.
         val selections = absStems.map { stem ->
             StemSelection(
@@ -474,11 +471,10 @@ class InputViewModel constructor(
     }
 
     private fun EditProject.toDraftSummary(thumbnailPath: String?): DraftSummary {
-        var running = 0
-        if (processingSeparations.isNotEmpty()) {
-            running += processingSeparations.size
-        } else if (separationStatus == AutoJobStatus.RUNNING) {
-            running++
+        val running = when {
+            processingSeparations.isNotEmpty() -> processingSeparations.size
+            separationStatus == AutoJobStatus.RUNNING -> 1
+            else -> 0
         }
         return DraftSummary(
             projectId = projectId,

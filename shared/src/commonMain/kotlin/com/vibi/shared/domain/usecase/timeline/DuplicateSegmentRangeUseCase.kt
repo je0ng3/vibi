@@ -20,12 +20,7 @@ class DuplicateSegmentRangeUseCase constructor(
         val split = splitSegmentUseCase(segmentId, rangeStartLocalMs, rangeEndLocalMs)
         val middle = split.middle
 
-        val following = segmentRepository.getByProjectId(middle.projectId)
-            .filter { it.order > middle.order }
-            .sortedByDescending { it.order }
-        for (s in following) {
-            segmentRepository.updateSegment(s.copy(order = s.order + 1))
-        }
+        segmentRepository.shiftOrdersAfter(middle.projectId, middle.order, 1)
 
         val duplicate = middle.copy(
             id = generateId(),

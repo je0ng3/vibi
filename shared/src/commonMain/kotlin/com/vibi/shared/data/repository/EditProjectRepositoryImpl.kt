@@ -9,7 +9,6 @@ import com.vibi.shared.data.local.db.dao.EditProjectDao
 import com.vibi.shared.data.local.db.dao.SegmentDao
 import com.vibi.shared.data.local.db.dao.SeparationDirectiveDao
 import com.vibi.shared.data.local.db.entity.EditProjectEntity
-import com.vibi.shared.data.local.db.entity.SegmentEntity
 import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.Segment
@@ -23,7 +22,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
 
 class EditProjectRepositoryImpl constructor(
     private val database: VibiDatabase,
@@ -150,7 +148,7 @@ class EditProjectRepositoryImpl constructor(
         val muteOriginalSegmentAudio: Boolean = true,
     )
 
-    private val processingSeparationsJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val processingSeparationsJson = persistedJson
     private val processingSeparationsSerializer =
         ListSerializer(PersistedSeparationJobDto.serializer())
 
@@ -188,16 +186,4 @@ class EditProjectRepositoryImpl constructor(
         }.getOrDefault(emptyList())
     }
 
-    private fun Segment.toEntity() = SegmentEntity(
-        id = id,
-        projectId = projectId,
-        type = type.name,
-        order = order,
-        sourceUri = sourceUri,
-        durationMs = durationMs,
-        width = width,
-        height = height,
-        trimStartMs = trimStartMs,
-        trimEndMs = trimEndMs
-    )
 }

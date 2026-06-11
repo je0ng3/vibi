@@ -1,9 +1,7 @@
 package com.vibi.shared.data.repository
 
 import com.vibi.shared.data.local.db.dao.SegmentDao
-import com.vibi.shared.data.local.db.entity.SegmentEntity
 import com.vibi.shared.domain.model.Segment
-import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.repository.SegmentRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -51,36 +49,4 @@ class SegmentRepositoryImpl constructor(
 
     override suspend fun getFirstSourceUri(projectId: String): String? =
         dao.getFirstSourceUri(projectId)
-
-    private fun SegmentEntity.toDomain() = Segment(
-        id = id,
-        projectId = projectId,
-        type = runCatching { SegmentType.valueOf(type) }.getOrDefault(SegmentType.VIDEO),
-        order = order,
-        sourceUri = sourceUri,
-        durationMs = durationMs,
-        width = width,
-        height = height,
-        trimStartMs = trimStartMs,
-        trimEndMs = trimEndMs,
-        volumeScale = volumeScale,
-        speedScale = speedScale,
-        duplicatedFromId = duplicatedFromId
-    )
-
-    private fun Segment.toEntity() = SegmentEntity(
-        id = id,
-        projectId = projectId,
-        type = type.name,
-        order = order,
-        sourceUri = sourceUri,
-        durationMs = durationMs,
-        width = width,
-        height = height,
-        trimStartMs = trimStartMs,
-        trimEndMs = trimEndMs,
-        volumeScale = volumeScale,
-        speedScale = speedScale,
-        duplicatedFromId = duplicatedFromId
-    )
 }
