@@ -40,9 +40,8 @@ import com.vibi.shared.domain.usecase.bgm.AddBgmClipUseCase
 import com.vibi.shared.domain.usecase.bgm.UpdateBgmClipUseCase
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
-import com.vibi.shared.domain.usecase.save.ExportVariant
 import com.vibi.shared.domain.usecase.save.PrewarmAssetUploadUseCase
-import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
+import com.vibi.shared.domain.usecase.save.SaveExportUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
 import com.vibi.shared.domain.usecase.share.ShareSheetLauncher
@@ -265,7 +264,7 @@ class TimelineViewModel constructor(
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val bffApi: BffApi,
     private val bffBaseUrl: String,
-    private val saveAllVariants: SaveAllVariantsUseCase,
+    private val saveExport: SaveExportUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
     private val prewarmAssetUpload: PrewarmAssetUploadUseCase,
     /** 멀티플랫폼 영속 설정 — 현재는 "음원분리 취소 경고 다시 보지 않기" 플래그에만 사용. */
@@ -921,7 +920,7 @@ class TimelineViewModel constructor(
     }
 
     /** Timeline 헤더 "저장" 버튼 — 원본 영상 렌더 + 갤러리 저장. */
-    fun onSaveAllVariants() {
+    fun onSaveExport() {
         if (_uiState.value.saveStatus is SaveStatus.RUNNING) return
         _uiState.update { s ->
             s.copy(
@@ -929,15 +928,15 @@ class TimelineViewModel constructor(
                 shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
             )
         }
-        viewModelScope.launch { runSaveAllVariants() }
+        viewModelScope.launch { runSaveExport() }
     }
 
-    private suspend fun runSaveAllVariants() {
+    private suspend fun runSaveExport() {
         // 진행률 콜백이 suspend 경계를 넘나들며 반복 발화 — 그 사이 observe* 콜렉터가 segments/bgmClips
         // 를 갱신할 수 있으므로 status 쓰기는 모두 update{} (atomic) 로. value=value.copy() 면 진행률
         // tick 이 콜렉터 갱신을 덮어쓴다.
         _uiState.update { it.copy(saveStatus = SaveStatus.RUNNING(0)) }
-        val result = saveAllVariants(
+        val result = saveExport(
             projectId = projectId,
             onProgress = { percent ->
                 _uiState.update { it.copy(saveStatus = SaveStatus.RUNNING(percent)) }
@@ -1022,7 +1021,7 @@ class TimelineViewModel constructor(
 
     private suspend fun runShareExport() {
         _uiState.update { it.copy(shareStatus = ShareStatus.RUNNING(0)) }
-        val result = saveAllVariants(
+        val result = saveExport(
             projectId = projectId,
             onProgress = { percent ->
                 _uiState.update { it.copy(shareStatus = ShareStatus.RUNNING(percent)) }
@@ -1030,14 +1029,9 @@ class TimelineViewModel constructor(
             saveToGallery = false,
         )
         result.fold(
-            onSuccess = { variants ->
-                val paths = variants.map { it.outputPath }
-                if (paths.isEmpty()) {
-                    _uiState.update { it.copy(shareStatus = ShareStatus.FAILED("Nothing to share")) }
-                    return@fold
-                }
+            onSuccess = { outputPath ->
                 shareSheetLauncher.shareVideos(
-                    sourcePaths = paths,
+                    sourcePaths = listOf(outputPath),
                     mimeType = "video/mp4",
                     title = "vibi",
                 ).fold(

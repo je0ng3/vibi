@@ -5,7 +5,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * SaveAllVariantsUseCase 의 bypass 분기 정확성을 담보하는 도메인 SSOT.
+ * SaveExportUseCase 의 bypass 분기 정확성을 담보하는 도메인 SSOT.
  * 여기서 회귀하면 무편집 영상이 BFF render 로 들어가거나, 편집된 영상이 원본 그대로 저장됨.
  */
 class IsProjectEditedTest {

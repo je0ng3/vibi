@@ -614,7 +614,7 @@ fun TimelineScreen(
                     shared = isShared,
                     onSave = {
                         exportSheetOpen = false
-                        viewModel.onSaveAllVariants()
+                        viewModel.onSaveExport()
                     },
                     onShare = {
                         exportSheetOpen = false

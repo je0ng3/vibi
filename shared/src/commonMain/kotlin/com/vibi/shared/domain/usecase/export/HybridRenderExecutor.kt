@@ -29,7 +29,7 @@ interface OnDeviceVideoEncoder {
  *  - **다중 소스 concat** — 혼합 해상도/회전 트랙은 AVMutableVideoComposition 정밀 매핑이 필요해
  *    v1 에선 제외(단일 소스의 trim/속도/분할/재정렬/볼륨이 압도적 다수 케이스라 먼저 커버).
  *
- * 무편집 단일 segment 는 상류 [com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase] 의 bypass 가
+ * 무편집 단일 segment 는 상류 [com.vibi.shared.domain.usecase.save.SaveExportUseCase] 의 bypass 가
  * 이미 처리하므로 여기로 오지 않는다.
  */
 internal fun canEncodeOnDevice(

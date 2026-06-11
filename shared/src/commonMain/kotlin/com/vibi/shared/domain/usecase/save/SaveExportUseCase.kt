@@ -28,7 +28,7 @@ import kotlin.uuid.Uuid
  * textOverlay / imageClip 는 BFF render 파이프라인이 처리하지 않으므로 (preview 전용) 저장에 영향
  * 없음. 사용자가 추가한 overlay 는 갤러리 결과물에 burn 되지 않는다 — UI 단에서 명시 필요.
  */
-class SaveAllVariantsUseCase(
+class SaveExportUseCase(
     private val platformAdapter: ExportPlatformAdapter,
     private val gallerySaver: GallerySaver,
     private val editProjectRepository: EditProjectRepository,
@@ -43,7 +43,7 @@ class SaveAllVariantsUseCase(
         projectId: String,
         onProgress: (percent: Int) -> Unit,
         saveToGallery: Boolean = true,
-    ): Result<List<SavedVariant>> {
+    ): Result<String> {
         return try {
             onProgress(0)
             val project = editProjectRepository.getProject(projectId)
@@ -74,7 +74,7 @@ class SaveAllVariantsUseCase(
                     cached
                 } else {
                     val request = ExportRequest(
-                        projectId = "$projectId#${ExportVariant.KEY_ORIGINAL}",
+                        projectId = projectId,
                         segments = segments,
                         bgmClips = bgmClips,
                         separationDirectives = separationDirectives,
@@ -102,7 +102,7 @@ class SaveAllVariantsUseCase(
                 }
             }
             onProgress(100)
-            Result.success(listOf(SavedVariant(languageCode = ExportVariant.KEY_ORIGINAL, outputPath = renderedPath)))
+            Result.success(renderedPath)
         } catch (e: CancellationException) {
             // 구조적 동시성 보존 — viewModelScope cancel 시 caller 가 알아야 함.
             throw e
@@ -111,11 +111,6 @@ class SaveAllVariantsUseCase(
         }
     }
 }
-
-data class SavedVariant(
-    val languageCode: String,
-    val outputPath: String,
-)
 
 /**
  * 렌더 출력에 영향을 주는 편집 상태 전부를 결정적 문자열로 직렬화 — [ExportRenderCache] 의 키.

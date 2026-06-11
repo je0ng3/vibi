@@ -7,7 +7,7 @@ import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegment
 import com.vibi.shared.domain.usecase.input.ValidateVideoUseCase
 import com.vibi.shared.domain.usecase.save.ExportRenderCache
 import com.vibi.shared.domain.usecase.save.PrewarmAssetUploadUseCase
-import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
+import com.vibi.shared.domain.usecase.save.SaveExportUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
 import com.vibi.shared.domain.usecase.timeline.AddVideoSegmentUseCase
@@ -30,7 +30,7 @@ val useCaseModule = module {
     // 단일 인스턴스 — 저장/공유가 같은 캐시를 공유해야 중복 렌더를 막을 수 있다.
     single { ExportRenderCache() }
     factory {
-        SaveAllVariantsUseCase(
+        SaveExportUseCase(
             platformAdapter = get(),
             gallerySaver = get(),
             editProjectRepository = get(),

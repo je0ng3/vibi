@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class SaveAllVariantsUseCaseTest {
+class SaveExportUseCaseTest {
 
     @Test
     fun `noEdits 단일 VIDEO 는 bypass — render skip 후 source 직접 저장`() = runTest {
@@ -36,9 +36,7 @@ class SaveAllVariantsUseCaseTest {
         val result = useCase(projectId = "p1", onProgress = progress::add)
 
         assertTrue(result.isSuccess)
-        val saved = result.getOrThrow()
-        assertEquals(1, saved.size)
-        assertEquals(source, saved[0].outputPath, "bypass 시 source URI 그대로 전달돼야 함")
+        assertEquals(source, result.getOrThrow(), "bypass 시 source URI 그대로 전달돼야 함")
         assertEquals(listOf(0, 100, 100), progress, "0 → 100 (copy) → 100 (final)")
     }
 
@@ -56,7 +54,7 @@ class SaveAllVariantsUseCaseTest {
 
         assertTrue(result.isSuccess)
         assertEquals(1, adapter.callCount, "edit 있으므로 render 1회 호출되어야 함")
-        assertEquals("/tmp/rendered.mp4", result.getOrThrow()[0].outputPath)
+        assertEquals("/tmp/rendered.mp4", result.getOrThrow())
     }
 
     @Test
@@ -238,7 +236,7 @@ class SaveAllVariantsUseCaseTest {
         adapter: FakeExportPlatformAdapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4"),
         gallerySaver: FakeGallerySaver = FakeGallerySaver(),
         renderCache: ExportRenderCache = ExportRenderCache(pathExists = { false }),
-    ): SaveAllVariantsUseCase = SaveAllVariantsUseCase(
+    ): SaveExportUseCase = SaveExportUseCase(
         platformAdapter = adapter,
         gallerySaver = gallerySaver,
         editProjectRepository = FakeEditProjectRepo(project),
