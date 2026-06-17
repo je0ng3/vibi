@@ -23,11 +23,11 @@ class IosAudioMetadataExtractor : AudioMetadataExtractor {
         )
         // shared/CLAUDE.md:97 — duration 은 lazy. async load 후 읽기.
         // resume(Unit) 단일 인자는 kotlinx-coroutines 1.9.0 K/N 의 CancellableContinuation
-        // default param 인식 한계로 컴파일 실패 — 빈 onCancellation lambda 명시 유지.
-        @Suppress("DEPRECATION")
+        // default param 인식 한계로 컴파일 실패 — 명시적 onCancellation lambda 유지하되,
+        // 1.9.0 의 비-deprecated 3-인자 오버로드 (cause, value, context) 사용.
         suspendCancellableCoroutine<Unit> { cont ->
             asset.loadValuesAsynchronouslyForKeys(listOf("duration")) {
-                if (cont.isActive) cont.resume(Unit) {}
+                if (cont.isActive) cont.resume(Unit) { _, _, _ -> }
             }
         }
         val durationSec = CMTimeGetSeconds(asset.duration)

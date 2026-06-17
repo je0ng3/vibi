@@ -36,14 +36,15 @@ class IosOnDeviceVideoEncoder(
             onProgress = { p -> onProgress(p) },
             onComplete = { path, error ->
                 if (cont.isActive) {
-                    // resume(value){} 의 빈 onCancellation 람다는 K/N coroutines 1.9.0 인식 한계 회피
-                    // (VideoPlayer.ios.kt buildCompositionPlayer 와 동일 사유).
+                    // 단일 인자 resume(value) 는 K/N coroutines 1.9.0 인식 한계로 명시적 onCancellation
+                    // 람다 형태를 유지하되, 1.9.0 의 비-deprecated 3-인자 오버로드 (cause, value, context)
+                    // 를 사용해 deprecation 경고를 없앤다 (VideoPlayer.ios.kt 와 동일 사유).
                     if (path != null) {
-                        cont.resume(Result.success(path)) {}
+                        cont.resume(Result.success(path)) { _, _, _ -> }
                     } else {
                         cont.resume(
                             Result.failure(RuntimeException(error ?: "on-device export failed")),
-                        ) {}
+                        ) { _, _, _ -> }
                     }
                 }
             },
