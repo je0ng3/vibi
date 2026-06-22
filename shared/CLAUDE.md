@@ -45,8 +45,8 @@ shared/
     │   │   ├── remote/dto/                  # kotlinx.serialization DTO (Auth/Credit/Render/Separation)
     │   │   ├── remote/HttpClientFactory.kt  # expect/actual — Authorization 헤더 인젝션, Json 설정
     │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF) + AuthRepository + RemoteRenderExecutor
-    │   │   ├── local/db/                    # Room v14 — VibiDatabase, 4 entity + 4 DAO,
-    │   │   │                                # fallbackToDestructiveMigration(dropAllTables=true)
+    │   │   ├── local/db/                    # Room v14 (출시 baseline) — VibiDatabase, 4 entity + 4 DAO,
+    │   │   │                                # destructiveFrom(1~13)+OnDowngrade. v15+ 는 정식 Migration/AutoMigration
     │   │   └── local/                       # AuthTokenStore · UserSession · JwtSubject · UserPreferencesStore (Multiplatform Settings)
     │   ├── ui/                              # ViewModel — InputVM, TimelineVM, LoginVM, UserMenuVM, ShareVM
     │   ├── platform/                        # expect — FileSystem, VideoThumbnailExtractor, TimeFormat,
@@ -77,7 +77,7 @@ shared/
 - Retrofit / Moshi / OkHttp / Hilt 는 iOS 불가 — 네트워크는 Ktor Client multiplatform, 직렬화는 kotlinx.serialization, DI 는 Koin, KV 저장은 Multiplatform Settings.
 - 본 모듈은 **로직만**. UI 코드(`@Composable`)는 `cmp/` 로.
 - 본 모듈이 모바일 도메인의 단일 source of truth — legacy-android 시절의 모델은 모두 흡수됐다.
-- **Room v14 + destructive migration** — 시연 단계라 `fallbackToDestructiveMigration(dropAllTables=true)`. schema 변경 시 기존 row 는 drop, migration 코드 작성 불필요. 출시 단계에서 정책 재검토.
+- **Room v14 = 출시 baseline (destructive 정책 전환 완료)** — `fallbackToDestructiveMigrationFrom(1~13)` + `OnDowngrade` 만 허용. 즉 출시 전 구버전(v1~13)에서 올라오는 기존 설치만 1회 wipe 되고, **v14 이후(v15+) 스키마 변경은 destructive 금지** — 반드시 정식 `Migration` 또는 `@AutoMigration`(exportSchema=true, `schemas/14.json` baseline)을 작성해야 하며 누락 시 런타임 실패로 사용자 데이터를 보존한다. 새 스키마 버전 추가 시 schemas/ 의 새 JSON 도 커밋할 것.
 
 ## 아키텍처·Flow 규약
 
