@@ -78,11 +78,28 @@ class AudioSeparationRepositoryImpl(
             contentType = prepared.mimeType,
         )
         val spec = SeparationSpec(sourceLanguageCode = sourceLanguageCode)
-        try {
+        val jobId = try {
             api.startSeparation(file = part, spec = spec).jobId
         } catch (e: ClientRequestException) {
             throw mapInsufficientCreditsOrRethrow(e)
         }
+        // 분리 시작 = 크레딧 차감 시점(402 도 이 시점에 발생). 성공 직후 권위 잔액으로 로컬 캐시를
+        // 동기화한다 — 이게 없으면 홈/프로필의 크레딧 배지가 프로필 재진입(UserMenuVM.refreshBalance)
+        // 전까지 차감 전 값으로 stale 하게 남는다. getCost(차감 전)·402(실패) 동기화와 짝을 이루는
+        // 성공 경로 동기화. 모든 분리 시작(전체영상/구간)이 본 메서드를 거치므로 한 곳이면 충분.
+        syncBalanceFromServer()
+        jobId
+    }
+
+    /**
+     * BFF 권위 잔액을 1회 GET 해 로컬 캐시([CreditStore]) 와 동기화. best-effort —
+     * 실패해도 호출 경로(분리 시작)는 막지 않는다. creditStore/userSession 미주입(테스트) 이면 no-op.
+     */
+    private suspend fun syncBalanceFromServer() {
+        val store = creditStore ?: return
+        val session = userSession ?: return
+        runCatching { api.getCreditBalance() }
+            .onSuccess { store.setBalance(session.current(), it.balance) }
     }
 
     /**

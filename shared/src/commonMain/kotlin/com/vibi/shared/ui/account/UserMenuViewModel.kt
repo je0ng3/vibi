@@ -23,8 +23,8 @@ import kotlinx.coroutines.launch
 /**
  * 홈화면 우상단 유저 메뉴를 위한 ViewModel.
  *
- * 잔액 동기화 (`refreshBalance`) 는 메뉴가 열릴 때만 호출 — InputScreen 재진입 마다
- * BFF round-trip 을 발생시키지 않기 위함. 회원탈퇴 후 user-scoped Room row 는
+ * 잔액 동기화 (`refreshBalance`) 는 홈(InputScreen) 진입 시 + 메뉴가 열릴 때 호출 — 분리 차감·구매·
+ * 다른 기기 변경을 프로필 sheet 를 열지 않아도 크레딧 배지에 반영. 회원탈퇴 후 user-scoped Room row 는
  * UserSession.userId 변경으로 자동 격리되므로 별도 wipe 하지 않는다 (signOut 동작과 동일).
  */
 class UserMenuViewModel(

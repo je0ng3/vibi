@@ -80,6 +80,11 @@ fun InputScreen(
     // EditProjectRepository.observeAllProjects() 가 영속 상태에서 직접 읽어 노출.
     LaunchedEffect(Unit) { viewModel.onResetSelection() }
 
+    // 홈 진입 시마다 BFF 권위 잔액 1회 refresh — 분리(차감)·구매·다른 기기 변경을 프로필 sheet 를
+    // 열지 않아도 크레딧 배지에 반영. Timeline 등에서 돌아올 때도 재진입으로 다시 동기화된다.
+    // refreshBalance 는 viewModelScope fire-and-forget 이라 화면 표시를 막지 않는다.
+    LaunchedEffect(userMenuViewModel) { userMenuViewModel.refreshBalance() }
+
     LaunchedEffect(viewModel) {
         viewModel.navigateToTimeline.collect { projectId ->
             onNavigateToTimeline(projectId)
