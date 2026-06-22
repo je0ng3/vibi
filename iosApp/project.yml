@@ -38,6 +38,11 @@ targets:
       properties:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        # CFBundleName 기본값은 $(PRODUCT_NAME)=타깃명 "iosApp" → TestFlight 빌드 목록·
+        # Xcode Organizer·ASC 빌드 메타데이터에 "iosApp" 으로 노출. PRODUCT_NAME 을 바꾸면
+        # 실행파일/.app/PRODUCT_MODULE_NAME(SceneDelegate 참조)까지 따라가므로,
+        # 이름만 고정하려 CFBundleName 만 override (실행파일/모듈명은 iosApp 유지).
+        CFBundleName: Vibi
         # HTTPS 만 호출 + 자체 암호화 알고리즘 없음 → App Store export compliance 면제.
         # 매 업로드마다 ASC 에서 답하지 않으려 plist 에 박아둠.
         ITSAppUsesNonExemptEncryption: false
