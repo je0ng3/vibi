@@ -11,36 +11,38 @@ import kotlinx.coroutines.flow.asStateFlow
  * BFF 가 발급한 access token (JWT) 을 저장. 만료시간 (epoch ms) 을 함께 저장해서
  * 매 호출마다 JWT 디코딩 없이 빠르게 유효성 판단.
  *
- * v1 은 평문 저장 (NSUserDefaults / SharedPreferences) — Keychain / EncryptedSharedPreferences
- * 도입은 v2.
- *
- * 또한 마지막 로그인 시점의 [AuthUser] (name/email/picture) 도 함께 캐시한다 — 메뉴에
- * 표시할 프로필을 BFF round-trip 없이 즉시 보여주기 위해.
+ * 토큰/만료([KEY_TOKEN]/[KEY_EXP])는 보안 저장소 [secureSettings] 에 둔다 — iOS 는 Keychain,
+ * Android 는 prefs(+ manifest allowBackup=false 로 백업 유출 차단). 비민감한 프로필 캐시
+ * (name/email/picture)와 lastUserId 는 일반 [settings]. 프로필 캐시는 메뉴 프로필을 BFF
+ * round-trip 없이 즉시 보여주기 위한 것. (기존 평문 저장 토큰은 업데이트 후 재로그인으로 정리.)
  */
-class AuthTokenStore(private val settings: Settings) {
+class AuthTokenStore(
+    private val settings: Settings,
+    private val secureSettings: Settings,
+) {
 
     private val _cachedUser = MutableStateFlow<AuthUser?>(readCachedUser())
     /** 마지막 로그인 응답의 user. 로그아웃 시 null. */
     val cachedUser: StateFlow<AuthUser?> = _cachedUser.asStateFlow()
 
     fun saveToken(jwt: String, expiresAt: Long) {
-        settings.putString(KEY_TOKEN, jwt)
-        settings.putLong(KEY_EXP, expiresAt)
+        secureSettings.putString(KEY_TOKEN, jwt)
+        secureSettings.putLong(KEY_EXP, expiresAt)
     }
 
     /** 만료된 토큰은 자동 폐기 후 null. */
     fun getValidToken(): String? {
-        val exp = settings.getLongOrNull(KEY_EXP) ?: return null
+        val exp = secureSettings.getLongOrNull(KEY_EXP) ?: return null
         if (exp <= currentTimeMillis()) {
             clear()
             return null
         }
-        return settings.getStringOrNull(KEY_TOKEN)
+        return secureSettings.getStringOrNull(KEY_TOKEN)
     }
 
     fun clear() {
-        settings.remove(KEY_TOKEN)
-        settings.remove(KEY_EXP)
+        secureSettings.remove(KEY_TOKEN)
+        secureSettings.remove(KEY_EXP)
         USER_KEYS.forEach(settings::remove)
         _cachedUser.value = null
     }

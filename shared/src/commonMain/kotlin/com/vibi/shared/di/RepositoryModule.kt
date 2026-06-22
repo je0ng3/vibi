@@ -16,7 +16,11 @@ import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.SegmentRepository
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
+
+/** 토큰 전용 보안 Settings 의 Koin qualifier — 플랫폼 모듈이 같은 이름으로 actual 제공. */
+const val SECURE_SETTINGS = "secure"
 
 val repositoryModule = module {
     // 계정별 로컬 데이터 분리 — Repository / AuthRepository 가 공유.
@@ -56,7 +60,8 @@ val repositoryModule = module {
     }
 
     // 인증 — Settings / GoogleSignInClient 는 platform 모듈에서 주입.
-    single { AuthTokenStore(settings = get()) }
+    // secureSettings = 보안 저장소(iOS Keychain / Android prefs+allowBackup=false) — 토큰 전용.
+    single { AuthTokenStore(settings = get(), secureSettings = get(named(SECURE_SETTINGS))) }
     single { com.vibi.shared.data.local.CreditStore(settings = get(), userSession = get()) }
     single {
         com.vibi.shared.data.repository.CreditPurchaseService(

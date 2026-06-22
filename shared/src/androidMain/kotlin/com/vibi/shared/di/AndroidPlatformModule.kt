@@ -29,6 +29,7 @@ import com.vibi.shared.domain.usecase.share.ShareSheetLauncher
 import com.vibi.shared.ui.export.AndroidExportPlatformAdapter
 import com.vibi.shared.ui.export.ExportPlatformAdapter
 import org.koin.android.ext.koin.androidContext
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 val androidPlatformModule = module {
@@ -51,6 +52,10 @@ val androidPlatformModule = module {
         val prefs = androidContext().getSharedPreferences("vibi_auth", Context.MODE_PRIVATE)
         SharedPreferencesSettings(prefs)
     }
+    // 토큰 전용 보안 저장소. EncryptedSharedPreferences(security-crypto)는 deprecated 라 도입
+    // 보류하고, manifest allowBackup=false 로 토큰의 백업 유출 벡터를 차단한 기존 prefs 를 재사용.
+    // (향후 androidx Keystore 기반으로 교체 시 이 바인딩만 바꾸면 됨.)
+    single<Settings>(named(SECURE_SETTINGS)) { get() }
     single<GoogleSignInClient> { AndroidGoogleSignInClient() }
     single<AppleSignInClient> { AndroidAppleSignInClient() }
 

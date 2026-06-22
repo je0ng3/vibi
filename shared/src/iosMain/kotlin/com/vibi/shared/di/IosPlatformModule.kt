@@ -1,3 +1,5 @@
+@file:OptIn(com.russhwolf.settings.ExperimentalSettingsImplementation::class)
+
 package com.vibi.shared.di
 
 import com.vibi.shared.data.repository.IosAudioMetadataExtractor
@@ -21,8 +23,10 @@ import com.vibi.shared.platform.IosSeparationNotifier
 import com.vibi.shared.platform.SeparationNotifier
 import com.vibi.shared.platform.IosVideoThumbnailExtractor
 import com.vibi.shared.platform.VideoThumbnailExtractor
+import com.russhwolf.settings.KeychainSettings
 import com.russhwolf.settings.NSUserDefaultsSettings
 import com.russhwolf.settings.Settings
+import org.koin.core.qualifier.named
 import platform.Foundation.NSUserDefaults
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
@@ -65,6 +69,8 @@ val iosPlatformModule = module {
     // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
     // 호출 시 별도 module 로 주입.
     single<Settings> { NSUserDefaultsSettings(NSUserDefaults.standardUserDefaults) }
+    // 토큰 전용 보안 저장소 — Keychain. NSUserDefaults(평문 plist) 대비 암호화 저장 + 백업 미포함.
+    single<Settings>(named(SECURE_SETTINGS)) { KeychainSettings(service = "vibi.auth") }
     single<GoogleSignInClient> { IosGoogleSignInClient(bridge = get()) }
     single<AppleSignInClient> { IosAppleSignInClient(bridge = get()) }
     single { IosIapClient(bridge = get()) }
