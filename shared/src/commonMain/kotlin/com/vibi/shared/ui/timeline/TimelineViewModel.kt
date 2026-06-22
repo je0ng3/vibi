@@ -460,16 +460,9 @@ class TimelineViewModel constructor(
                         .getOrNull()
                     stemCacheInFlight.remove(key)
                     if (path == null) return@launch
-                    // 다운로드 사이 사용자가 볼륨/선택을 바꿨을 수 있어 최신 directive 를 재조회 후
-                    // 해당 stem 의 localPath 만 갱신 (다른 변경 보존).
-                    val fresh = separationDirectiveRepository.getByProject(projectId)
-                        .firstOrNull { it.id == dir.id } ?: return@launch
-                    val updated = fresh.selections.map {
-                        if (it.stemId == sel.stemId) it.copy(localPath = path) else it
-                    }
-                    if (updated != fresh.selections) {
-                        separationDirectiveRepository.add(fresh.copy(selections = updated))
-                    }
+                    // 다운로드 사이 사용자가 볼륨/선택을 바꿨을 수 있어, mutex 직렬화 + DB 최신 재조회로
+                    // 해당 stem 의 localPath 만 패치 (동시 볼륨/url 변경과 서로 덮어쓰지 않음).
+                    patchDirectiveStem(dir.id, sel.stemId) { it.copy(localPath = path) }
                 }
             }
         }
@@ -572,12 +565,14 @@ class TimelineViewModel constructor(
                 is SeparationStatus.Ready -> {
                     val freshUrlByStemId = status.stems.associate { it.stemId to it.url }
                     separationDirectiveRepository.getByProject(projectId).forEach { dir ->
-                        val updated = dir.selections.map { sel ->
-                            val fresh = freshUrlByStemId[sel.stemId]
-                            if (fresh != null && fresh != sel.audioUrl) sel.copy(audioUrl = fresh) else sel
-                        }
-                        if (updated != dir.selections) {
-                            separationDirectiveRepository.add(dir.copy(selections = updated))
+                        // mutex 직렬화 + DB 최신 재조회 후 url 만 패치 — 동시 볼륨/선택/localPath 변경 보존.
+                        patchDirective(dir.id) { latest ->
+                            latest.copy(
+                                selections = latest.selections.map { sel ->
+                                    val fresh = freshUrlByStemId[sel.stemId]
+                                    if (fresh != null && fresh != sel.audioUrl) sel.copy(audioUrl = fresh) else sel
+                                }
+                            )
                         }
                     }
                 }
@@ -3797,6 +3792,34 @@ class TimelineViewModel constructor(
         }
     }
 
+    private val directiveMutex = Mutex()
+
+    /**
+     * directive 한 건을 DB 최신본 기준으로 atomic read-modify-write. 볼륨/선택(사용자) 변경과
+     * localPath/audioUrl(백그라운드 stem 캐시 다운로드·freshness 갱신)이 stale in-memory 복사본을
+     * 통째로 덮어써 서로의 변경을 잃던 lost-update 레이스를 차단 — directiveMutex 로 모든 경로를
+     * 직렬화하고, 매번 DB 를 재조회해 변경 필드만 패치한다.
+     */
+    private suspend fun patchDirective(
+        directiveId: String,
+        transform: (SeparationDirective) -> SeparationDirective,
+    ) {
+        directiveMutex.withLock {
+            val latest = separationDirectiveRepository.getByProject(projectId)
+                .firstOrNull { it.id == directiveId } ?: return@withLock
+            val updated = transform(latest)
+            if (updated != latest) separationDirectiveRepository.add(updated)
+        }
+    }
+
+    private suspend fun patchDirectiveStem(
+        directiveId: String,
+        stemId: String,
+        transform: (StemSelection) -> StemSelection,
+    ) = patchDirective(directiveId) { dir ->
+        dir.copy(selections = dir.selections.map { if (it.stemId == stemId) transform(it) else it })
+    }
+
     fun onToggleStemSelection(stemId: String) {
         val sep = _uiState.value.audioSeparation ?: return
         val current = sep.selections[stemId] ?: return
@@ -3806,11 +3829,7 @@ class TimelineViewModel constructor(
         // 편집 모드 — 토글 즉시 directive 에 반영. 볼륨 슬라이더와 동일 패턴.
         val directiveId = editingDirectiveId ?: return
         viewModelScope.launch {
-            val existing = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId } ?: return@launch
-            val updatedSelections = existing.selections.map { sel ->
-                if (sel.stemId == stemId) sel.copy(selected = newSelected) else sel
-            }
-            separationDirectiveRepository.add(existing.copy(selections = updatedSelections))
+            patchDirectiveStem(directiveId, stemId) { it.copy(selected = newSelected) }
         }
     }
 
@@ -3824,11 +3843,7 @@ class TimelineViewModel constructor(
         // 동작 (별도 "적용" 누르지 않아도 영속). 새 분리 작업(directive 미생성) 흐름에선 no-op.
         val directiveId = editingDirectiveId ?: return
         viewModelScope.launch {
-            val existing = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId } ?: return@launch
-            val updatedSelections = existing.selections.map { sel ->
-                if (sel.stemId == stemId) sel.copy(volume = clamped) else sel
-            }
-            separationDirectiveRepository.add(existing.copy(selections = updatedSelections))
+            patchDirectiveStem(directiveId, stemId) { it.copy(volume = clamped) }
         }
     }
 
@@ -3847,12 +3862,7 @@ class TimelineViewModel constructor(
         transform: (StemSelection) -> StemSelection,
     ) {
         viewModelScope.launch {
-            val existing = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId }
-                ?: return@launch
-            val updated = existing.selections.map { sel ->
-                if (sel.stemId == stemId) transform(sel) else sel
-            }
-            separationDirectiveRepository.add(existing.copy(selections = updated))
+            patchDirectiveStem(directiveId, stemId, transform)
         }
     }
 
