@@ -880,6 +880,7 @@ fun TimelineScreen(
                     selectedProcessingToken = if (selectedProcessingToken == token) null else token
                 },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
+                onScrubStart = { viewModel.onPausePlayback() },
                 onRangeStartChange = { viewModel.onSetPendingRangeStart(it) },
                 onRangeEndChange = { viewModel.onSetPendingRangeEnd(it) },
                 onTranslateRange = { viewModel.onTranslateRange(it) },
@@ -1210,7 +1211,11 @@ fun TimelineScreen(
                         state.videoDurationMs.toFloat().coerceAtLeast(1f),
                     ),
                     valueRange = 0f..state.videoDurationMs.toFloat().coerceAtLeast(1f),
-                    onValueChange = { v -> viewModel.onUpdatePlaybackPosition(v.toLong()) },
+                    // 드래그 시작 시 멈춰 scrub 중 연속 seek 오디오 버벅임 제거 (멱등 — 재생 중일 때만 1회 작동).
+                    onValueChange = { v ->
+                        viewModel.onPausePlayback()
+                        viewModel.onUpdatePlaybackPosition(v.toLong())
+                    },
                     colors = SliderDefaults.colors(
                         thumbColor = tokens.onBackgroundPrimary,
                         activeTrackColor = tokens.onBackgroundPrimary,
@@ -1747,6 +1752,8 @@ private fun UnifiedTimelineBar(
     onProcessingTap: (clientToken: String) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
+    /** 재생헤드 드래그 시작 — 재생 중이면 멈춰 scrub 중 연속 seek 로 인한 오디오 버벅임 제거. */
+    onScrubStart: () -> Unit = {},
     onRangeStartChange: (Long) -> Unit = {},
     onRangeEndChange: (Long) -> Unit = {},
     onTranslateRange: (Long) -> Unit = {},
@@ -2595,6 +2602,7 @@ private fun UnifiedTimelineBar(
                             onDragStart = {
                                 basePosMs = currentPosMs
                                 accumPx = 0f
+                                onScrubStart()
                             },
                             onHorizontalDrag = { _, dragAmount ->
                                 accumPx += dragAmount

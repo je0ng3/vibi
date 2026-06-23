@@ -761,6 +761,17 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * 재생헤드/슬라이더 scrub 드래그 시작 시 호출 — 재생 중이면 멈춘다. scrub 은 매 tick
+     * playbackPositionMs 를 갱신해 player·stemMixer 가 초당 수십 번 seek 하는데, rate>0(재생)
+     * 상태에서 그러면 디코더 버퍼가 계속 flush 돼 오디오가 버벅인다. 드래그 동안 일시정지하면
+     * seek 가 무음으로 위치만 이동(시각 프리뷰만) → glitch 제거. 멱등이라 scrub 매 tick 호출 OK.
+     * resume 은 안 함 — 영상 편집 앱은 사용자 명시 액션(▶)로만 재생 (VideoPlayer 주석과 동일 정책).
+     */
+    fun onPausePlayback() {
+        if (_uiState.value.isPlaying) _uiState.update { it.copy(isPlaying = false) }
+    }
+
+    /**
      * Single-selection model: at any moment at most one of segment / bgm may be selected.
      * This helper applies a tap-toggle on the chosen target while clearing
      * every other selected*Id.
