@@ -132,26 +132,26 @@ data class CreditProduct(
     companion object {
         val DEFAULTS: List<CreditProduct> = listOf(
             CreditProduct(
-                productId = "vibi.credits.10",
-                credits = 10,
-                priceLabel = "₩1,500",
-                title = "10 credits",
-                subtitle = "10 minutes · quick top-up",
+                productId = "vibi.credits.starter",
+                credits = 50,
+                priceLabel = "$4.99",
+                title = "Starter",
+                subtitle = "50 credits",
             ),
             CreditProduct(
-                productId = "vibi.credits.50",
-                credits = 50,
-                priceLabel = "₩6,900",
-                title = "50 credits",
-                subtitle = "50 minutes · 8% off",
+                productId = "vibi.credits.pro",
+                credits = 200,
+                priceLabel = "$14.99",
+                title = "Pro",
+                subtitle = "200 credits · 25% off",
                 highlight = true,
             ),
             CreditProduct(
-                productId = "vibi.credits.150",
-                credits = 150,
-                priceLabel = "₩18,000",
-                title = "150 credits",
-                subtitle = "150 minutes · 20% off",
+                productId = "vibi.credits.studio",
+                credits = 1000,
+                priceLabel = "$49.99",
+                title = "Studio",
+                subtitle = "1000 credits · 50% off",
             ),
         )
     }
