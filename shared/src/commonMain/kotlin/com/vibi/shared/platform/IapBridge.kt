@@ -1,8 +1,8 @@
 package com.vibi.shared.platform
 
 /**
- * Swift 가 구현해 K/N 으로 주입하는 IAP bridge. iOS 만 사용 — Android 는 별도 `BillingClient`
- * 통합 시점에 같은 패턴으로 확장 가능하지만 v1 은 stub.
+ * Swift 가 구현해 K/N 으로 주입하는 IAP bridge. iOS 전용 — Android 는 동일 역할을 별도
+ * `AndroidIapClient` (Play Billing 7.x) 가 직접 수행한다 (Swift bridge 불필요).
  *
  * StoreKit2 (`Product.purchase()` 등) 는 Swift-only API 라 Kotlin/Native cinterop 으로 직접
  * 호출할 수 없다. Apple Sign-In 과 동일한 callback bridge 방식으로 Swift 측이 결제 흐름을

@@ -9,7 +9,9 @@ import com.vibi.shared.domain.model.IapPlatform
  * **중요**: 결제 확인 dialog 는 반드시 OS 가 그린다 (Apple App Store 가이드라인 3.1.1 /
  * Google Play 정책). 앱 자체가 Apple/Google 시스템 UI 를 모방하는 popup 을 띄우면 reject.
  *
- * v1 은 mock — 실제 StoreKit / Play Billing 연동은 다음 마일스톤.
+ * 양 플랫폼 실연동: iOS = Swift `IapBridgeImpl` (StoreKit2), Android = `AndroidIapClient`
+ * (Play Billing 7.x). 영수증은 BFF 가 검증·가산하고, 성공 후에만 [finishTransaction] 으로
+ * consume/finish (4.5.2 reject 방지).
  */
 expect class PurchaseLauncher() {
     suspend fun purchase(productId: String): PurchaseResult
