@@ -1,6 +1,7 @@
 package com.vibi.shared.di
 
 import com.vibi.shared.data.local.AuthTokenStore
+import com.vibi.shared.data.local.SeparationCancelWarningStore
 import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.repository.AudioSeparationRepositoryImpl
 import com.vibi.shared.data.repository.AuthRepository
@@ -25,6 +26,9 @@ const val SECURE_SETTINGS = "secure"
 val repositoryModule = module {
     // 계정별 로컬 데이터 분리 — Repository / AuthRepository 가 공유.
     single { UserSession() }
+
+    // "음원분리 취소 시 크레딧 환불 불가" 경고 "다시 보지 않기" 영속 — Timeline/Input 취소 경로 공유 (계정별).
+    single { SeparationCancelWarningStore(settings = get(), userSession = get()) }
 
     single<EditProjectRepository> {
         EditProjectRepositoryImpl(

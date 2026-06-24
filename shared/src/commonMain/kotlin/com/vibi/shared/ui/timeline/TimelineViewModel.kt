@@ -8,6 +8,7 @@ import com.vibi.shared.platform.currentTimeMillis
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.uuid.Uuid
+import com.vibi.shared.data.local.SeparationCancelWarningStore
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.model.StemKind
@@ -71,7 +72,6 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import com.russhwolf.settings.Settings
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -269,8 +269,8 @@ class TimelineViewModel constructor(
     private val saveExport: SaveExportUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
     private val prewarmAssetUpload: PrewarmAssetUploadUseCase,
-    /** 멀티플랫폼 영속 설정 — 현재는 "음원분리 취소 경고 다시 보지 않기" 플래그에만 사용. */
-    private val settings: Settings,
+    /** "음원분리 취소" 경고 "다시 보지 않기" 영속 — 입력 화면 취소 경로와 공유 (계정별). */
+    private val separationCancelWarningStore: SeparationCancelWarningStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -3384,13 +3384,13 @@ class TimelineViewModel constructor(
         separationGate = TriggerGate.ARMED
     }
 
-    /** "음원분리 취소" 경고 다이얼로그를 건너뛸지 — 사용자가 "다시 보지 않기" 체크 시 true 로 영속. */
+    /** "음원분리 취소" 경고 다이얼로그를 건너뛸지 — 사용자가 "다시 보지 않기" 체크 시 true 로 영속(계정별). */
     val skipSeparationCancelWarning: Boolean
-        get() = settings.getBoolean(KEY_SKIP_SEPARATION_CANCEL_WARNING, false)
+        get() = separationCancelWarningStore.skip
 
     /** "다시 보지 않기" 토글 영속. UI 경고 다이얼로그의 체크박스에서 호출. */
     fun setSkipSeparationCancelWarning(skip: Boolean) {
-        settings.putBoolean(KEY_SKIP_SEPARATION_CANCEL_WARNING, skip)
+        separationCancelWarningStore.setSkip(skip)
     }
 
     fun onStartSeparation() {
@@ -4082,9 +4082,6 @@ class TimelineViewModel constructor(
 
         /** 프로젝트 제목 / 음원·녹음 이름 입력 길이 상한 — 비정상 길이 입력 방어. */
         private const val MAX_DISPLAY_NAME_LEN = 80
-
-        /** "음원분리 취소 경고 다시 보지 않기" 영속 키 (Settings). */
-        private const val KEY_SKIP_SEPARATION_CANCEL_WARNING = "separation.cancel.skipWarning"
     }
 
     fun onOpenExportOptionsSheet() {

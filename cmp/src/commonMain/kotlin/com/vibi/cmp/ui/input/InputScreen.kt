@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -75,6 +77,8 @@ fun InputScreen(
     val state by viewModel.uiState.collectAsState()
     val userMenuState by userMenuViewModel.uiState.collectAsState()
     var menuOpen by remember { mutableStateOf(false) }
+    // "준비중" 카드 X 취소 경고 대상 projectId (null = 닫힘). "다시 보지 않기" 영속 시엔 경고 없이 바로 취소.
+    var cancelWarnProjectId by remember { mutableStateOf<String?>(null) }
 
     // 화면 재진입 시 이전 비디오/검증/언어 선택 리셋. drafts ("이어서 작업") 카드는
     // EditProjectRepository.observeAllProjects() 가 영속 상태에서 직접 읽어 노출.
@@ -260,7 +264,13 @@ fun InputScreen(
                         PreparingCard(
                             item = item,
                             onRetry = { viewModel.onRetryPreparing(item.projectId) },
-                            onDelete = { viewModel.onDeleteDraft(item.projectId) },
+                            onDelete = {
+                                if (viewModel.preparingCancelNeedsWarning(item.failed)) {
+                                    cancelWarnProjectId = item.projectId
+                                } else {
+                                    viewModel.onDeleteDraft(item.projectId)
+                                }
+                            },
                         )
                     }
                 }
@@ -331,6 +341,45 @@ fun InputScreen(
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.onCancelStartSeparation() }) { Text("Cancel") }
+            },
+        )
+    }
+
+    // "준비중" 카드 X 취소 경고 — 진행 중 분리는 어느 단계든 취소 시 크레딧 환불이 안 되므로 항상 고지.
+    // "다시 보지 않기" 체크는 계정별로 영속(타임라인 취소 경로와 공유)돼 다음부터는 바로 취소된다.
+    cancelWarnProjectId?.let { projectId ->
+        var dontShowAgain by remember(projectId) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { cancelWarnProjectId = null },
+            title = { Text("Stop audio separation?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Separation will stop and this project will be removed. " +
+                            "Credits already used won't be refunded.",
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
+                    ) {
+                        Checkbox(
+                            checked = dontShowAgain,
+                            onCheckedChange = { dontShowAgain = it },
+                            colors = CheckboxDefaults.colors(checkedColor = LocalVibiColors.current.accent),
+                        )
+                        Text("Don't show this again")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
+                    viewModel.onDeleteDraft(projectId)
+                    cancelWarnProjectId = null
+                }) { Text("Stop separation") }
+            },
+            dismissButton = {
+                TextButton(onClick = { cancelWarnProjectId = null }) { Text("Keep processing") }
             },
         )
     }

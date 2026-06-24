@@ -20,6 +20,7 @@ import com.vibi.shared.platform.readFileBytes
 import com.vibi.shared.platform.writeChannelToFile
 import io.ktor.client.call.body
 import io.ktor.client.plugins.ClientRequestException
+import kotlin.coroutines.cancellation.CancellationException
 import io.ktor.http.HttpStatusCode
 
 class AudioSeparationRepositoryImpl(
@@ -130,11 +131,16 @@ class AudioSeparationRepositoryImpl(
         return req to bal
     }
 
-    override suspend fun pollStatus(jobId: String): Result<SeparationStatus> = runCatching {
+    override suspend fun pollStatus(jobId: String): Result<SeparationStatus> = try {
         val response = api.getSeparationStatus(jobId)
-        when {
-            response.status == STATUS_FAILED ->
+        val status = when {
+            response.status == STATUS_FAILED -> {
+                // 분리 실패 = BFF 가 선차감 크레딧을 환불(onJobFailed 훅)하는 시점. 권위 잔액을 재동기화해
+                // 사용자가 홈/타임라인을 떠나지 않아도 환불된 배지가 바로 보이게 한다 — getCost(차감 전)·
+                // 성공·402 동기화와 짝을 이루는 실패 경로 동기화. best-effort 라 실패해도 폴링 결과는 그대로.
+                syncBalanceFromServer()
                 SeparationStatus.Failed(response.jobId, response.progressReason)
+            }
 
             response.status == STATUS_READY && response.stems.isNotEmpty() ->
                 SeparationStatus.Ready(
@@ -157,6 +163,15 @@ class AudioSeparationRepositoryImpl(
                 progressReason = response.progressReason
             )
         }
+        Result.success(status)
+    } catch (e: CancellationException) {
+        // 사용자 취소 — 동기화/래핑 없이 그대로 전파(구조적 동시성 보존). runCatching 의 취소 삼킴 회피.
+        throw e
+    } catch (e: Throwable) {
+        // 폴링 조회 자체 실패(네트워크/5xx 등) — 잡이 서버에서 실패·환불됐을 수 있어 잔액 재동기화.
+        // getCreditBalance 도 같은 네트워크면 best-effort no-op. 폴링 실패는 그대로 호출자에 전파.
+        syncBalanceFromServer()
+        Result.failure(e)
     }
 
     override suspend fun downloadStem(stemUrl: String, outputFileName: String): Result<String> =

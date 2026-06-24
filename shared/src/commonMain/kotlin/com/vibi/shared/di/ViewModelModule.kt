@@ -23,6 +23,7 @@ val viewModelModule = module {
             audioExtractor = get(),
             separationNotifier = get(),
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
+            separationCancelWarningStore = get(),
         )
     }
     factory { (projectId: String) ->
@@ -55,7 +56,7 @@ val viewModelModule = module {
             saveExport = get(),
             shareSheetLauncher = get(),
             prewarmAssetUpload = get(),
-            settings = get(),
+            separationCancelWarningStore = get(),
         )
     }
     factory { LoginViewModel(authRepository = get()) }

@@ -2,6 +2,7 @@ package com.vibi.shared.ui.input
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vibi.shared.data.local.SeparationCancelWarningStore
 import com.vibi.shared.domain.error.InsufficientCreditsException
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.EditProject
@@ -114,6 +115,8 @@ class InputViewModel constructor(
     private val audioExtractor: AudioExtractor,
     private val separationNotifier: SeparationNotifier,
     private val bffBaseUrl: String,
+    /** "준비중 취소 시 크레딧 환불 불가" 경고 "다시 보지 않기" 영속 — 타임라인 취소 경로와 공유 (계정별). */
+    private val separationCancelWarningStore: SeparationCancelWarningStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InputUiState())
@@ -269,6 +272,19 @@ class InputViewModel constructor(
     /** 준비중 카드(실패) "다시 시도" — 같은 프로젝트의 전체영상 분리를 재시작. */
     fun onRetryPreparing(projectId: String) {
         startWholeVideo(projectId)
+    }
+
+    /**
+     * "준비중" 카드 X 취소 시 크레딧 환불 불가 경고를 띄워야 하는지.
+     * - 실패(Retry) 카드는 BFF 가 이미 환불(또는 애초에 미차감)했으니 잃을 크레딧이 없어 경고 불필요.
+     * - 그 외 진행 중 카드는 취소 시 환불이 안 되므로 경고. 단 "다시 보지 않기"(계정별, 타임라인과 공유)면 생략.
+     */
+    fun preparingCancelNeedsWarning(failed: Boolean): Boolean =
+        !failed && !separationCancelWarningStore.skip
+
+    /** "다시 보지 않기" 토글 영속. 경고 다이얼로그의 체크박스에서 호출. */
+    fun setSkipSeparationCancelWarning(skip: Boolean) {
+        separationCancelWarningStore.setSkip(skip)
     }
 
     /** 카드 X 버튼 / long-press 삭제. 자식 row 들은 deleteProject 가 cascade. */
