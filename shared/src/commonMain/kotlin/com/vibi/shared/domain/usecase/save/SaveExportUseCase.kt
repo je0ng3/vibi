@@ -94,8 +94,11 @@ class SaveExportUseCase(
             }
 
             if (saveToGallery) {
+                // 사용자가 지정한 프로젝트 제목을 갤러리 파일명으로 사용. (문자 정제·.mp4 확장자는 플랫폼
+                // GallerySaver 가 처리.) 제목이 없으면 충돌 안전한 합성 이름으로 폴백 —
                 // hashCode + ms timestamp + UUID prefix — race / collision / 동일 ms 재호출 모두 안전.
-                val displayName = "VID_${projectId.hashCode().toUInt()}_${currentTimeMillis()}_${Uuid.random().toString().take(8)}"
+                val displayName = project.title?.trim()?.takeIf { it.isNotBlank() }
+                    ?: "VID_${projectId.hashCode().toUInt()}_${currentTimeMillis()}_${Uuid.random().toString().take(8)}"
                 gallerySaver.saveVideo(renderedPath, displayName).getOrElse { e ->
                     if (e is CancellationException) throw e
                     error("Gallery save failed: ${e.message}")
