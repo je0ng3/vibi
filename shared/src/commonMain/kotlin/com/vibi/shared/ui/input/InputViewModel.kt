@@ -440,7 +440,9 @@ class InputViewModel constructor(
                 rangeEndMs = end,
                 numberOfSpeakers = project?.separationNumberOfSpeakers ?: 2,
                 muteOriginalSegmentAudio = true,
-                selections = selections,
+                // stem audio 전체 길이 = 분리 구간 길이(end). split/delete 로 directive 가 쪼개져도
+                // selections 가 보존돼, 파형이 stem 의 올바른 구간만 그린다.
+                selections = selections.map { it.copy(stemTotalDurationMs = end) },
                 createdAt = currentTimeMillis(),
                 jobId = jobId,
                 segmentId = segment.id,

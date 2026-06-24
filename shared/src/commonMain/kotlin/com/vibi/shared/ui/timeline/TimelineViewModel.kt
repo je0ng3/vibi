@@ -3778,7 +3778,11 @@ class TimelineViewModel constructor(
                         rangeEndMs = effectiveEnd,
                         numberOfSpeakers = entry.numberOfSpeakers,
                         muteOriginalSegmentAudio = true,
-                        selections = selectionList,
+                        // stem audio 전체 길이 = 분리 구간 길이. split/delete 로 piece 가 쪼개져도
+                        // selections 보존 → 파형이 stem 의 올바른 구간만 그린다.
+                        selections = selectionList.map {
+                            it.copy(stemTotalDurationMs = (effectiveEnd - effectiveStart).coerceAtLeast(0L))
+                        },
                         createdAt = existing?.createdAt ?: currentTimeMillis(),
                         jobId = entry.jobId ?: existing?.jobId,
                         segmentId = anchorSeg,

@@ -50,7 +50,15 @@ data class StemSelection(
      * 이 만료돼도 볼륨/복제/삭제/재생이 동작. null 이면 아직 미캐시 (online 스트리밍 fallback).
      * export render 는 여전히 서버가 [audioUrl] 로 합성하므로 URL 은 별도 보존.
      */
-    val localPath: String? = null
+    val localPath: String? = null,
+    /**
+     * 이 stem audio 파일 전체 길이 (ms). 분리 시점의 원본 구간 길이로 채워지며, directive 가
+     * split/delete 로 쪼개져도 [SeparationDirective] copy 가 selections 를 보존하므로 그대로 남는다.
+     * 파형이 stem peak 를 올바른 구간에만 매핑하는 분모로 사용 — 없으면(legacy 0) 현재 piece 들로부터
+     * `max(sourceOffset+durationMs)` 추정으로 폴백하나, 뒤 piece 가 삭제되면 과소추정돼 stem 전체가
+     * 남은 타임라인에 압축돼 보이는 버그가 있었다(이 필드로 해소).
+     */
+    val stemTotalDurationMs: Long = 0L,
 )
 
 interface AudioSeparationRepository {

@@ -2711,11 +2711,15 @@ private fun TimelineWaveformBackground(
         // 기준이어야 split 뒷 piece (sourceOffset > 0) 가 stem 의 올바른 구간을 보여줌.
         val stemTotalDurByUrl: Map<String, Long> = buildMap {
             for (d in directives) {
-                val pieceEnd = d.sourceOffsetMs + d.durationMs
                 for (sel in d.selections) {
                     val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: continue
+                    // stem audio 전체 길이 — selection 에 저장된 값 우선(split/delete 에도 보존돼 정확).
+                    // legacy(0) 면 현재 piece 들로부터 max(sourceOffset+durationMs) 추정으로 폴백 —
+                    // 단 뒤 piece 삭제 시 과소추정돼 stem 전체가 남은 타임라인에 압축되던 버그가 있었다.
+                    val stemDur = sel.stemTotalDurationMs.takeIf { it > 0L }
+                        ?: (d.sourceOffsetMs + d.durationMs)
                     val prev = get(url) ?: 0L
-                    if (pieceEnd > prev) put(url, pieceEnd)
+                    if (stemDur > prev) put(url, stemDur)
                 }
             }
         }

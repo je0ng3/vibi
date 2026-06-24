@@ -25,11 +25,37 @@ class SeparationDirectiveRepositoryImpl(
     }
 
     override fun observe(projectId: String): Flow<List<SeparationDirective>> =
-        dao.observeByProject(projectId).map { rows -> rows.map { it.toDomain() } }
+        dao.observeByProject(projectId).map { rows -> rows.map { it.toDomain() }.backfillStemDuration() }
             .distinctUntilChanged()
 
     override suspend fun getByProject(projectId: String): List<SeparationDirective> =
-        dao.getByProject(projectId).map { it.toDomain() }
+        dao.getByProject(projectId).map { it.toDomain() }.backfillStemDuration()
+
+    /**
+     * legacy row(stemTotalDurationMs 미저장=0) 의 stem 전체 길이를, **같은 stem URL 을 공유하는 현재
+     * 로드된 모든 piece** 로부터 `max(sourceOffset + durationMs)` 로 추정해 채운다. 분리 직후/분할 후처럼
+     * piece 가 모두 존재할 때 정확하며, 분할→이 보정→영속화(분할 시 copy 저장) 경로로 뒤 piece 삭제에도
+     * 보존된다. (뒤 piece 가 이미 영속 삭제된 legacy 상태만 미복구 — 그 경우 재분리 필요.) 신규 분리
+     * (이미 값 보유) 는 no-op.
+     */
+    private fun List<SeparationDirective>.backfillStemDuration(): List<SeparationDirective> {
+        if (all { d -> d.selections.all { it.stemTotalDurationMs > 0L } }) return this
+        val byUrl = mutableMapOf<String, Long>()
+        for (d in this) for (sel in d.selections) {
+            val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: continue
+            val end = d.sourceOffsetMs + d.durationMs
+            if (end > (byUrl[url] ?: 0L)) byUrl[url] = end
+        }
+        if (byUrl.isEmpty()) return this
+        return map { d ->
+            if (d.selections.all { it.stemTotalDurationMs > 0L }) d
+            else d.copy(selections = d.selections.map { sel ->
+                if (sel.stemTotalDurationMs > 0L) return@map sel
+                val dur = sel.audioUrl?.takeIf { it.isNotBlank() }?.let { byUrl[it] } ?: 0L
+                if (dur > 0L) sel.copy(stemTotalDurationMs = dur) else sel
+            })
+        }
+    }
 
     override suspend fun delete(id: String) {
         dao.getById(id)?.let { deleteStemFiles(listOf(it)) }
@@ -59,7 +85,9 @@ class SeparationDirectiveRepositoryImpl(
         muteOriginalSegmentAudio = muteOriginalSegmentAudio,
         selectionsJson = persistedJson.encodeToString(
             kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
-            selections.map { StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath) }
+            selections.map {
+                StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath, it.stemTotalDurationMs)
+            }
         ),
         createdAt = createdAt,
         jobId = jobId,
@@ -74,7 +102,9 @@ class SeparationDirectiveRepositoryImpl(
             persistedJson.decodeFromString(
                 kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
                 selectionsJson.ifBlank { "[]" }
-            ).map { StemSelection(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath) }
+            ).map {
+                StemSelection(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath, it.stemTotalDurationMs)
+            }
         }.getOrDefault(emptyList())
         return SeparationDirective(
             id = id,
@@ -101,7 +131,9 @@ class SeparationDirectiveRepositoryImpl(
         // legacy 데이터(이 필드 없는 row)는 default true — 기존 동작 유지.
         val selected: Boolean = true,
         // 영구 캐시된 stem 로컬 경로. legacy/미캐시 row 는 null.
-        val localPath: String? = null
+        val localPath: String? = null,
+        // stem audio 전체 길이(ms). legacy row 는 0 → 파형이 추정으로 폴백. JSON blob 이라 DB 스키마 불변.
+        val stemTotalDurationMs: Long = 0L,
     )
 
 }
