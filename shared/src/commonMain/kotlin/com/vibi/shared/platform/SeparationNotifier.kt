@@ -19,13 +19,11 @@ interface SeparationNotifier {
     fun post(id: String, title: String, body: String)
 }
 
-/** 분리 알림 문구·식별자 단일 출처. 제목 한 줄만 노출(본문 없음). */
+/** 분리 알림 문구·식별자 단일 출처. 제목 + 본문(영상 이름) 노출. */
 object SeparationNotice {
     const val COMPLETE_ID = "separation_complete"
     const val COMPLETE_TITLE = "Video ready"
-    const val COMPLETE_BODY = ""
 
     const val FAILED_ID = "separation_failed"
     const val FAILED_TITLE = "Video preparation failed"
-    const val FAILED_BODY = ""
 }

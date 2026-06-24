@@ -387,7 +387,7 @@ class InputViewModel constructor(
                         commitWholeVideoDirective(projectId, jobId, segment, status)
                     is SeparationStatus.Failed -> {
                         setProgress(projectId, SepProgress(0, status.progressReason, failed = true))
-                        markProjectFailed(projectId, jobId)
+                        markProjectFailed(projectId, jobId, segment.sourceUri)
                     }
                 }
             }
@@ -395,7 +395,7 @@ class InputViewModel constructor(
             throw e
         } catch (e: Exception) {
             setProgress(projectId, SepProgress(0, null, failed = true))
-            markProjectFailed(projectId, jobId)
+            markProjectFailed(projectId, jobId, segment.sourceUri)
         } finally {
             // collect 종료(완료/실패) 시 잡 핸들 정리 — 같은 프로젝트 재시작 가드가 stale active 로
             // 막히지 않도록.
@@ -427,7 +427,7 @@ class InputViewModel constructor(
         }
         if (selections.none { it.selected }) {
             setProgress(projectId, SepProgress(0, null, failed = true))
-            markProjectFailed(projectId, jobId)
+            markProjectFailed(projectId, jobId, segment.sourceUri)
             return
         }
         val project = editProjectRepository.getProject(projectId)
@@ -460,12 +460,13 @@ class InputViewModel constructor(
         separationNotifier.post(
             SeparationNotice.COMPLETE_ID,
             SeparationNotice.COMPLETE_TITLE,
-            SeparationNotice.COMPLETE_BODY,
+            separationVideoName(project?.title, segment.sourceUri),
         )
     }
 
-    private suspend fun markProjectFailed(projectId: String, jobId: String) {
-        editProjectRepository.getProject(projectId)?.let { p ->
+    private suspend fun markProjectFailed(projectId: String, jobId: String, sourceUri: String?) {
+        val project = editProjectRepository.getProject(projectId)
+        project?.let { p ->
             editProjectRepository.updateProject(
                 p.removeProcessingSeparation(jobId).copy(separationStatus = AutoJobStatus.FAILED),
                 touchActivity = false,
@@ -475,8 +476,22 @@ class InputViewModel constructor(
         separationNotifier.post(
             SeparationNotice.FAILED_ID,
             SeparationNotice.FAILED_TITLE,
-            SeparationNotice.FAILED_BODY,
+            separationVideoName(project?.title, sourceUri),
         )
+    }
+
+    /**
+     * 분리 알림 본문에 표시할 영상 이름 — 사용자 지정 제목 우선, 없으면(분리는 보통 이름 짓기 전 시작)
+     * 소스 파일명으로 폴백, 둘 다 없으면 빈 문자열.
+     */
+    private fun separationVideoName(title: String?, sourceUri: String?): String {
+        title?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+        return sourceUri
+            ?.substringBefore('?')
+            ?.substringAfterLast('/')
+            ?.substringBeforeLast('.')
+            ?.takeIf { it.isNotBlank() }
+            ?: ""
     }
 
     private fun setProgress(projectId: String, value: SepProgress) {
