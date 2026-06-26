@@ -97,24 +97,29 @@ final class OnDeviceVideoExportBridgeImpl: NSObject, OnDeviceVideoExportBridge {
         let audioParams = AVMutableAudioMixInputParameters(track: audioTrack)
 
         for spec in segments {
-            let asset = assetCache[spec.sourceFilePath] ?? {
-                let a = AVURLAsset(
+            let asset: AVURLAsset
+            if let cached = assetCache[spec.sourceFilePath] {
+                asset = cached
+            } else {
+                let created = AVURLAsset(
                     url: URL(fileURLWithPath: spec.sourceFilePath),
                     options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-                Self.loadSynchronously(asset: a, keys: ["tracks", "duration"])
-                assetCache[spec.sourceFilePath] = a
-                return a
-            }()
+                // tracks/duration 동기 선로드 — 로드 전 트랙 접근 시 0-length composition 결함 차단
+                // (buildCompositionPlayer 와 동일 사유). 선로드로 이후 loadTracks 도 즉시 반환된다.
+                _ = try Self.awaitSync { try await created.load(.tracks, .duration) }
+                assetCache[spec.sourceFilePath] = created
+                asset = created
+            }
 
-            guard let srcVideo = asset.tracks(withMediaType: .video).first else {
+            guard let srcVideo = try Self.awaitSync({ try await asset.loadTracks(withMediaType: .video) }).first else {
                 throw ExportError.noVideoTrack
             }
-            let srcAudio = asset.tracks(withMediaType: .audio).first
+            let srcAudio = try Self.awaitSync { try await asset.loadTracks(withMediaType: .audio) }.first
 
             // iOS 카메라 회전은 preferredTransform 메타로 기록 — composition track 기본 identity 라
             // 명시 복사 없으면 영상이 눕는다(ios-kn-patterns / buildCompositionPlayer 와 동일).
             if !transformApplied {
-                videoTrack.preferredTransform = srcVideo.preferredTransform
+                videoTrack.preferredTransform = try Self.awaitSync { try await srcVideo.load(.preferredTransform) }
                 transformApplied = true
             }
 
@@ -167,12 +172,22 @@ final class OnDeviceVideoExportBridgeImpl: NSObject, OnDeviceVideoExportBridge {
         return session
     }
 
-    /// AVURLAsset 의 tracks/duration 를 동기 대기 로드 — 로드 전 `tracks(withMediaType:)` 가 빈
-    /// 배열을 반환해 composition 이 0-length 로 만들어지는 결함 차단(buildCompositionPlayer 와 동일 사유).
-    private static func loadSynchronously(asset: AVURLAsset, keys: [String]) {
+    /// async `load(_:)` / `loadTracks(_:)` 패밀리를 동기 대기로 감싸는 브리지. buildExportSession 은
+    /// workQueue(전용 직렬 DispatchQueue)에서 동기로 도는 흐름이라(타이머·export 오케스트레이션 그대로
+    /// 유지) 전체 async 전환 대신 호출부 구조만 보존한다. workQueue 스레드를 블록하지만 continuation 은
+    /// Swift concurrency 협력 풀(별도 스레드)에서 실행돼 데드락이 없다. iOS 16 에서 동기 트랙/메타 접근자
+    /// (`tracks(withMediaType:)`·`preferredTransform`·`loadValuesAsynchronously`)가 전부 deprecated 된
+    /// 것에 대한 후속 — 구 `loadSynchronously`(세마포어 동기 로드)를 제네릭화해 4 개 호출부가 공유한다.
+    private static func awaitSync<T>(_ operation: @escaping @Sendable () async throws -> T) throws -> T {
         let sem = DispatchSemaphore(value: 0)
-        asset.loadValuesAsynchronously(forKeys: keys) { sem.signal() }
+        var output: Result<T, Error>!
+        Task {
+            do { output = .success(try await operation()) }
+            catch { output = .failure(error) }
+            sem.signal()
+        }
         sem.wait()
+        return try output.get()
     }
 }
 
