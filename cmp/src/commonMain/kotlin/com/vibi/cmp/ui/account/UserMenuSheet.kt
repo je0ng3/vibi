@@ -270,7 +270,7 @@ private fun ResearchPreviewNote() {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "Enjoy 10 minutes of audio separation, free while we're in preview.",
+                text = "Enjoy 10 minutes of audio separation, on us.",
                 style = TextStyle(
                     fontSize = 12.sp,
                     color = tokens.mutedText,

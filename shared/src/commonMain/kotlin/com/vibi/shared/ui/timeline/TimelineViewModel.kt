@@ -3262,15 +3262,6 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * IAP 미오픈 기간 — 잔액 부족 화면의 "I want this" 탭. 유료 결제 수요를 BFF 에 적재
-     * (서버가 유저당 1회 집계, 웹 admin 이 합산 조회). 컨페티는 UI 가 즉시 띄우고, 네트워크는
-     * fire-and-forget — 실패해도 사용자 경험을 막지 않으므로 결과를 surface 하지 않는다.
-     */
-    fun onWantPaidCredits() {
-        viewModelScope.launch { runCatching { bffApi.recordPaidCreditIntent() } }
-    }
-
-    /**
      * 현재 편집 중인 directive 를 삭제. mock 또는 기존 directive — editingDirectiveId 우선,
      * 없으면 audioSeparation.jobId 또는 모든 directive (단일 mock) 정리.
      * 영상 전체 음소거 해제 (audio 복원). sheet 닫음.
