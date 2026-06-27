@@ -7,6 +7,7 @@ import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
 import com.vibi.shared.platform.IapBridge
 import com.vibi.shared.platform.OnDeviceVideoExportBridge
+import com.vibi.shared.platform.RewardedAdBridge
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.UIKit.UIColor
 import platform.UIKit.UIViewController
@@ -20,6 +21,7 @@ fun MainViewController(
     appleSignInBridge: AppleSignInBridge,
     iapBridge: IapBridge,
     onDeviceVideoExportBridge: OnDeviceVideoExportBridge,
+    rewardedAdBridge: RewardedAdBridge,
 ): UIViewController {
     if (!koinStarted) {
         initKoinIos(
@@ -28,6 +30,7 @@ fun MainViewController(
             appleSignInBridge,
             iapBridge,
             onDeviceVideoExportBridge,
+            rewardedAdBridge,
             RuntimeFlags.iapEnabled,
         )
         koinStarted = true

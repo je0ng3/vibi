@@ -6,6 +6,7 @@ import com.vibi.shared.di.androidPlatformModule
 import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.sweepOrphanPickerMedia
 import com.vibi.shared.di.initKoin
+import com.google.android.gms.ads.MobileAds
 import com.vibi.shared.platform.ActivityProvider
 import com.vibi.shared.platform.AndroidIapReconciler
 import kotlinx.coroutines.CoroutineScope
@@ -39,5 +40,11 @@ class VibiApplication : Application() {
         // 파일을 지우지 않아 filesDir 가 누적된다(iOS 도 leak 하나 Android 는 pick 마다 새 uuid 라 더 빠름).
         // 라이브 segment/bgm sourceUri 와 5분 grace 로 진행 중 pick 을 보호하며 고아 dir 만 삭제.
         CoroutineScope(Dispatchers.IO).launch { sweepOrphanPickerMedia() }
+        // 보상형 광고 SDK 초기화 — initialize() 는 호출 스레드에서 동기 작업(디스크 읽기·미디에이션
+        // 어댑터 init)을 하므로 onCreate(main) 콜드스타트를 막지 않도록 백그라운드 스레드에서 수행.
+        // 완료 콜백에 의존하는 동작이 없어 순서 무관.
+        if (RuntimeFlags.rewardedAdsEnabled) {
+            Thread { MobileAds.initialize(this) {} }.start()
+        }
     }
 }

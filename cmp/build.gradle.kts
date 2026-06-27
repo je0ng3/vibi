@@ -69,6 +69,8 @@ kotlin {
             implementation(libs.koin.androidx.compose)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.ui)
+            // VibiApplication 의 MobileAds.initialize 용 (shared 는 implementation 이라 전이 노출 안 됨).
+            implementation(libs.play.services.ads)
         }
 
         // iosMain: AVFoundation/AVKit 은 Kotlin/Native cinterop 으로 자동 노출 — 별도 의존성 불필요

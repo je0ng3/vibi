@@ -17,6 +17,8 @@ import com.vibi.shared.platform.IosAppleSignInClient
 import com.vibi.shared.platform.IapTransactionReconciler
 import com.vibi.shared.platform.IosGoogleSignInClient
 import com.vibi.shared.platform.IosIapClient
+import com.vibi.shared.platform.IosRewardedAdController
+import com.vibi.shared.platform.RewardedAdController
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.IosAudioExtractor
 import com.vibi.shared.platform.IosSeparationNotifier
@@ -80,4 +82,6 @@ val iosPlatformModule = module {
             creditPurchaseService = get(),
         )
     }
+    // 보상형 광고 — RewardedAdBridge(Swift) 는 KoinHelper.initKoinIos 가 별도 module 로 주입.
+    single<RewardedAdController> { IosRewardedAdController(bridge = get()) }
 }

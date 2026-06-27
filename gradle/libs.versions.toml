@@ -25,6 +25,7 @@ sqliteJdbc = "3.46.1.0"
 playBilling = "7.1.1"
 androidxCredentials = "1.3.0"
 googleid = "1.1.1"
+playServicesAds = "23.6.0"
 
 [libraries]
 # Kotlinx
@@ -90,6 +91,9 @@ play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", 
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "androidxCredentials" }
 androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "androidxCredentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
+
+# Google Mobile Ads / AdMob (Android only — iOS uses GoogleMobileAds SPM via RewardedAdBridge)
+play-services-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "playServicesAds" }
 
 # Test
 junit = { group = "junit", name = "junit", version.ref = "junit" }

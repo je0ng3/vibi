@@ -1,4 +1,5 @@
 import Cmp
+import GoogleMobileAds
 import GoogleSignIn
 import UIKit
 
@@ -12,6 +13,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
+        // 보상형 광고 SDK 초기화 — 앱 시작 시 1회. 경량 호출이며 광고는 사용자가 버튼을 누를
+        // 때만 로드/표시된다(Android VibiApplication.MobileAds.initialize 와 대칭).
+        GADMobileAds.sharedInstance().start(completionHandler: nil)
+
         // BFF base URL 은 Auth.xcconfig 의 BFF_BASE_URL → Info.plist BFFBaseURL 로 expand.
         // Swift 코드에는 어떤 URL 도 직접 적지 않는다.
         guard let bffBaseUrl = Bundle.main.object(forInfoDictionaryKey: "BFFBaseURL") as? String,
@@ -23,12 +28,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let appleBridge = AppleSignInBridgeImpl()
         let iapBridge = IapBridgeImpl()
         let onDeviceExportBridge = OnDeviceVideoExportBridgeImpl()
+        let rewardedAdBridge = RewardedAdBridgeImpl()
         let composeVC = MainViewControllerKt.MainViewController(
             bffBaseUrl: bffBaseUrl,
             googleSignInBridge: googleBridge,
             appleSignInBridge: appleBridge,
             iapBridge: iapBridge,
-            onDeviceVideoExportBridge: onDeviceExportBridge
+            onDeviceVideoExportBridge: onDeviceExportBridge,
+            rewardedAdBridge: rewardedAdBridge
         )
 
         // safe-area inset 무시하고 화면 전체 차지

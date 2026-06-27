@@ -16,6 +16,8 @@ import com.vibi.shared.platform.AndroidSeparationNotifier
 import com.vibi.shared.platform.SeparationNotifier
 import com.vibi.shared.platform.AndroidIapClient
 import com.vibi.shared.platform.AndroidIapReconciler
+import com.vibi.shared.platform.AndroidRewardedAdController
+import com.vibi.shared.platform.RewardedAdController
 import com.vibi.shared.platform.AndroidVideoThumbnailExtractor
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.AudioExtractor
@@ -71,4 +73,9 @@ val androidPlatformModule = module {
     single { ActivityProvider() }
     single { AndroidIapClient(appContext = androidContext(), activityProvider = get()) }
     single { AndroidIapReconciler(iap = get(), creditPurchaseService = get()) }
+
+    // 보상형 광고 — Activity 컨텍스트로 show. ActivityProvider 재사용 (IAP 와 동일).
+    single<RewardedAdController> {
+        AndroidRewardedAdController(appContext = androidContext(), activityProvider = get())
+    }
 }
