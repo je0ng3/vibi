@@ -77,11 +77,6 @@ private fun copyAudioToCache(context: Context, uri: Uri): String? {
     }
 }
 
-private fun queryDisplayName(resolver: ContentResolver, uri: Uri): String? =
-    resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-        if (c.moveToFirst()) c.getString(0) else null
-    }
-
 private fun inferExtension(resolver: ContentResolver, uri: Uri, displayName: String?): String {
     val mime = resolver.getType(uri)
     return when {

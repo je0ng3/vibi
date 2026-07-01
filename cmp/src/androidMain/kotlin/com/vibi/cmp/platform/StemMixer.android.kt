@@ -6,16 +6,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink.DefaultAudioProcessorChain
-import java.io.File
+import com.vibi.cmp.BuildConfig
+import kotlin.math.abs
 
 /**
  * Android: stem 별 ExoPlayer 인스턴스. 같은 시점에 동시 재생 + 인스턴스별 volume.
@@ -50,6 +52,8 @@ private class AndroidStemMixerHandle(
     /** key = "groupId/stemId" — multi-directive 지원. */
     private val players = mutableMapOf<String, PlayerWithGain>()
     private val groupOfPlayer = mutableMapOf<String, String>()
+    /** key → 적용된 audioUrl. 같은 key 라도 url 이 변하면 (token refresh 등) player 재생성. iOS urlByKey 대응. */
+    private val urlByKey = mutableMapOf<String, String>()
     /** stemId → 적용된 마지막 volume (0..2). load() 로 새 player 생성 시 적용. */
     private val pendingVolumes = mutableMapOf<String, Float>()
     /** groupId → 마지막 seek 위치(ms). load() 직후 새 player 가 올바른 offset 에서 시작. */
@@ -76,7 +80,18 @@ private class AndroidStemMixerHandle(
                     .build()
             }
         }
-        val player = ExoPlayer.Builder(context, renderersFactory).build()
+        // CONTENT_TYPE_MUSIC / USAGE_MEDIA + handleAudioFocus=true: 전화/타 앱 재생 등 interruption 시
+        // ExoPlayer 가 audio focus 를 자동 관리(일시정지/감쇠). iOS AVAudioSession interruption 대응.
+        val audioAttributes = AudioAttributes.Builder()
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .setUsage(C.USAGE_MEDIA)
+            .build()
+        val player = ExoPlayer.Builder(context, renderersFactory)
+            .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
+            // 이어폰 분리 등 audio output 이 speaker 로 강제 전환되기 직전 자동 pause
+            // (ACTION_AUDIO_BECOMING_NOISY). iOS AVAudioSession route-change 대응.
+            .setHandleAudioBecomingNoisy(true)
+            .build()
         return PlayerWithGain(player, gain)
     }
 
@@ -87,32 +102,67 @@ private class AndroidStemMixerHandle(
         pwg.gain.gain = if (clamped > 1f) clamped else 1f
     }
 
+    /**
+     * BFF API path(`/api/...`) 또는 상대 경로면 BFF base URL 을 prepend 해 절대 URL 로 보정.
+     * http(s) 이거나 로컬 파일 절대 경로(`/data/...`, `/storage/...`)는 그대로. iOS resolveAbsoluteAudioUrl 대응.
+     */
+    private fun resolveAbsoluteAudioUrl(url: String): String {
+        if (url.startsWith("http://") || url.startsWith("https://")) return url
+        val isApiPath = url.startsWith("/api/")
+        // `/` 로 시작하면 로컬 파일 절대 경로(즉석 녹음·picker 결과 포함) — `/api/` 만 BFF 로 본다.
+        // 반대로 `/` 로 시작하지 않으면 서버 상대 경로로 간주해 BFF base 를 붙인다.
+        val isRelative = !url.startsWith("/")
+        if (!isApiPath && !isRelative) return url
+        val base = BuildConfig.BFF_BASE_URL.takeIf { it.isNotEmpty() } ?: return url
+        return "${base.trimEnd('/')}/${url.trimStart('/')}"
+    }
+
+    /**
+     * 보정된 URL 을 ExoPlayer 가 재생할 Uri 로 변환. remote 는 그대로 streaming, 로컬은 file://.
+     * BFF-상대 경로는 [resolveAbsoluteAudioUrl] 로 먼저 절대화한 뒤 공용 [resolveMediaUri] 에 위임.
+     */
+    private fun resolveUri(url: String): Uri =
+        resolveMediaUri(resolveAbsoluteAudioUrl(url))
+
+    private fun buildPlayerFor(src: StemMixerSource): PlayerWithGain {
+        val pwg = buildPlayer().apply {
+            player.setMediaItem(MediaItem.fromUri(resolveUri(src.audioUrl)))
+            player.prepare()
+            player.playWhenReady = false
+            if (pendingRate != 1f) {
+                player.playbackParameters = PlaybackParameters(pendingRate)
+            }
+        }
+        applyVolume(pwg, pendingVolumes[src.stemId] ?: 1f)
+        pendingSeekByGroup[src.groupId]?.let { pwg.player.seekTo(it) }
+        return pwg
+    }
+
     override fun load(sources: List<StemMixerSource>) {
-        // 기존 player release 하고 새로 생성하되, playing / activeGroupId / pendingVolumes /
-        // pendingSeekByGroup / pendingRate 는 보존.
-        players.values.forEach { it.player.release() }
-        players.clear()
-        groupOfPlayer.clear()
+        // Incremental: incoming 을 key->audioUrl 로 diff. URL 이 변한 player 만 release+rebuild,
+        // 동일 URL 은 기존 player 유지(playWhenReady/seek 보존). iOS load() urlByKey diff 대응.
+        val incomingKeys = sources.map { key(it.groupId, it.stemId) }.toSet()
+
+        // 더 이상 존재하지 않는 key 의 player 정리 — orphan ExoPlayer 누수 방지.
+        players.keys.filter { it !in incomingKeys }.forEach { k ->
+            players.remove(k)?.player?.release()
+            groupOfPlayer.remove(k)
+            urlByKey.remove(k)
+        }
+
         sources.forEach { src ->
-            // 영구 캐시된 로컬 파일 절대경로는 file:// URI 로 — 서버 연결이 끊겨도 재생. 원격 URL 은 그대로.
-            val uri = if (src.audioUrl.startsWith("http://") || src.audioUrl.startsWith("https://")) {
-                Uri.parse(src.audioUrl)
-            } else {
-                Uri.fromFile(File(src.audioUrl))
-            }
-            val pwg = buildPlayer().apply {
-                player.setMediaItem(MediaItem.fromUri(uri))
-                player.prepare()
-                player.playWhenReady = false
-                if (pendingRate != 1f) {
-                    player.playbackParameters = PlaybackParameters(pendingRate)
-                }
-            }
-            applyVolume(pwg, pendingVolumes[src.stemId] ?: 1f)
             val k = key(src.groupId, src.stemId)
-            players[k] = pwg
             groupOfPlayer[k] = src.groupId
-            pendingSeekByGroup[src.groupId]?.let { pwg.player.seekTo(it) }
+            val existing = players[k]
+            if (existing != null && urlByKey[k] == src.audioUrl) {
+                // URL 동일 — 기존 player 그대로 유지(재생성 시 끊김/재버퍼 회피).
+                return@forEach
+            }
+            // 신규이거나 URL 변경 — 기존 player release 후 재생성.
+            players.remove(k)?.player?.release()
+            val pwg = buildPlayerFor(src)
+            players[k] = pwg
+            urlByKey[k] = src.audioUrl
         }
         applyActiveState()
     }
@@ -161,6 +211,11 @@ private class AndroidStemMixerHandle(
     override fun seekTo(positionMs: Long) {
         val pos = positionMs.coerceAtLeast(0L)
         val active = activeGroupId ?: return
+        // 매 tick 마다 호출되어도 활성 player 의 현재 위치와 거의 일치하면 seek skip — per-tick stutter 회피.
+        // iOS IosStemMixerHandle.seekTo 의 50ms drift 가드 대응.
+        val activePlayer = players.entries
+            .firstOrNull { (k, _) -> groupOfPlayer[k] == active }?.value?.player
+        if (activePlayer != null && abs(pos - activePlayer.currentPosition) <= 50L) return
         pendingSeekByGroup[active] = pos
         players.forEach { (k, pwg) ->
             if (groupOfPlayer[k] == active) pwg.player.seekTo(pos)
@@ -171,6 +226,7 @@ private class AndroidStemMixerHandle(
         players.values.forEach { it.player.release() }
         players.clear()
         groupOfPlayer.clear()
+        urlByKey.clear()
         pendingVolumes.clear()
         pendingSeekByGroup.clear()
         playing = false

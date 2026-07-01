@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 다크 모드 창 배경 = Cupertino 다크 bg(#000000). 다크 모드 콜드스타트 라이트 플래시 제거. -->
+    <style name="Theme.Vibi" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF000000</item>
+    </style>
+</resources>

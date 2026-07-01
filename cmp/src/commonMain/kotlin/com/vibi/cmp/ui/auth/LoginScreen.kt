@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vibi.cmp.legal.LegalUrls
 import com.vibi.cmp.legal.appendLegalLink
+import com.vibi.cmp.platform.isIosPlatform
 import com.vibi.shared.ui.auth.LoginViewModel
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -104,29 +105,32 @@ fun LoginScreen(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            // Apple 로그인은 iOS 한정 — Android 엔 Apple 네이티브 SDK 가 없어 버튼 자체를 숨긴다.
+            if (isIosPlatform) {
+                Spacer(Modifier.height(12.dp))
 
-            // Apple Human Interface Guidelines — 검정 배경 + 흰색 텍스트, 최소 44pt 높이.
-            Button(
-                onClick = viewModel::signInWithApple,
-                enabled = !anyLoading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Black,
-                    contentColor = Color.White,
-                    disabledContainerColor = Color.Black.copy(alpha = 0.5f),
-                    disabledContentColor = Color.White.copy(alpha = 0.7f),
-                ),
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
-            ) {
-                if (loadingProvider == LoginViewModel.Provider.Apple) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp),
-                    )
-                } else {
-                    Text("Sign in with Apple")
+                // Apple Human Interface Guidelines — 검정 배경 + 흰색 텍스트, 최소 44pt 높이.
+                Button(
+                    onClick = viewModel::signInWithApple,
+                    enabled = !anyLoading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Black,
+                        contentColor = Color.White,
+                        disabledContainerColor = Color.Black.copy(alpha = 0.5f),
+                        disabledContentColor = Color.White.copy(alpha = 0.7f),
+                    ),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
+                ) {
+                    if (loadingProvider == LoginViewModel.Provider.Apple) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    } else {
+                        Text("Sign in with Apple")
+                    }
                 }
             }
 

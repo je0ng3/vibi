@@ -1,7 +1,6 @@
 package com.vibi.shared.platform
 
 import android.content.Context
-import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
@@ -12,16 +11,17 @@ import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
-import com.android.billingclient.api.acknowledgePurchase
 import com.android.billingclient.api.consumePurchase
 import com.android.billingclient.api.queryProductDetails
 import com.android.billingclient.api.queryPurchasesAsync
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -57,8 +57,35 @@ class AndroidIapClient(
      */
     private val purchaseUpdates = MutableSharedFlow<PurchasesUpdated>(extraBufferCapacity = 16)
 
+    /**
+     * 진행 중 foreground [purchase] 호출 수. 0 일 때 도착한 OK + PURCHASED 업데이트는 사용자가
+     * 직접 트리거하지 않은 "지연 완료" (Ask-to-Buy 승인 / PENDING→PURCHASED 전이 / 다른 세션)
+     * 로 보고 [deferredPurchaseFlow] 로 흘려보낸다. iOS `Transaction.updates` 비동기 emit 동등.
+     */
+    private val activePurchases = AtomicInteger(0)
+
+    private val deferredPurchaseFlow = MutableSharedFlow<Purchase>(extraBufferCapacity = 16)
+
+    /**
+     * 외부([AndroidIapReconciler]) 가 collect 하는 지연 완료 stream. foreground [purchase] 가
+     * 직접 처리하지 못한 PURCHASED 만 emit — reconciler 가 BFF redeem → consume 로 마무리.
+     */
+    val deferredCompletions: SharedFlow<Purchase> get() = deferredPurchaseFlow
+
     private val purchasesListener = PurchasesUpdatedListener { result, purchases ->
-        purchaseUpdates.tryEmit(PurchasesUpdated(result, purchases.orEmpty()))
+        val list = purchases.orEmpty()
+        purchaseUpdates.tryEmit(PurchasesUpdated(result, list))
+        // foreground purchase() 가 결과를 await 중이 아니면(=지연 완료) PURCHASED 를 reconciler 로
+        // 라우팅. 진행 중인 purchase() 가 있으면 그 호출이 직접 처리하므로 이중 redeem 방지.
+        if (activePurchases.get() == 0 &&
+            result.responseCode == BillingClient.BillingResponseCode.OK
+        ) {
+            list.forEach { purchase ->
+                if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
+                    deferredPurchaseFlow.tryEmit(purchase)
+                }
+            }
+        }
     }
 
     private val client: BillingClient = BillingClient.newBuilder(appContext)
@@ -119,21 +146,19 @@ class AndroidIapClient(
             )
             .build()
 
-        val launchResult = client.launchBillingFlow(activity, flowParams)
-        if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
-            return AndroidPurchaseOutcome.Failed("launch_failed: ${launchResult.debugMessage}")
+        // launch ~ 결과 await 구간 동안 purchasesListener 의 지연-완료 라우팅을 억제 —
+        // 본 호출이 결과를 직접 처리하므로 reconciler 와 이중 redeem 되지 않게 한다.
+        activePurchases.incrementAndGet()
+        try {
+            val launchResult = client.launchBillingFlow(activity, flowParams)
+            if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                return AndroidPurchaseOutcome.Failed("launch_failed: ${launchResult.debugMessage}")
+            }
+            val update = purchaseUpdates.first { it.matches(productId) }
+            return mapUpdate(productId, update)
+        } finally {
+            activePurchases.decrementAndGet()
         }
-
-        val update = purchaseUpdates.first { it.matches(productId) }
-        return mapUpdate(productId, update)
-    }
-
-    /**
-     * "Restore Purchases" UX 진입점 — query 만 트리거하고 결과 처리는 [AndroidIapReconciler]
-     * 가 담당. Play Billing SDK 타입을 호출자 (cmp 모듈) 에 노출하지 않기 위해 Unit 반환.
-     */
-    suspend fun restoreUnconsumed() {
-        queryUnconsumedPurchases()
     }
 
     /**
@@ -184,18 +209,6 @@ class AndroidIapClient(
             .setPurchaseToken(purchaseToken)
             .build()
         client.consumePurchase(params)
-    }
-
-    /**
-     * non-consumable / 구독으로 도입 시 ack 만 — 현재는 consumable 만이라 [consumePurchase] 가
-     * ack 도 겸하므로 본 메서드는 미사용. 향후 확장 대비 노출.
-     */
-    suspend fun acknowledgePurchase(purchaseToken: String) {
-        ensureConnected()
-        val params = AcknowledgePurchaseParams.newBuilder()
-            .setPurchaseToken(purchaseToken)
-            .build()
-        client.acknowledgePurchase(params)
     }
 
     private suspend fun queryProduct(productId: String): ProductDetails? {

@@ -1,5 +1,6 @@
 package com.vibi.shared.di
 
+import com.vibi.shared.BuildConfig
 import com.vibi.shared.data.repository.AndroidAudioMetadataExtractor
 import com.vibi.shared.data.repository.AndroidGallerySaver
 import com.vibi.shared.data.repository.AndroidShareSheetLauncher
@@ -37,15 +38,15 @@ val androidPlatformModule = module {
     // Android 에 없어 런타임 throw. iOS 가 v3 안정화 완료 후 별도 phase 에서 Android v3 작업.
     single<FfmpegExecutor> { get<RemoteRenderExecutor>() }
     single<ExportPlatformAdapter> {
-        AndroidExportPlatformAdapter(context = androidContext())
+        AndroidExportPlatformAdapter(executor = get())
     }
     single<VideoMetadataExtractor> { AndroidVideoMetadataExtractor(androidContext()) }
     single<VideoThumbnailExtractor> { AndroidVideoThumbnailExtractor(androidContext()) }
     single<AudioMetadataExtractor> { AndroidAudioMetadataExtractor(androidContext()) }
     single<AudioExtractor> { AndroidAudioExtractor() }
-    single<SeparationNotifier> { AndroidSeparationNotifier() }
+    single<SeparationNotifier> { AndroidSeparationNotifier(androidContext(), get()) }
     single<GallerySaver> { AndroidGallerySaver(androidContext()) }
-    single<ShareSheetLauncher> { AndroidShareSheetLauncher(androidContext()) }
+    single<ShareSheetLauncher> { AndroidShareSheetLauncher(androidContext(), get()) }
 
     // 인증 — Android 측 본 구현은 후속 phase. 현재는 stub.
     single<Settings> {
@@ -56,7 +57,13 @@ val androidPlatformModule = module {
     // 보류하고, manifest allowBackup=false 로 토큰의 백업 유출 벡터를 차단한 기존 prefs 를 재사용.
     // (향후 androidx Keystore 기반으로 교체 시 이 바인딩만 바꾸면 됨.)
     single<Settings>(named(SECURE_SETTINGS)) { get() }
-    single<GoogleSignInClient> { AndroidGoogleSignInClient() }
+    single<GoogleSignInClient> {
+        AndroidGoogleSignInClient(
+            appContext = androidContext(),
+            activityProvider = get(),
+            webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID,
+        )
+    }
     single<AppleSignInClient> { AndroidAppleSignInClient() }
 
     // Play Billing — ActivityProvider 는 VibiApplication.onCreate 에서 attachTo() 호출.

@@ -142,6 +142,8 @@ private fun startRecording(
         rec.setAudioSource(MediaRecorder.AudioSource.MIC)
         rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        // iOS 와 동일하게 mono (AVNumberOfChannelsKey=1) — 파일 크기 절감 + channel-0 분석 일치.
+        rec.setAudioChannels(1)
         rec.setAudioEncodingBitRate(128_000)
         rec.setAudioSamplingRate(44_100)
         rec.setOutputFile(dest.absolutePath)

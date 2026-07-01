@@ -1,9 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.room)
+}
+
+// :cmp 와 동일 패턴 — gitignored local.properties 에서 Android 빌드 설정 주입.
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) load(file.inputStream())
 }
 
 kotlin {
@@ -61,6 +69,10 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.koin.android)
             implementation(libs.play.billing.ktx)
+            // Android Google 로그인 (Credential Manager + Sign in with Google)
+            implementation(libs.androidx.credentials)
+            implementation(libs.androidx.credentials.play.services.auth)
+            implementation(libs.googleid)
         }
         val androidUnitTest by getting {
             dependencies {
@@ -79,6 +91,18 @@ android {
     compileSdk = 36
     defaultConfig {
         minSdk = 24
+
+        // Android Google 로그인(Credential Manager)의 serverClientId. idToken 의 aud 가 되며
+        // BFF GOOGLE_OAUTH_CLIENT_IDS 에 포함돼야 /auth/google 검증을 통과한다. local.properties
+        // 에서 주입(gitignore). 미설정 시 빈 문자열 → 런타임에 missing_google_web_client_id 로 실패.
+        buildConfigField(
+            "String",
+            "GOOGLE_WEB_CLIENT_ID",
+            "\"${localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")}\""
+        )
+    }
+    buildFeatures {
+        buildConfig = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

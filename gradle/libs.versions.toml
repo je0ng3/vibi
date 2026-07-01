@@ -23,6 +23,8 @@ lifecycleViewModel = "2.10.0"
 lifecycleViewModelCompose = "2.10.0"
 sqliteJdbc = "3.46.1.0"
 playBilling = "7.1.1"
+androidxCredentials = "1.3.0"
+googleid = "1.1.1"
 
 [libraries]
 # Kotlinx
@@ -83,6 +85,11 @@ multiplatform-settings = { group = "com.russhwolf", name = "multiplatform-settin
 
 # Google Play Billing (Android only — iOS uses StoreKit2 via IapBridge)
 play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
+
+# Credential Manager + Sign in with Google (Android auth — iOS uses GoogleSignIn SPM)
+androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "androidxCredentials" }
+androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "androidxCredentials" }
+googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 
 # Test
 junit = { group = "junit", name = "junit", version.ref = "junit" }

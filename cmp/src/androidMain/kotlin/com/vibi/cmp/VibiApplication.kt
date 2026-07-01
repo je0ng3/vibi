@@ -4,9 +4,13 @@ import android.app.Application
 import com.vibi.shared.data.local.db.VibiDatabaseInitializer
 import com.vibi.shared.di.androidPlatformModule
 import com.vibi.cmp.platform.RuntimeFlags
+import com.vibi.cmp.platform.sweepOrphanPickerMedia
 import com.vibi.shared.di.initKoin
 import com.vibi.shared.platform.ActivityProvider
 import com.vibi.shared.platform.AndroidIapReconciler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
@@ -31,5 +35,9 @@ class VibiApplication : Application() {
         if (RuntimeFlags.iapEnabled) {
             get<AndroidIapReconciler>().start()
         }
+        // 삭제/만료 드래프트가 남긴 picker_media 영상 복사본 정리 — cascadeDeleteProject 가 sourceUri
+        // 파일을 지우지 않아 filesDir 가 누적된다(iOS 도 leak 하나 Android 는 pick 마다 새 uuid 라 더 빠름).
+        // 라이브 segment/bgm sourceUri 와 5분 grace 로 진행 중 pick 을 보호하며 고아 dir 만 삭제.
+        CoroutineScope(Dispatchers.IO).launch { sweepOrphanPickerMedia() }
     }
 }
