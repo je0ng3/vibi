@@ -20,13 +20,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,7 +48,10 @@ import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
 import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.ui.account.UserAvatarButton
+import com.vibi.cmp.ui.components.VibiDialogButton
 import com.vibi.cmp.ui.account.UserMenuSheet
 import com.vibi.cmp.ui.cupertino.BodyText
 import com.vibi.cmp.ui.cupertino.PageScaffold
@@ -347,10 +353,14 @@ fun InputScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.onConfirmStartSeparation() }) { Text("Start") }
+                VibiDialogButton("Start", onClick = { viewModel.onConfirmStartSeparation() })
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.onCancelStartSeparation() }) { Text("Cancel") }
+                VibiDialogButton(
+                    "Cancel",
+                    onClick = { viewModel.onCancelStartSeparation() },
+                    contentColor = LocalVibiColors.current.mutedText,
+                )
             },
         )
     }
@@ -358,15 +368,40 @@ fun InputScreen(
     // "준비중" 카드 X 취소 경고 — 진행 중 분리는 어느 단계든 취소 시 크레딧 환불이 안 되므로 항상 고지.
     // "다시 보지 않기" 체크는 계정별로 영속(타임라인 취소 경로와 공유)돼 다음부터는 바로 취소된다.
     cancelWarnProjectId?.let { projectId ->
+        val tokens = LocalVibiColors.current
+        val typo = LocalVibiTypography.current
         var dontShowAgain by remember(projectId) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { cancelWarnProjectId = null },
-            title = { Text("Stop audio separation?") },
+            containerColor = tokens.panelBg,
+            titleContentColor = tokens.onBackgroundPrimary,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Stop audio separation?",
+                        style = typo.titleSm,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 우측 상단 X = 기존 "Keep processing" 과 동일하게 그냥 닫기(폴링 유지).
+                    IconButton(
+                        onClick = { cancelWarnProjectId = null },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Keep processing",
+                            tint = tokens.mutedText,
+                        )
+                    }
+                }
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                     Text(
                         "Separation will stop and this project will be removed. " +
                             "Credits already used won't be refunded.",
+                        style = typo.bodySm,
+                        color = tokens.mutedText,
                     )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -375,21 +410,28 @@ fun InputScreen(
                         Checkbox(
                             checked = dontShowAgain,
                             onCheckedChange = { dontShowAgain = it },
-                            colors = CheckboxDefaults.colors(checkedColor = LocalVibiColors.current.accent),
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = tokens.accent,
+                                uncheckedColor = tokens.mutedText,
+                            ),
                         )
-                        Text("Don't show this again")
+                        Text(
+                            "Don't show this again",
+                            style = typo.bodySm,
+                            color = tokens.onBackgroundPrimary,
+                        )
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
-                    viewModel.onDeleteDraft(projectId)
-                    cancelWarnProjectId = null
-                }) { Text("Stop separation") }
-            },
-            dismissButton = {
-                TextButton(onClick = { cancelWarnProjectId = null }) { Text("Keep processing") }
+                VibiDialogButton(
+                    "Stop separation",
+                    onClick = {
+                        if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
+                        viewModel.onDeleteDraft(projectId)
+                        cancelWarnProjectId = null
+                    },
+                )
             },
         )
     }

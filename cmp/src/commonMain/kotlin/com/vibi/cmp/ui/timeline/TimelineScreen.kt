@@ -90,7 +90,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.DisposableEffect
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
@@ -98,6 +97,7 @@ import com.vibi.cmp.theme.SpeakerPalette
 import com.vibi.cmp.theme.VibiRadius
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
+import com.vibi.cmp.ui.components.VibiDialogButton
 import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
@@ -1348,19 +1348,27 @@ fun TimelineScreen(
                 when {
                     // IAP 오픈 시 부족 → Buy credits. 무료 출시면 구매 진입이 없어 확인 버튼을
                     // 비우고 Cancel(dismissButton)만 남긴다 — 구매/수요 유도 없음.
-                    insufficient && RuntimeFlags.iapEnabled -> TextButton(onClick = {
-                        viewModel.onDismissBgmRemovalCost()
-                        viewModel.onRequestBuyCredits()
-                    }) { Text("Buy credits") }
+                    insufficient && RuntimeFlags.iapEnabled -> VibiDialogButton(
+                        "Buy credits",
+                        onClick = {
+                            viewModel.onDismissBgmRemovalCost()
+                            viewModel.onRequestBuyCredits()
+                        },
+                    )
                     insufficient -> Unit
-                    else -> TextButton(
+                    else -> VibiDialogButton(
+                        "Confirm",
                         enabled = preview != null,  // fetch 미완료 동안 confirm 잠시 disable
                         onClick = { viewModel.onConfirmBgmRemovalCost() },
-                    ) { Text("Confirm") }
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.onDismissBgmRemovalCost() }) { Text("Cancel") }
+                VibiDialogButton(
+                    "Cancel",
+                    onClick = { viewModel.onDismissBgmRemovalCost() },
+                    contentColor = tokens.mutedText,
+                )
             },
         )
     }
@@ -1461,12 +1469,15 @@ fun TimelineScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
-                    viewModel.onCancelProcessingSeparation(token)
-                    cancelWarnToken = null
-                    selectedProcessingToken = null
-                }) { Text("Stop separation", color = tokens.accent) }
+                VibiDialogButton(
+                    "Stop separation",
+                    onClick = {
+                        if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
+                        viewModel.onCancelProcessingSeparation(token)
+                        cancelWarnToken = null
+                        selectedProcessingToken = null
+                    },
+                )
             },
         )
     }

@@ -11,7 +11,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.input.ImeAction
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.ui.components.VibiDialogButton
 
 /** 이름 입력 길이 상한 — ViewModel 의 MAX_DISPLAY_NAME_LEN 과 동일. UI 단 1차 차단. */
 private const val RENAME_MAX_LEN = 80
@@ -85,14 +85,10 @@ fun RenameDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { commit() }) {
-                Text("Save", color = tokens.accent)
-            }
+            VibiDialogButton("Save", onClick = { commit() })
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = tokens.mutedText)
-            }
+            VibiDialogButton("Cancel", onClick = onDismiss, contentColor = tokens.mutedText)
         },
     )
 }

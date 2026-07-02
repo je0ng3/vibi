@@ -11,10 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,9 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
+import com.vibi.cmp.ui.components.VibiDialogButton
 
 /**
  * 사용자 정의 색 선택 dialog — RGB(A) slider 기반.
@@ -61,6 +61,7 @@ fun CustomColorPickerDialog(
     val hexString = formatArgbHex(effectiveAlpha, red.toInt(), green.toInt(), blue.toInt())
 
     val typo = LocalVibiTypography.current
+    val tokens = LocalVibiColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Pick a color", style = typo.titleLg) },
@@ -97,13 +98,13 @@ fun CustomColorPickerDialog(
             }
         },
         confirmButton = {
-            Button(onClick = {
+            VibiDialogButton("Select", onClick = {
                 onSelect(hexString)
                 onDismiss()
-            }) { Text("Select") }
+            })
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            VibiDialogButton("Cancel", onClick = onDismiss, contentColor = tokens.mutedText)
         },
     )
 }

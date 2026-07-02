@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.ui.components.VibiDialogButton
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.ui.account.UserMenuViewModel
 import org.koin.compose.viewmodel.koinViewModel
@@ -155,24 +156,20 @@ fun UserMenuSheet(
                 )
             },
             confirmButton = {
-                Text(
-                    text = "Delete",
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clickable {
-                            confirmDelete = false
-                            viewModel.deleteAccount()
-                        }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                VibiDialogButton(
+                    "Delete",
+                    onClick = {
+                        confirmDelete = false
+                        viewModel.deleteAccount()
+                    },
+                    contentColor = MaterialTheme.colorScheme.error,
                 )
             },
             dismissButton = {
-                Text(
-                    text = "Cancel",
-                    modifier = Modifier
-                        .clickable { confirmDelete = false }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                VibiDialogButton(
+                    "Cancel",
+                    onClick = { confirmDelete = false },
+                    contentColor = tokens.mutedText,
                 )
             },
         )
