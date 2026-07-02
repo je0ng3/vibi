@@ -361,7 +361,9 @@ private fun WatchAdForCreditRow(
     val enabled = ad.loaded && ad.remaining > 0 && !ad.watching
     val subtitle = when {
         ad.watching -> "Loading ad…"
-        ad.noAdAvailable -> "No ad available — please try again later"
+        ad.result == UserMenuViewModel.AdRewardResult.Granted -> "Credit added — thanks for watching!"
+        ad.result == UserMenuViewModel.AdRewardResult.Pending -> "Your credit is on its way — it'll appear shortly"
+        ad.result == UserMenuViewModel.AdRewardResult.NoAd -> "No ad available — please try again later"
         !ad.loaded -> "Checking…"
         ad.remaining <= 0 -> "You've reached today's limit"
         else -> "${ad.remaining} of ${ad.dailyCap} left today"

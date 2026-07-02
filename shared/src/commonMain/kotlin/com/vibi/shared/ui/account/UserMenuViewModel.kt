@@ -63,9 +63,19 @@ class UserMenuViewModel(
         val remaining: Int = 0,
         val dailyCap: Int = 0,
         val watching: Boolean = false,
-        /** 직전 시도가 광고 로드 실패(no-fill/오프라인 등)였는지 — UI 가 "광고 없음" 안내. 재시도 가능. */
-        val noAdAvailable: Boolean = false,
+        /** 직전 시도 결과 — UI 가 성공/지연/광고없음 안내를 띄우는 데 사용. 다음 시도·메뉴 재진입 시 [AdRewardResult.None] 으로 리셋. */
+        val result: AdRewardResult = AdRewardResult.None,
     )
+
+    /**
+     * "광고 보고 1크레딧" 직전 시도의 결과. 보상은 서버(SSV)가 지급하므로 클라는 관측만 한다.
+     * - [Granted] — 시청 완료 후 폴링 중 잔액 증가를 확인(지급 반영됨).
+     * - [Pending] — 시청은 완료했으나 폴링 창(~6초) 안에 증가를 못 봄. SSV 가 Google→BFF 비동기라
+     *               곧 반영될 수 있음. **무보상 침묵 방지**: 사용자에게 "곧 반영" 안내를 띄운다.
+     * - [NoAd]    — 광고 로드 실패(no-fill/오프라인). 재시도 가능.
+     * - [None]    — 표시할 결과 없음(초기 / 보상 전 닫음 / 메뉴 재진입 후).
+     */
+    enum class AdRewardResult { None, Granted, Pending, NoAd }
 
     private val _adReward = MutableStateFlow(AdRewardState())
 
@@ -98,7 +108,10 @@ class UserMenuViewModel(
 
     /** 메뉴 진입 시 호출 — 오늘 광고 보상 남은 횟수/상한을 BFF 에서 가져와 버튼 상태에 반영. */
     fun refreshAdRewardStatus() {
-        viewModelScope.launch { fetchAdRewardStatus() }
+        viewModelScope.launch {
+            _adReward.update { it.copy(result = AdRewardResult.None) } // 재진입 시 이전 안내 리셋
+            fetchAdRewardStatus()
+        }
     }
 
     private suspend fun fetchAdRewardStatus() {
@@ -118,39 +131,45 @@ class UserMenuViewModel(
     fun watchAdForCredit() {
         if (_adReward.value.watching) return
         viewModelScope.launch {
-            _adReward.update { it.copy(watching = true, noAdAvailable = false) }
-            var unavailable = false
+            _adReward.update { it.copy(watching = true, result = AdRewardResult.None) }
+            var result = AdRewardResult.None
             try {
                 val before = creditStore.balance.value
                 when (
                     runCatching { rewardedAdController.showRewardedAd(userSession.current()) }
                         .getOrElse { RewardedAdOutcome.UNAVAILABLE }
                 ) {
-                    RewardedAdOutcome.REWARD_EARNED -> pollBalanceUntilIncreased(before)
-                    RewardedAdOutcome.UNAVAILABLE -> unavailable = true
-                    RewardedAdOutcome.DISMISSED -> Unit // 보상 전 닫음 — 조용히 종료
+                    // 시청 완료 — 서버 SSV 가 지급. 폴링으로 증가를 확인하면 Granted, 창 안에
+                    // 못 보면 Pending("곧 반영") 으로 안내해 무보상 침묵을 막는다.
+                    RewardedAdOutcome.REWARD_EARNED ->
+                        result = if (pollBalanceUntilIncreased(before)) AdRewardResult.Granted
+                        else AdRewardResult.Pending
+                    RewardedAdOutcome.UNAVAILABLE -> result = AdRewardResult.NoAd
+                    RewardedAdOutcome.DISMISSED -> Unit // 보상 전 닫음 — 조용히 종료(None 유지)
                 }
                 fetchAdRewardStatus()
             } finally {
-                _adReward.update { it.copy(watching = false, noAdAvailable = unavailable) }
+                _adReward.update { it.copy(watching = false, result = result) }
             }
         }
     }
 
     /**
      * SSV 는 Google→BFF 서버간 비동기라 시청 직후 잔액이 아직 안 올랐을 수 있다. 최대 ~6초 동안
-     * 1초 간격으로 폴링해 증가를 감지하면 종료. 끝내 못 감지해도 다음 refreshBalance 에서 반영된다.
+     * 1초 간격으로 폴링해 증가를 감지하면 true, 끝내 못 감지하면 false (호출자가 "곧 반영" 안내).
+     * 어느 쪽이든 다음 refreshBalance 에서 최종 반영된다.
      */
-    private suspend fun pollBalanceUntilIncreased(before: Int) {
+    private suspend fun pollBalanceUntilIncreased(before: Int): Boolean {
         val attempts = 6
         repeat(attempts) { attempt ->
             val resp = runCatching { bffApi.getCreditBalance() }.getOrNull()
             if (resp != null) {
                 creditStore.setBalance(userSession.current(), resp.balance)
-                if (resp.balance > before) return
+                if (resp.balance > before) return true
             }
             if (attempt < attempts - 1) delay(1_000) // 마지막 시도 뒤에는 불필요한 대기 생략
         }
+        return false
     }
 
     fun signOut() {
