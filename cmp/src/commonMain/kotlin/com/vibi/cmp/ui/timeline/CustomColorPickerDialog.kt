@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,11 +21,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
-import com.vibi.cmp.ui.components.VibiDialogButton
+import com.vibi.cmp.ui.components.VibiDialog
+import com.vibi.cmp.ui.components.VibiPrimaryButton
 
 /**
  * 사용자 정의 색 선택 dialog — RGB(A) slider 기반.
@@ -61,52 +60,47 @@ fun CustomColorPickerDialog(
     val hexString = formatArgbHex(effectiveAlpha, red.toInt(), green.toInt(), blue.toInt())
 
     val typo = LocalVibiTypography.current
-    val tokens = LocalVibiColors.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Pick a color", style = typo.titleLg) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                // 큰 preview Box — 체커보드 배경 위에 색을 올려 alpha 가시화.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp)
-                        .background(Color.White, VibiShape.sm)
-                        .border(1.dp, Color.Black.copy(alpha = 0.2f), VibiShape.sm),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(64.dp)
-                            .background(previewColor, VibiShape.sm),
-                    )
-                }
-                Text(
-                    text = hexString,
-                    style = typo.bodyMd,
-                    modifier = Modifier.fillMaxWidth().padding(top = VibiSpacing.xxs),
-                )
-
-                ChannelSlider(label = "R", value = red, color = Color.Red) { red = it }
-                ChannelSlider(label = "G", value = green, color = Color(0xFF2E7D32)) { green = it }
-                ChannelSlider(label = "B", value = blue, color = Color.Blue) { blue = it }
-                if (showAlpha) {
-                    ChannelSlider(label = "A", value = alpha, color = Color.Gray) { alpha = it }
-                }
-            }
-        },
-        confirmButton = {
-            VibiDialogButton("Select", onClick = {
+    VibiDialog(
+        title = "Pick a color",
+        onDismiss = onDismiss,
+        primary = {
+            VibiPrimaryButton("Select", onClick = {
                 onSelect(hexString)
                 onDismiss()
             })
         },
-        dismissButton = {
-            VibiDialogButton("Cancel", onClick = onDismiss, contentColor = tokens.mutedText)
-        },
-    )
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
+            // 큰 preview Box — 체커보드 배경 위에 색을 올려 alpha 가시화.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .background(Color.White, VibiShape.sm)
+                    .border(1.dp, Color.Black.copy(alpha = 0.2f), VibiShape.sm),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .background(previewColor, VibiShape.sm),
+                )
+            }
+            Text(
+                text = hexString,
+                style = typo.bodyMd,
+                modifier = Modifier.fillMaxWidth().padding(top = VibiSpacing.xxs),
+            )
+
+            ChannelSlider(label = "R", value = red, color = Color.Red) { red = it }
+            ChannelSlider(label = "G", value = green, color = Color(0xFF2E7D32)) { green = it }
+            ChannelSlider(label = "B", value = blue, color = Color.Blue) { blue = it }
+            if (showAlpha) {
+                ChannelSlider(label = "A", value = alpha, color = Color.Gray) { alpha = it }
+            }
+        }
+    }
 }
 
 @Composable

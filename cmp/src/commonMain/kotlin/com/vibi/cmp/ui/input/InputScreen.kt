@@ -21,12 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -51,7 +47,8 @@ import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.ui.account.UserAvatarButton
-import com.vibi.cmp.ui.components.VibiDialogButton
+import com.vibi.cmp.ui.components.VibiDialog
+import com.vibi.cmp.ui.components.VibiPrimaryButton
 import com.vibi.cmp.ui.account.UserMenuSheet
 import com.vibi.cmp.ui.cupertino.BodyText
 import com.vibi.cmp.ui.cupertino.PageScaffold
@@ -340,29 +337,25 @@ fun InputScreen(
     // 취소하면 선택만 해제(크레딧 미소모). 잔액 부족 시엔 시작 후 "준비중" 카드가 실패로 안내.
     if (state.awaitingSeparationConfirm) {
         val credits = state.separationCreditCost ?: 1
-        AlertDialog(
-            onDismissRequest = { viewModel.onCancelStartSeparation() },
-            title = { Text("Start audio separation?") },
-            text = {
-                Text(
-                    if (credits == 1) {
-                        "This will use 1 credit to separate the audio from your video."
-                    } else {
-                        "This will use $credits credits to separate the audio from your video."
-                    }
-                )
+        val tokens = LocalVibiColors.current
+        val typo = LocalVibiTypography.current
+        VibiDialog(
+            title = "Start audio separation?",
+            onDismiss = { viewModel.onCancelStartSeparation() },
+            primary = {
+                VibiPrimaryButton("Start", onClick = { viewModel.onConfirmStartSeparation() })
             },
-            confirmButton = {
-                VibiDialogButton("Start", onClick = { viewModel.onConfirmStartSeparation() })
-            },
-            dismissButton = {
-                VibiDialogButton(
-                    "Cancel",
-                    onClick = { viewModel.onCancelStartSeparation() },
-                    contentColor = LocalVibiColors.current.mutedText,
-                )
-            },
-        )
+        ) {
+            Text(
+                text = if (credits == 1) {
+                    "This will use 1 credit to separate the audio from your video."
+                } else {
+                    "This will use $credits credits to separate the audio from your video."
+                },
+                style = typo.bodySm,
+                color = tokens.mutedText,
+            )
+        }
     }
 
     // "준비중" 카드 X 취소 경고 — 진행 중 분리는 어느 단계든 취소 시 크레딧 환불이 안 되므로 항상 고지.
@@ -371,61 +364,14 @@ fun InputScreen(
         val tokens = LocalVibiColors.current
         val typo = LocalVibiTypography.current
         var dontShowAgain by remember(projectId) { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { cancelWarnProjectId = null },
-            containerColor = tokens.panelBg,
-            titleContentColor = tokens.onBackgroundPrimary,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Stop audio separation?",
-                        style = typo.titleSm,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // 우측 상단 X = 기존 "Keep processing" 과 동일하게 그냥 닫기(폴링 유지).
-                    IconButton(
-                        onClick = { cancelWarnProjectId = null },
-                        modifier = Modifier.size(24.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Keep processing",
-                            tint = tokens.mutedText,
-                        )
-                    }
-                }
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                    Text(
-                        "Separation will stop and this project will be removed. " +
-                            "Credits already used won't be refunded.",
-                        style = typo.bodySm,
-                        color = tokens.mutedText,
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
-                    ) {
-                        Checkbox(
-                            checked = dontShowAgain,
-                            onCheckedChange = { dontShowAgain = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = tokens.accent,
-                                uncheckedColor = tokens.mutedText,
-                            ),
-                        )
-                        Text(
-                            "Don't show this again",
-                            style = typo.bodySm,
-                            color = tokens.onBackgroundPrimary,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                VibiDialogButton(
+        // 우측 상단 X = 기존 "Keep processing" 과 동일하게 그냥 닫기(폴링 유지).
+        VibiDialog(
+            title = "Stop audio separation?",
+            onDismiss = { cancelWarnProjectId = null },
+            primary = {
+                VibiPrimaryButton(
                     "Stop separation",
+                    destructive = true,
                     onClick = {
                         if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
                         viewModel.onDeleteDraft(projectId)
@@ -433,7 +379,32 @@ fun InputScreen(
                     },
                 )
             },
-        )
+        ) {
+            Text(
+                "Separation will stop and this project will be removed. " +
+                    "Credits already used won't be refunded.",
+                style = typo.bodySm,
+                color = tokens.mutedText,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
+            ) {
+                Checkbox(
+                    checked = dontShowAgain,
+                    onCheckedChange = { dontShowAgain = it },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = tokens.accent,
+                        uncheckedColor = tokens.mutedText,
+                    ),
+                )
+                Text(
+                    "Don't show this again",
+                    style = typo.bodySm,
+                    color = tokens.onBackgroundPrimary,
+                )
+            }
+        }
     }
 }
 

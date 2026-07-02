@@ -82,7 +82,6 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -97,7 +96,8 @@ import com.vibi.cmp.theme.SpeakerPalette
 import com.vibi.cmp.theme.VibiRadius
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
-import com.vibi.cmp.ui.components.VibiDialogButton
+import com.vibi.cmp.ui.components.VibiDialog
+import com.vibi.cmp.ui.components.VibiPrimaryButton
 import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
@@ -110,7 +110,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -1322,55 +1321,54 @@ fun TimelineScreen(
     state.bgmRemovalCostPrompt?.let { prompt ->
         val preview = prompt.costPreview
         val insufficient = preview?.sufficient == false
-        AlertDialog(
-            onDismissRequest = { viewModel.onDismissBgmRemovalCost() },
-            title = { Text("Isolate vocals") },
-            text = {
-                // 무료 출시(IAP 미오픈) + 잔액 부족이면 구매 유도 없이 중립 안내만.
-                if (insufficient && !RuntimeFlags.iapEnabled) {
-                    FreeCreditsUsedNote()
-                } else {
-                    Text(
-                        text = when {
-                            preview == null -> "Checking credit balance…"
-                            insufficient ->
-                                "This separation needs ${preview.credits} credits, " +
-                                    "but you only have ${preview.balance}."
-                            else -> "This separation will use ${preview.credits} credits " +
-                                "(balance: ${preview.balance})."
-                        },
-                        color = if (insufficient) MaterialTheme.colorScheme.error
-                        else LocalContentColor.current,
-                    )
+        VibiDialog(
+            title = "Isolate vocals",
+            onDismiss = { viewModel.onDismissBgmRemovalCost() },
+            // IAP 오픈 시 부족 → Buy credits. 무료 출시면 구매 진입이 없어 primary 를 비우고
+            // X(닫기)만 남긴다 — 구매/수요 유도 없음. 그 외엔 Confirm.
+            primary = when {
+                insufficient && RuntimeFlags.iapEnabled -> {
+                    {
+                        VibiPrimaryButton(
+                            "Buy credits",
+                            onClick = {
+                                viewModel.onDismissBgmRemovalCost()
+                                viewModel.onRequestBuyCredits()
+                            },
+                        )
+                    }
+                }
+                insufficient -> null
+                else -> {
+                    {
+                        VibiPrimaryButton(
+                            "Confirm",
+                            enabled = preview != null,  // fetch 미완료 동안 confirm 잠시 disable
+                            onClick = { viewModel.onConfirmBgmRemovalCost() },
+                        )
+                    }
                 }
             },
-            confirmButton = {
-                when {
-                    // IAP 오픈 시 부족 → Buy credits. 무료 출시면 구매 진입이 없어 확인 버튼을
-                    // 비우고 Cancel(dismissButton)만 남긴다 — 구매/수요 유도 없음.
-                    insufficient && RuntimeFlags.iapEnabled -> VibiDialogButton(
-                        "Buy credits",
-                        onClick = {
-                            viewModel.onDismissBgmRemovalCost()
-                            viewModel.onRequestBuyCredits()
-                        },
-                    )
-                    insufficient -> Unit
-                    else -> VibiDialogButton(
-                        "Confirm",
-                        enabled = preview != null,  // fetch 미완료 동안 confirm 잠시 disable
-                        onClick = { viewModel.onConfirmBgmRemovalCost() },
-                    )
-                }
-            },
-            dismissButton = {
-                VibiDialogButton(
-                    "Cancel",
-                    onClick = { viewModel.onDismissBgmRemovalCost() },
-                    contentColor = tokens.mutedText,
+        ) {
+            // 무료 출시(IAP 미오픈) + 잔액 부족이면 구매 유도 없이 중립 안내만.
+            if (insufficient && !RuntimeFlags.iapEnabled) {
+                FreeCreditsUsedNote()
+            } else {
+                Text(
+                    text = when {
+                        preview == null -> "Checking credit balance…"
+                        insufficient ->
+                            "This separation needs ${preview.credits} credits, " +
+                                "but you only have ${preview.balance}."
+                        else -> "This separation will use ${preview.credits} credits " +
+                            "(balance: ${preview.balance})."
+                    },
+                    style = typo.bodySm,
+                    color = if (insufficient) MaterialTheme.colorScheme.error
+                    else tokens.mutedText,
                 )
-            },
-        )
+            }
+        }
     }
 
     // 프로젝트 이름 변경 — 헤더 제목 탭. 표시용일 뿐 저장/렌더 동작과 무관.
@@ -1416,61 +1414,14 @@ fun TimelineScreen(
     // 다음부터는 이 다이얼로그 없이 바로 취소된다.
     cancelWarnToken?.let { token ->
         var dontShowAgain by remember(token) { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { cancelWarnToken = null },
-            containerColor = tokens.panelBg,
-            titleContentColor = tokens.onBackgroundPrimary,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Stop audio separation?",
-                        style = typo.titleSm,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // 우측 상단 X = 기존 "Keep processing" 과 동일하게 그냥 닫기(폴링 유지).
-                    IconButton(
-                        onClick = { cancelWarnToken = null },
-                        modifier = Modifier.size(24.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Keep processing",
-                            tint = tokens.mutedText,
-                        )
-                    }
-                }
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                    Text(
-                        "Separation will stop and this part keeps its original audio. " +
-                            "Credits already used won't be refunded.",
-                        style = typo.bodySm,
-                        color = tokens.mutedText,
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
-                    ) {
-                        Checkbox(
-                            checked = dontShowAgain,
-                            onCheckedChange = { dontShowAgain = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = tokens.accent,
-                                uncheckedColor = tokens.mutedText,
-                            ),
-                        )
-                        Text(
-                            "Don't show this again",
-                            style = typo.bodySm,
-                            color = tokens.onBackgroundPrimary,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                VibiDialogButton(
+        // 우측 상단 X = 기존 "Keep processing" 과 동일하게 그냥 닫기(폴링 유지).
+        VibiDialog(
+            title = "Stop audio separation?",
+            onDismiss = { cancelWarnToken = null },
+            primary = {
+                VibiPrimaryButton(
                     "Stop separation",
+                    destructive = true,
                     onClick = {
                         if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
                         viewModel.onCancelProcessingSeparation(token)
@@ -1479,7 +1430,32 @@ fun TimelineScreen(
                     },
                 )
             },
-        )
+        ) {
+            Text(
+                "Separation will stop and this part keeps its original audio. " +
+                    "Credits already used won't be refunded.",
+                style = typo.bodySm,
+                color = tokens.mutedText,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
+            ) {
+                Checkbox(
+                    checked = dontShowAgain,
+                    onCheckedChange = { dontShowAgain = it },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = tokens.accent,
+                        uncheckedColor = tokens.mutedText,
+                    ),
+                )
+                Text(
+                    "Don't show this again",
+                    style = typo.bodySm,
+                    color = tokens.onBackgroundPrimary,
+                )
+            }
+        }
     }
 
     // 잔액 부족 분기로 띄워지는 UserMenu — 안에 CreditPurchaseSheet 가 내장돼 있어 사용자가

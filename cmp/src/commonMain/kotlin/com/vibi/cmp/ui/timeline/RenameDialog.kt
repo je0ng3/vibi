@@ -1,11 +1,9 @@
 package com.vibi.cmp.ui.timeline
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -19,7 +17,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.input.ImeAction
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
-import com.vibi.cmp.ui.components.VibiDialogButton
+import com.vibi.cmp.ui.components.VibiDialog
+import com.vibi.cmp.ui.components.VibiPrimaryButton
 
 /** 이름 입력 길이 상한 — ViewModel 의 MAX_DISPLAY_NAME_LEN 과 동일. UI 단 1차 차단. */
 private const val RENAME_MAX_LEN = 80
@@ -45,50 +44,40 @@ fun RenameDialog(
 
     fun commit() = onConfirm(text.trim())
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = tokens.panelBg,
-        titleContentColor = tokens.onBackgroundPrimary,
-        title = { Text(title, style = typo.titleSm) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { if (it.length <= RENAME_MAX_LEN) text = it },
-                    singleLine = true,
-                    placeholder = if (placeholder.isNotBlank()) {
-                        { Text(placeholder, style = typo.bodySm, color = tokens.mutedText) }
-                    } else null,
-                    // 우측 끝 X — 입력된 이름 한번에 비우기. 텍스트 있을 때만 노출.
-                    trailingIcon = if (text.isNotEmpty()) {
-                        {
-                            IconButton(onClick = { text = "" }) {
-                                Icon(
-                                    imageVector = Icons.Filled.Clear,
-                                    contentDescription = "Clear",
-                                    tint = tokens.mutedText,
-                                )
-                            }
-                        }
-                    } else null,
-                    textStyle = typo.bodyStrong,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { commit() }),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = tokens.onBackgroundPrimary,
-                        unfocusedTextColor = tokens.onBackgroundPrimary,
-                        cursorColor = tokens.accent,
-                        focusedBorderColor = tokens.accent,
-                        unfocusedBorderColor = tokens.chipBg,
-                    ),
-                )
-            }
-        },
-        confirmButton = {
-            VibiDialogButton("Save", onClick = { commit() })
-        },
-        dismissButton = {
-            VibiDialogButton("Cancel", onClick = onDismiss, contentColor = tokens.mutedText)
-        },
-    )
+    VibiDialog(
+        title = title,
+        onDismiss = onDismiss,
+        primary = { VibiPrimaryButton("Save", onClick = { commit() }) },
+    ) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { if (it.length <= RENAME_MAX_LEN) text = it },
+            singleLine = true,
+            placeholder = if (placeholder.isNotBlank()) {
+                { Text(placeholder, style = typo.bodySm, color = tokens.mutedText) }
+            } else null,
+            // 우측 끝 X — 입력된 이름 한번에 비우기. 텍스트 있을 때만 노출.
+            trailingIcon = if (text.isNotEmpty()) {
+                {
+                    IconButton(onClick = { text = "" }) {
+                        Icon(
+                            imageVector = Icons.Filled.Clear,
+                            contentDescription = "Clear",
+                            tint = tokens.mutedText,
+                        )
+                    }
+                }
+            } else null,
+            textStyle = typo.bodyStrong,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { commit() }),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = tokens.onBackgroundPrimary,
+                unfocusedTextColor = tokens.onBackgroundPrimary,
+                cursorColor = tokens.accent,
+                focusedBorderColor = tokens.accent,
+                unfocusedBorderColor = tokens.chipBg,
+            ),
+        )
+    }
 }

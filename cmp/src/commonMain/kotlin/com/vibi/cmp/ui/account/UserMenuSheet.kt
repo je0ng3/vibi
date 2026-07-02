@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -40,7 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.theme.LocalVibiColors
-import com.vibi.cmp.ui.components.VibiDialogButton
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.ui.components.VibiDialog
+import com.vibi.cmp.ui.components.VibiPrimaryButton
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.ui.account.UserMenuViewModel
 import org.koin.compose.viewmodel.koinViewModel
@@ -157,35 +158,30 @@ fun UserMenuSheet(
         )
     }
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete account?") },
-            text = {
-                // 실제 동작과 일치시킨 고지(App Store 5.1.1 투명성): BFF 가 서버 계정을 영구
-                // 삭제하고 이 기기 세션을 종료한다. 로컬 프로젝트 row 는 userId 격리로 더는
-                // 접근 불가(같은 계정 재로그인 불가)하므로 "기기에서 삭제"로 단정하지 않는다.
-                Text(
-                    "Your account will be permanently deleted and you'll be signed out. This can't be undone."
-                )
-            },
-            confirmButton = {
-                VibiDialogButton(
+        val typo = LocalVibiTypography.current
+        VibiDialog(
+            title = "Delete account?",
+            onDismiss = { confirmDelete = false },
+            primary = {
+                VibiPrimaryButton(
                     "Delete",
+                    destructive = true,
                     onClick = {
                         confirmDelete = false
                         viewModel.deleteAccount()
                     },
-                    contentColor = MaterialTheme.colorScheme.error,
                 )
             },
-            dismissButton = {
-                VibiDialogButton(
-                    "Cancel",
-                    onClick = { confirmDelete = false },
-                    contentColor = tokens.mutedText,
-                )
-            },
-        )
+        ) {
+            // 실제 동작과 일치시킨 고지(App Store 5.1.1 투명성): BFF 가 서버 계정을 영구
+            // 삭제하고 이 기기 세션을 종료한다. 로컬 프로젝트 row 는 userId 격리로 더는
+            // 접근 불가(같은 계정 재로그인 불가)하므로 "기기에서 삭제"로 단정하지 않는다.
+            Text(
+                "Your account will be permanently deleted and you'll be signed out. This can't be undone.",
+                style = typo.bodySm,
+                color = tokens.mutedText,
+            )
+        }
     }
 }
 
