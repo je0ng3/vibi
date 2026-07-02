@@ -5,6 +5,7 @@ import com.vibi.shared.platform.GoogleSignInBridge
 import com.vibi.shared.platform.IapBridge
 import com.vibi.shared.platform.IapTransactionReconciler
 import com.vibi.shared.platform.OnDeviceVideoExportBridge
+import com.vibi.shared.platform.RewardedAdBridge
 import org.koin.dsl.module
 import org.koin.mp.KoinPlatform
 
@@ -26,6 +27,7 @@ fun initKoinIos(
     appleSignInBridge: AppleSignInBridge,
     iapBridge: IapBridge,
     onDeviceVideoExportBridge: OnDeviceVideoExportBridge,
+    rewardedAdBridge: RewardedAdBridge,
     iapEnabled: Boolean,
 ) {
     initKoin(
@@ -37,6 +39,7 @@ fun initKoinIos(
                 single<AppleSignInBridge> { appleSignInBridge }
                 single<IapBridge> { iapBridge }
                 single<OnDeviceVideoExportBridge> { onDeviceVideoExportBridge }
+                single<RewardedAdBridge> { rewardedAdBridge }
             },
         ),
     )

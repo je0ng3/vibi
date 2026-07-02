@@ -13,6 +13,7 @@ import com.vibi.shared.data.remote.dto.SeparationJobResponse
 import com.vibi.shared.data.remote.dto.SeparationSpec
 import com.vibi.shared.data.remote.dto.SeparationStatusResponse
 import com.vibi.shared.data.remote.dto.TestdataSeparationFolderDto
+import com.vibi.shared.data.remote.dto.AdMobRewardStatusResponse
 import com.vibi.shared.data.remote.dto.AdminGrantRequest
 import com.vibi.shared.data.remote.dto.CreditBalanceResponse
 import com.vibi.shared.data.remote.dto.CreditCostResponse
@@ -86,6 +87,13 @@ class BffApi(
     /** 현재 사용자의 크레딧 잔액. row 가 없으면 0. */
     suspend fun getCreditBalance(): CreditBalanceResponse =
         client.get("api/v2/credits").body()
+
+    /**
+     * 보상형 광고(AdMob) 일일 보상 현황 — "오늘 N/3" 표시 + 버튼 활성/비활성 판단용.
+     * 실제 보상 지급은 Google → BFF SSV 콜백으로 처리되므로 모바일은 이 현황만 조회한다.
+     */
+    suspend fun getAdMobRewardStatus(): AdMobRewardStatusResponse =
+        client.get("api/v2/credits/admob-status").body()
 
     /**
      * 음원 분리 비용 견적 — "이 구간 X 크레딧 사용, 진행할까요?" 확인 팝업 표시 전 호출.

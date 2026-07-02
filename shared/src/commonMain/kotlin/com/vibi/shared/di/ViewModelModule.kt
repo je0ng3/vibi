@@ -69,6 +69,7 @@ val viewModelModule = module {
             userSession = get(),
             bffApi = get(),
             creditPurchaseService = get(),
+            rewardedAdController = get(),
         )
     }
 }

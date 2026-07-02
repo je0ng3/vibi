@@ -16,6 +16,11 @@ packages:
   GoogleSignIn:
     url: https://github.com/google/GoogleSignIn-iOS
     from: 8.0.0
+  # Google Mobile Ads (AdMob) — 보상형 광고. v11.x 의 GAD-prefixed API 기준으로 RewardedAdBridgeImpl
+  # 작성 (from 11.0.0 → 11.x 최신, 12.x 메이저로는 점프 안 함). 업그레이드 시 prefix 변경 주의.
+  GoogleMobileAds:
+    url: https://github.com/googleads/swift-package-manager-google-mobile-ads
+    from: 11.0.0
 
 targets:
   iosApp:
@@ -26,6 +31,8 @@ targets:
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
+      - package: GoogleMobileAds
+        product: GoogleMobileAds
     entitlements:
       # properties 미정의 시 xcodegen 이 매 generate 마다 entitlements 파일을 빈 plist 로
       # 덮어씀. App ID capability 와 일치하도록 여기서 single source 로 관리.
@@ -77,6 +84,12 @@ targets:
         # 코드/plist 어디에도 client id / URL 을 직접 적지 않는다.
         GIDClientID: $(GOOGLE_OAUTH_IOS_CLIENT_ID)
         BFFBaseURL: $(BFF_BASE_URL)
+        # AdMob 앱 ID. TODO(AdMob): 실제 iOS 앱 ID 로 교체 — 현재 Google 공식 테스트 ID
+        # (테스트 광고만, 실수익 0). 누락 시 Ads SDK 가 런타임 크래시하므로 반드시 존재해야 함.
+        GADApplicationIdentifier: ca-app-pub-3940256099942544~1458002511
+        # SKAdNetwork — 광고 어트리뷰션(iOS 14+). Google 네트워크 ID. 광고 네트워크가 더 필요하면 추가.
+        SKAdNetworkItems:
+          - SKAdNetworkIdentifier: cstr6suwn9.skadnetwork
         # 로컬 BFF (http://localhost:8080, 또는 실기기에서 맥 LAN IP) 테스트용 ATS 예외.
         # NSAllowsLocalNetworking 은 localhost / .local / private IP 에만 cleartext 허용 —
         # public host (api.vibi.fm 등) 는 그대로 HTTPS 강제 (cleartext 차단 정책 유지).

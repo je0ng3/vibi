@@ -13,6 +13,12 @@
     - 새 데이터 수집 (예: 위치, 연락처) 추가 시 → NSPrivacyCollectedDataTypes 에 항목 추가.
     - 광고/Analytics SDK 도입 시 → NSPrivacyTracking 을 true 로 바꾸고 NSPrivacyTrackingDomains 채우기.
 
+  AdMob (보상형 광고) — 현재 **비맞춤(non-personalized, npa=1)** 으로만 노출하므로 앱 간 추적이
+  없어 NSPrivacyTracking 은 그대로 false 다. 광고 식별자 등 GMA SDK 가 수집하는 데이터는 SDK
+  프레임워크에 동봉된 자체 PrivacyInfo.xcprivacy 가 선언하므로 본(앱) manifest 에 중복 기재하지
+  않는다. 향후 맞춤 광고로 전환하면 NSPrivacyTracking=true + NSPrivacyTrackingDomains(구글 광고
+  도메인) + ATT 프롬프트를 추가해야 한다.
+
   레퍼런스:
     https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
     https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api

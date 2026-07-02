@@ -14,8 +14,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -67,6 +71,10 @@ fun UserMenuSheet(
         // 잔액은 결제(iapEnabled) 와 무관하게 갱신 — 무료 선출시에도 남은 무료 분리 횟수를
         // 최신으로 표시. 구매/충전 진입만 iapEnabled 로 게이팅.
         viewModel.refreshBalance()
+        // 무료 출시(iapEnabled=false) + 광고 보상 활성 시, 오늘 남은 광고 보상 횟수를 조회.
+        if (!RuntimeFlags.iapEnabled && RuntimeFlags.rewardedAdsEnabled) {
+            viewModel.refreshAdRewardStatus()
+        }
         viewModel.navigateToLogin.collect { onSignedOut() }
     }
 
@@ -93,6 +101,12 @@ fun UserMenuSheet(
                 BuyCreditsRow(onClick = { purchaseOpen = true })
             } else {
                 ResearchPreviewNote()
+                if (RuntimeFlags.rewardedAdsEnabled) {
+                    WatchAdForCreditRow(
+                        ad = state.adReward,
+                        onWatch = viewModel::watchAdForCredit,
+                    )
+                }
             }
 
             Row(
@@ -328,5 +342,75 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
             text = "›",
             style = TextStyle(fontSize = 22.sp, color = tokens.mutedText)
         )
+    }
+}
+
+/**
+ * Research preview 카드 아래 "광고 보고 1크레딧 받기" — 보상형 광고 진입.
+ *
+ * 끝까지 시청하면 BFF SSV 콜백으로 +1 크레딧 (서버가 하루 [AdRewardState.dailyCap] 회 제한).
+ * 미준비/소진/시청중이면 비활성. 시청 중에는 우측에 스피너. 판매가 아닌 무료 획득 경로라
+ * 가격/구매 문구는 두지 않는다.
+ */
+@Composable
+private fun WatchAdForCreditRow(
+    ad: UserMenuViewModel.AdRewardState,
+    onWatch: () -> Unit,
+) {
+    val tokens = LocalVibiColors.current
+    val enabled = ad.loaded && ad.remaining > 0 && !ad.watching
+    val subtitle = when {
+        ad.watching -> "Loading ad…"
+        ad.noAdAvailable -> "No ad available — please try again later"
+        !ad.loaded -> "Checking…"
+        ad.remaining <= 0 -> "You've reached today's limit"
+        else -> "${ad.remaining} of ${ad.dailyCap} left today"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(tokens.chipBg)
+            .clickable(enabled = enabled, onClick = onWatch)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(tokens.accent),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Watch an ad for a free credit",
+                style = TextStyle(
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = TextStyle(fontSize = 12.sp, color = tokens.mutedText),
+            )
+        }
+        if (ad.watching) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = tokens.accent,
+            )
+        }
     }
 }

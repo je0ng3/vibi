@@ -27,4 +27,16 @@ object RuntimeFlags {
      * StoreKit2(iOS) / Play Billing 7.x(Android) 실연동으로 동작한다.
      */
     const val iapEnabled: Boolean = false
+
+    /**
+     * 보상형 광고로 무료 크레딧 받기 진입점 노출 (Research preview 카드의 "광고 보고 1크레딧 받기").
+     *
+     * true 면 UserMenu 에서 광고 시청 → BFF SSV 콜백으로 +1 크레딧 (하루 상한은 서버 dailyCap).
+     * 광고는 무료 콘텐츠 획득 경로일 뿐 판매가 아니므로 IAP 와 독립 — [iapEnabled] 와 무관하게 동작.
+     *
+     * **실제 동작 전제**: AdMob 앱/광고단위 ID + Info.plist(GADApplicationIdentifier) /
+     * AndroidManifest(APPLICATION_ID) 설정 + AdMob 콘솔 SSV 콜백 URL 등록 필요. 미설정 시
+     * 광고 로드 실패로 버튼이 비활성 유지(안전).
+     */
+    const val rewardedAdsEnabled: Boolean = true
 }

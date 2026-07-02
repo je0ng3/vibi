@@ -77,3 +77,15 @@ data class CreditPurchaseResponse(
 data class AdminGrantRequest(
     val productId: String,
 )
+
+/**
+ * GET /api/v2/credits/admob-status 응답 — 보상형 광고 일일 보상 현황.
+ *
+ * - [dailyCap]  — 하루 상한 ("오늘 N/cap" 표시용).
+ * - [remaining] — 남은 횟수. 0 이면 모바일이 "광고 보고 받기" 버튼 비활성.
+ */
+@Serializable
+data class AdMobRewardStatusResponse(
+    val dailyCap: Int,
+    val remaining: Int,
+)
