@@ -2,18 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Android 13+ PickVisualMedia 호환 + 메타데이터 추출용 -->
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- 영상 선택은 PickVisualMedia(사진 선택 도구), 오디오 선택은 SAF OpenDocument 를 쓰므로
+         READ_MEDIA_* / READ_EXTERNAL_STORAGE 권한이 필요 없다 (picker 가 임시 URI 권한을 부여).
+         Google Play 사진·동영상 권한 정책상 이 권한들을 선언하면 정당화 요구 대상이 되므로 제거. -->
     <!-- 즉시 녹음 기능 — runtime 마이크 권한 prompt -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 음원분리 완료/실패 알림 (API 33+ runtime prompt) — iOS UNUserNotificationCenter 동등 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Android 12 이하 호환 -->
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
     <!-- Android 9 이하: 갤러리 저장 -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
