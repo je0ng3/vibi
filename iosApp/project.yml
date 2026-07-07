@@ -43,7 +43,7 @@ targets:
     info:
       path: iosApp/Info.plist
       properties:
-        CFBundleShortVersionString: "1.0"
+        CFBundleShortVersionString: "1.0.1"
         CFBundleVersion: "1"
         # CFBundleName 기본값은 $(PRODUCT_NAME)=타깃명 "iosApp" → TestFlight 빌드 목록·
         # Xcode Organizer·ASC 빌드 메타데이터에 "iosApp" 으로 노출. PRODUCT_NAME 을 바꾸면
