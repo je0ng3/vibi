@@ -2,6 +2,7 @@ package com.vibi.shared.ui.input
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vibi.shared.data.local.DraftDeleteWarningStore
 import com.vibi.shared.data.local.SeparationCancelWarningStore
 import com.vibi.shared.domain.error.InsufficientCreditsException
 import com.vibi.shared.domain.model.AutoJobStatus
@@ -130,6 +131,8 @@ class InputViewModel constructor(
     private val bffBaseUrl: String,
     /** "준비중 취소 시 크레딧 환불 불가" 경고 "다시 보지 않기" 영속 — 타임라인 취소 경로와 공유 (계정별). */
     private val separationCancelWarningStore: SeparationCancelWarningStore,
+    /** "동영상(draft) 삭제" 확인 팝업 "다시 보지 않기" 영속 (계정별). */
+    private val draftDeleteWarningStore: DraftDeleteWarningStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InputUiState())
@@ -310,6 +313,15 @@ class InputViewModel constructor(
     /** "다시 보지 않기" 토글 영속. 경고 다이얼로그의 체크박스에서 호출. */
     fun setSkipSeparationCancelWarning(skip: Boolean) {
         separationCancelWarningStore.setSkip(skip)
+    }
+
+    /** Draft 카드 X 삭제 시 확인 팝업을 띄워야 하는지. "다시 보지 않기"(계정별) 체크 후엔 즉시 삭제. */
+    val draftDeleteNeedsWarning: Boolean
+        get() = !draftDeleteWarningStore.skip
+
+    /** "다시 보지 않기" 토글 영속. 삭제 확인 다이얼로그의 체크박스에서 호출. */
+    fun setSkipDraftDeleteWarning(skip: Boolean) {
+        draftDeleteWarningStore.setSkip(skip)
     }
 
     /** 카드 X 버튼 / long-press 삭제. 자식 row 들은 deleteProject 가 cascade. */

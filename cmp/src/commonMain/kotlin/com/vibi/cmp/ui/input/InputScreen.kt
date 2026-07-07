@@ -83,6 +83,8 @@ fun InputScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // "준비중" 카드 X 취소 경고 대상 projectId (null = 닫힘). "다시 보지 않기" 영속 시엔 경고 없이 바로 취소.
     var cancelWarnProjectId by remember { mutableStateOf<String?>(null) }
+    // Draft 카드 X 삭제 확인 대상 projectId (null = 닫힘). "다시 보지 않기" 영속 시엔 확인 없이 바로 삭제.
+    var deleteWarnProjectId by remember { mutableStateOf<String?>(null) }
 
     // 화면 재진입 시 이전 비디오/검증/언어 선택 리셋. drafts ("이어서 작업") 카드는
     // EditProjectRepository.observeAllProjects() 가 영속 상태에서 직접 읽어 노출.
@@ -280,7 +282,13 @@ fun InputScreen(
                         DraftCard(
                             draft = draft,
                             onClick = { viewModel.onContinueDraft(draft.projectId) },
-                            onDelete = { viewModel.onDeleteDraft(draft.projectId) },
+                            onDelete = {
+                                if (viewModel.draftDeleteNeedsWarning) {
+                                    deleteWarnProjectId = draft.projectId
+                                } else {
+                                    viewModel.onDeleteDraft(draft.projectId)
+                                }
+                            },
                         )
                     }
                 }
@@ -379,6 +387,53 @@ fun InputScreen(
             Text(
                 "Separation will stop and this project will be removed. " +
                     "Credits already used won't be refunded.",
+                style = typo.bodySm,
+                color = tokens.mutedText,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
+            ) {
+                Checkbox(
+                    checked = dontShowAgain,
+                    onCheckedChange = { dontShowAgain = it },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = tokens.accent,
+                        uncheckedColor = tokens.mutedText,
+                    ),
+                )
+                Text(
+                    "Don't show this again",
+                    style = typo.bodySm,
+                    color = tokens.onBackgroundPrimary,
+                )
+            }
+        }
+    }
+
+    // Draft 카드 X 삭제 확인 — 프로젝트와 편집 내역이 되돌릴 수 없이 지워지므로 기본은 확인 후 삭제.
+    // "다시 보지 않기" 체크는 계정별로 영속돼 다음부터는 바로 삭제된다.
+    deleteWarnProjectId?.let { projectId ->
+        val tokens = LocalVibiColors.current
+        val typo = LocalVibiTypography.current
+        var dontShowAgain by remember(projectId) { mutableStateOf(false) }
+        VibiDialog(
+            title = "Delete this video?",
+            onDismiss = { deleteWarnProjectId = null },
+            primary = {
+                VibiPrimaryButton(
+                    "Delete",
+                    destructive = true,
+                    onClick = {
+                        if (dontShowAgain) viewModel.setSkipDraftDeleteWarning(true)
+                        viewModel.onDeleteDraft(projectId)
+                        deleteWarnProjectId = null
+                    },
+                )
+            },
+        ) {
+            Text(
+                "This video and all of its edits will be deleted. This can't be undone.",
                 style = typo.bodySm,
                 color = tokens.mutedText,
             )

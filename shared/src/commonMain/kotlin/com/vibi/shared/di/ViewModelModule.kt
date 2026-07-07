@@ -25,6 +25,7 @@ val viewModelModule = module {
             separationNotifier = get(),
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
             separationCancelWarningStore = get(),
+            draftDeleteWarningStore = get(),
         )
     }
     factory { (projectId: String) ->

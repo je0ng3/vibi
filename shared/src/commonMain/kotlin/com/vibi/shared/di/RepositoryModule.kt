@@ -1,6 +1,7 @@
 package com.vibi.shared.di
 
 import com.vibi.shared.data.local.AuthTokenStore
+import com.vibi.shared.data.local.DraftDeleteWarningStore
 import com.vibi.shared.data.local.SeparationCancelWarningStore
 import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.repository.AudioSeparationRepositoryImpl
@@ -29,6 +30,9 @@ val repositoryModule = module {
 
     // "음원분리 취소 시 크레딧 환불 불가" 경고 "다시 보지 않기" 영속 — Timeline/Input 취소 경로 공유 (계정별).
     single { SeparationCancelWarningStore(settings = get(), userSession = get()) }
+
+    // "동영상(draft) 삭제" 확인 팝업 "다시 보지 않기" 영속 (계정별).
+    single { DraftDeleteWarningStore(settings = get(), userSession = get()) }
 
     single<EditProjectRepository> {
         EditProjectRepositoryImpl(
