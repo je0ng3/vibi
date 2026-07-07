@@ -216,10 +216,17 @@ private class AndroidStemMixerHandle(
         val pos = positionMs.coerceAtLeast(0L)
         val active = activeGroupId ?: return
         // 매 tick 마다 호출되어도 활성 player 의 현재 위치와 거의 일치하면 seek skip — per-tick stutter 회피.
-        // iOS IosStemMixerHandle.seekTo 의 50ms drift 가드 대응.
+        // ExoPlayer.seekTo 는 매번 디코더를 flush 해 '틱' 하고 끊긴다. TimelineScreen 이 전체 재생 중
+        // video 폴링(33ms)마다 바뀌는 playbackPositionMs 로 seekTo 를 호출하는데, video 위치는 33ms
+        // 단위로 양자화·지터가 있고 stem 은 연속 재생이라 그 차이가 50ms 같은 타이트 가드를 계속 넘겨
+        // 매 tick flush → 전체 재생 시 오디오 버벅임. 그래서 재생 중엔 BgmPlaybackSync 와 동일하게
+        // 큰 drift(300ms) 만 보정해 자연 재생에 맡기고, 정지 중 scrub 은 flush 가 안 들리므로 50ms 로
+        // 타이트하게 유지해 정확도 확보. (iOS AVAudioEngine 은 seek 가 glitch-free 라 50ms 로도 무해 —
+        // 본 완화는 Android ExoPlayer 한정.)
+        val toleranceMs = if (playing) 300L else 50L
         val activePlayer = players.entries
             .firstOrNull { (k, _) -> groupOfPlayer[k] == active }?.value?.player
-        if (activePlayer != null && abs(pos - activePlayer.currentPosition) <= 50L) return
+        if (activePlayer != null && abs(pos - activePlayer.currentPosition) <= toleranceMs) return
         pendingSeekByGroup[active] = pos
         players.forEach { (k, pwg) ->
             if (groupOfPlayer[k] == active) pwg.player.seekTo(pos)
