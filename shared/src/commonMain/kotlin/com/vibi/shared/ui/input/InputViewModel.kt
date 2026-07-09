@@ -10,7 +10,6 @@ import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SeparationDirective
-import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.model.ValidationError
 import com.vibi.shared.domain.model.ValidationResult
 import com.vibi.shared.domain.model.VideoInfo
@@ -32,6 +31,7 @@ import com.vibi.shared.platform.SeparationNotice
 import com.vibi.shared.platform.SeparationNotifier
 import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.vibi.shared.platform.currentTimeMillis
+import com.vibi.shared.ui.timeline.isStemSelectedByDefault
 import com.vibi.shared.platform.generateId
 import com.vibi.shared.domain.usecase.draft.ExpireOldDraftsUseCase
 import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
@@ -476,13 +476,14 @@ class InputViewModel constructor(
         // stem.url 이 path-only(`/api/v2/...`) 면 절대 URL 로 보정 — iOS AVAudioPlayer 가 host 없는
         // URL 을 silent fail.
         val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
-        // 모든 stem default 선택. 단 VOICE_ALL("모든 화자") 은 화자별 SPEAKER stem 과 중복이라 비선택.
+        // 기본 선택 규칙은 isStemSelectedByDefault — VOICE_ALL(화자 stem 과 중복) + 리액션 배경음
+        // (순수 배경음과 상호 배타, 기본 음소거) 제외.
         val selections = absStems.map { stem ->
             StemSelection(
                 stemId = stem.stemId,
                 volume = 1.0f,
                 audioUrl = stem.url,
-                selected = stem.stemId != Stem.STEM_ID_VOICE_ALL,
+                selected = isStemSelectedByDefault(stem.stemId),
             )
         }
         if (selections.none { it.selected }) {

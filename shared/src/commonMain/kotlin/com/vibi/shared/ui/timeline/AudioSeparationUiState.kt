@@ -98,14 +98,14 @@ fun localizeProgressReason(reason: String?): String = when (reason) {
 }
 
 /**
- * Korean display label for a stem. `background` includes reactions/effects
- * (Perso does not expose a "pure background" variant), so we flag that in
- * the label. Per-speaker indices are 0-based on the wire; show them as 1-based
- * to match the user's mental model.
+ * Display label for a stem. 배경음은 2종 — 순수 BGM(`background`)과 리액션 포함(`background_reaction`) —
+ * 이라 라벨로 구분한다. Per-speaker indices are 0-based on the wire; show them as 1-based to match
+ * the user's mental model.
  */
 fun stemDisplayLabel(stem: Stem): String = when {
-    stem.stemId == "background" -> "Background"
-    stem.stemId == "voice_all" -> "All speakers"
+    stem.stemId == Stem.STEM_ID_BACKGROUND -> "Background (no reaction)"
+    stem.stemId == Stem.STEM_ID_BACKGROUND_REACTION -> "Background (with reaction)"
+    stem.stemId == Stem.STEM_ID_VOICE_ALL -> "All speakers"
     stem.speakerIndex != null -> "Speaker ${stem.speakerIndex + 1}"
     else -> stem.label.ifBlank { stem.stemId }
 }
@@ -115,7 +115,16 @@ fun stemDisplayLabel(stem: Stem): String = when {
  * 처럼 Stem 객체가 없는 경로에서 사용. label 폴백이 stemId 본인.
  */
 fun stemDisplayLabelFromId(stemId: String): String = when {
-    stemId == Stem.STEM_ID_BACKGROUND -> "Background"
+    stemId == Stem.STEM_ID_BACKGROUND -> "Background (no reaction)"
+    stemId == Stem.STEM_ID_BACKGROUND_REACTION -> "Background (with reaction)"
     stemId == Stem.STEM_ID_VOICE_ALL -> "All speakers"
     else -> Stem.speakerIndexFromId(stemId)?.let { "Speaker ${it + 1}" } ?: stemId
 }
+
+/**
+ * 분리 결과 stem 의 기본 mix 선택 여부. voice_all("모든 화자")은 화자별 stem 과 중복이라 제외,
+ * 리액션 포함 배경음(background_reaction)은 순수 배경음과 상호 배타라 기본 음소거 — 사용자가 탭으로
+ * 해제하면 순수 배경음이 자동으로 음소거된다.
+ */
+fun isStemSelectedByDefault(stemId: String): Boolean =
+    stemId != Stem.STEM_ID_VOICE_ALL && stemId != Stem.STEM_ID_BACKGROUND_REACTION

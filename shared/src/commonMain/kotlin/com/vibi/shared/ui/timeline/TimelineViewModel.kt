@@ -3165,12 +3165,13 @@ class TimelineViewModel constructor(
                     is SeparationStatus.Ready -> {
                         val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
                         updateSeparation {
-                            // BGM 분리: 배경음 stem + VOICE_ALL ("모든 화자") 제외하고 화자별 SPEAKER stem 만 default 선택.
-                            // VOICE_ALL 은 화자별 stem 으로 중복이라 mix 에 포함되면 보컬이 두 번 들림.
+                            // BGM 분리: 배경음 stem(순수 BGM + 리액션 포함) + VOICE_ALL ("모든 화자") 제외하고
+                            // 화자별 SPEAKER stem 만 default 선택. VOICE_ALL 은 화자별 stem 으로 중복이라 mix 에
+                            // 포함되면 보컬이 두 번 들림.
                             val defaults = absStems.associate { stem ->
                                 stem.stemId to StemSelectionUi(
                                     stem.stemId,
-                                    selected = stem.stemId != Stem.STEM_ID_BACKGROUND &&
+                                    selected = !Stem.isBackgroundId(stem.stemId) &&
                                         stem.stemId != Stem.STEM_ID_VOICE_ALL,
                                     volume = 1.0f,
                                 )
@@ -3658,13 +3659,16 @@ class TimelineViewModel constructor(
                         // BFF 응답 stem.url 이 path-only (`/api/v2/...`) — iOS AVAudioPlayer 가
                         // host 없는 URL silent fail. 여기서 base URL prepend 해 absolute 로.
                         val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
-                        // 모든 stem default 선택 — 단, VOICE_ALL ("모든 화자") 은 화자별 SPEAKER stem 으로
-                        // 분리되므로 중복 → default 비선택. 사용자가 directive 막대 탭으로 사후 편집 가능.
-                        // EditProject 의 separationStatus=READY 중간 write 는 곧바로 clearSeparation 으로
-                        // 덮이므로 생략 — commit 이 단일 write 로 처리.
+                        // 기본 선택 규칙은 isStemSelectedByDefault — VOICE_ALL(화자별 SPEAKER stem 과
+                        // 중복) + 리액션 배경음(순수 배경음과 상호 배타, 기본 음소거) 제외. 사용자가
+                        // directive 막대 탭으로 사후 편집 가능. EditProject 의 separationStatus=READY 중간
+                        // write 는 곧바로 clearSeparation 으로 덮이므로 생략 — commit 이 단일 write 로 처리.
                         val defaults = absStems.associate { stem ->
-                            val isVoiceAll = stem.stemId == Stem.STEM_ID_VOICE_ALL
-                            stem.stemId to StemSelectionUi(stem.stemId, selected = !isVoiceAll, volume = 1.0f)
+                            stem.stemId to StemSelectionUi(
+                                stem.stemId,
+                                selected = isStemSelectedByDefault(stem.stemId),
+                                volume = 1.0f,
+                            )
                         }
                         commitProcessingSeparationToDirective(
                             clientToken, absStems, defaults, status.actualDurationMs,
@@ -3835,12 +3839,23 @@ class TimelineViewModel constructor(
         val sep = _uiState.value.audioSeparation ?: return
         val current = sep.selections[stemId] ?: return
         val newSelected = !current.selected
-        val next = sep.selections + (stemId to current.copy(selected = newSelected))
+        var next = sep.selections + (stemId to current.copy(selected = newSelected))
+        // 배경음 상호 배타 — 리액션 포함/미포함 중 하나를 unmute 하면 다른 배경음은 자동 음소거.
+        // 최대 1개의 배경음만 mix 에 들어간다.
+        val otherBackground = if (newSelected && Stem.isBackgroundId(stemId)) {
+            next.keys.firstOrNull { it != stemId && Stem.isBackgroundId(it) }
+        } else null
+        if (otherBackground != null) {
+            next = next + (otherBackground to next.getValue(otherBackground).copy(selected = false))
+        }
         updateSeparation { it.copy(selections = next) }
         // 편집 모드 — 토글 즉시 directive 에 반영. 볼륨 슬라이더와 동일 패턴.
         val directiveId = editingDirectiveId ?: return
         viewModelScope.launch {
             patchDirectiveStem(directiveId, stemId) { it.copy(selected = newSelected) }
+            if (otherBackground != null) {
+                patchDirectiveStem(directiveId, otherBackground) { it.copy(selected = false) }
+            }
         }
     }
 
@@ -3878,7 +3893,24 @@ class TimelineViewModel constructor(
     }
 
     fun onSetStemSelectionForDirective(directiveId: String, stemId: String, selected: Boolean) {
-        updateDirectiveStemSelection(directiveId, stemId) { it.copy(selected = selected) }
+        // 배경음 상호 배타 — 배경음 하나를 켜면 같은 directive 의 다른 배경음은 음소거. 최대 1개만 mix.
+        if (selected && Stem.isBackgroundId(stemId)) {
+            viewModelScope.launch {
+                patchDirective(directiveId) { dir ->
+                    dir.copy(
+                        selections = dir.selections.map {
+                            when {
+                                it.stemId == stemId -> it.copy(selected = true)
+                                Stem.isBackgroundId(it.stemId) -> it.copy(selected = false)
+                                else -> it
+                            }
+                        },
+                    )
+                }
+            }
+        } else {
+            updateDirectiveStemSelection(directiveId, stemId) { it.copy(selected = selected) }
+        }
     }
 
     fun onSetStemVolumeForDirective(directiveId: String, stemId: String, volume: Float) {
