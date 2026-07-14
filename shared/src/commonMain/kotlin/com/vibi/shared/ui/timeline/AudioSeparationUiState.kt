@@ -122,9 +122,23 @@ fun stemDisplayLabelFromId(stemId: String): String = when {
 }
 
 /**
- * 분리 결과 stem 의 기본 mix 선택 여부. voice_all("모든 화자")은 화자별 stem 과 중복이라 제외,
- * 리액션 포함 배경음(background_reaction)은 순수 배경음과 상호 배타라 기본 음소거 — 사용자가 탭으로
- * 해제하면 순수 배경음이 자동으로 음소거된다.
+ * 주어진 stem 집합에 대해 기본 mix 선택될 stemId 들을 계산한다.
+ *
+ * - voice_all("모든 화자")은 화자별 stem 과 중복이라 제외.
+ * - 배경음은 상호 배타 — 순수 배경음(background)을 우선 선택하고, **그것이 없을 때만** 리액션 포함
+ *   (background_reaction)을 선택한다. 순수 배경음이 함께 오면 background_reaction 은 기본 음소거.
+ * - 그 외(SPEAKER/OTHER)는 선택.
+ *
+ * 집합 전체를 봐야 하는 이유: `background_reaction` 만 있고 순수 `background` 가 없는 잡을
+ * 무조건 음소거하면 선택 stem 이 0개가 돼, 정상 잡이 "선택 없음" 가드에 걸려 FAILED 로 처리된다.
  */
-fun isStemSelectedByDefault(stemId: String): Boolean =
-    stemId != Stem.STEM_ID_VOICE_ALL && stemId != Stem.STEM_ID_BACKGROUND_REACTION
+fun defaultSelectedStemIds(stemIds: Collection<String>): Set<String> {
+    val hasPureBackground = Stem.STEM_ID_BACKGROUND in stemIds
+    return stemIds.filterTo(mutableSetOf()) { id ->
+        when (id) {
+            Stem.STEM_ID_VOICE_ALL -> false
+            Stem.STEM_ID_BACKGROUND_REACTION -> !hasPureBackground
+            else -> true
+        }
+    }
+}

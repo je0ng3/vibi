@@ -3659,14 +3659,15 @@ class TimelineViewModel constructor(
                         // BFF 응답 stem.url 이 path-only (`/api/v2/...`) — iOS AVAudioPlayer 가
                         // host 없는 URL silent fail. 여기서 base URL prepend 해 absolute 로.
                         val absStems = status.stems.map { it.withAbsoluteUrl(bffBaseUrl) }
-                        // 기본 선택 규칙은 isStemSelectedByDefault — VOICE_ALL(화자별 SPEAKER stem 과
-                        // 중복) + 리액션 배경음(순수 배경음과 상호 배타, 기본 음소거) 제외. 사용자가
+                        // 기본 선택 규칙은 defaultSelectedStemIds — VOICE_ALL(화자별 SPEAKER stem 과
+                        // 중복) 제외, 배경음은 순수 background 우선(없으면 background_reaction). 사용자가
                         // directive 막대 탭으로 사후 편집 가능. EditProject 의 separationStatus=READY 중간
                         // write 는 곧바로 clearSeparation 으로 덮이므로 생략 — commit 이 단일 write 로 처리.
+                        val defaultSelected = defaultSelectedStemIds(absStems.map { it.stemId })
                         val defaults = absStems.associate { stem ->
                             stem.stemId to StemSelectionUi(
                                 stem.stemId,
-                                selected = isStemSelectedByDefault(stem.stemId),
+                                selected = stem.stemId in defaultSelected,
                                 volume = 1.0f,
                             )
                         }

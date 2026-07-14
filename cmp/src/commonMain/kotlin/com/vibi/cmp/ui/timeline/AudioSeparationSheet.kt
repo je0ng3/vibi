@@ -240,10 +240,12 @@ fun AudioSeparationSheet(
                                 Text(
                                     text = stemDisplayLabel(stem),
                                     style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
+                                    // 배경음 2종("Background (no reaction)" / "(with reaction)")은 80dp·1줄에서
+                                    // 둘 다 "Backgroun…"으로 잘려 구분 불가 → 2줄 허용 + 폭 확대로 구분 가능하게.
+                                    maxLines = 2,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     modifier = Modifier
-                                        .widthIn(max = 80.dp)
+                                        .widthIn(max = 100.dp)
                                         .clickable { onToggleStem(stem.stemId) }
                                 )
                                 Spacer(Modifier.size(6.dp))
