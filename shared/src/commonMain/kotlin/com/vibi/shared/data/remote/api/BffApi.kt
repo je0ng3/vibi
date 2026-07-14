@@ -5,6 +5,8 @@ import com.vibi.shared.data.remote.dto.AssetUploadUrlRequest
 import com.vibi.shared.data.remote.dto.AssetUploadUrlResponse
 import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.data.remote.dto.GoogleAuthRequestDto
+import com.vibi.shared.data.remote.dto.IdentitiesResponseDto
+import com.vibi.shared.data.remote.dto.LinkResponseDto
 import com.vibi.shared.data.remote.dto.RenderConfig
 import com.vibi.shared.data.remote.dto.RenderConfigV3
 import com.vibi.shared.data.remote.dto.RenderJobResponse
@@ -78,6 +80,36 @@ class BffApi(
             contentType(ContentType.Application.Json)
             setBody(AppleAuthRequestDto(idToken, fullName))
         }.body()
+
+    /**
+     * 현재 계정에 Google 을 추가 로그인 수단으로 연결(계정 통합). Authorization JWT 필요 —
+     * native GoogleSignIn 이 받은 새 ID Token 을 전달한다. 대상 identity 가 다른 계정 소속이면
+     * BFF 가 그 계정을 현재 계정으로 병합해 [LinkResponseDto.mergedCredits]/[creditBalance] 를 채운다.
+     * 같은 provider 가 이미 연결돼 있으면 409(`provider_already_linked`).
+     */
+    suspend fun linkGoogle(idToken: String): LinkResponseDto =
+        client.post("api/v2/auth/link/google") {
+            contentType(ContentType.Application.Json)
+            setBody(GoogleAuthRequestDto(idToken))
+        }.body()
+
+    /** [linkGoogle] 의 Apple 판. [fullName] 은 Apple 최초-1회 동의 시에만 non-null(신규 secondary 표시명). */
+    suspend fun linkApple(idToken: String, fullName: String?): LinkResponseDto =
+        client.post("api/v2/auth/link/apple") {
+            contentType(ContentType.Application.Json)
+            setBody(AppleAuthRequestDto(idToken, fullName))
+        }.body()
+
+    /**
+     * 연결된 `provider`(google|apple) 로그인 수단 해제 — 남은 identity 목록을 반환. 마지막 하나면
+     * 409(`cannot_unlink_last_identity`), 연결돼 있지 않으면 404(`identity_not_linked`).
+     */
+    suspend fun unlinkIdentity(provider: String): IdentitiesResponseDto =
+        client.delete("api/v2/auth/link/$provider").body()
+
+    /** 현재 계정에 연결된 provider 목록(모바일 '계정 연결' 화면). */
+    suspend fun getIdentities(): IdentitiesResponseDto =
+        client.get("api/v2/auth/identities").body()
 
     /** 인증된 본인 영구 삭제 — App Store 가이드라인 5.1.1(v). */
     suspend fun deleteAccount() {

@@ -186,6 +186,98 @@ class BffApiTest {
         assertEquals("background", result.stems[0].stemId)
     }
 
+    // ───────────────────── account linking ─────────────────────
+
+    @Test
+    fun `linkGoogle posts idToken and parses merged response`() = runTest {
+        val (api, captured) = buildApi { _ ->
+            respond(
+                content = """{
+                    "status":"merged",
+                    "creditBalance":42,
+                    "mergedCredits":30,
+                    "identities":[
+                        {"provider":"apple","email":"a@x.com","primary":true},
+                        {"provider":"google","email":"g@x.com","primary":false}
+                    ]
+                }""",
+                status = HttpStatusCode.OK,
+                headers = jsonHeaders()
+            )
+        }
+
+        val result = api.linkGoogle("idtok-123")
+
+        assertEquals(HttpMethod.Post, captured[0].method)
+        assertEquals("api/v2/auth/link/google", captured[0].url.encodedPath.trimStart('/'))
+        assertEquals("merged", result.status)
+        assertEquals(42, result.creditBalance)
+        assertEquals(30, result.mergedCredits)
+        assertEquals(2, result.identities.size)
+        val body = (captured[0].body as TextContent).text
+        assertContains(body, "idtok-123")
+    }
+
+    @Test
+    fun `linkApple posts idToken plus fullName`() = runTest {
+        val (api, captured) = buildApi { _ ->
+            respond(
+                content = """{"status":"linked","identities":[{"provider":"apple","email":"a@x.com","primary":false}]}""",
+                status = HttpStatusCode.OK,
+                headers = jsonHeaders()
+            )
+        }
+
+        val result = api.linkApple("apple-tok", fullName = "Ada Lovelace")
+
+        assertEquals("api/v2/auth/link/apple", captured[0].url.encodedPath.trimStart('/'))
+        assertEquals("linked", result.status)
+        // merged 아님 → 크레딧 필드는 null.
+        assertEquals(null, result.creditBalance)
+        val body = (captured[0].body as TextContent).text
+        assertContains(body, "apple-tok")
+        assertContains(body, "Ada Lovelace")
+    }
+
+    @Test
+    fun `unlinkIdentity deletes provider path and parses remaining identities`() = runTest {
+        val (api, captured) = buildApi { _ ->
+            respond(
+                content = """{"identities":[{"provider":"google","email":"g@x.com","primary":true}]}""",
+                status = HttpStatusCode.OK,
+                headers = jsonHeaders()
+            )
+        }
+
+        val result = api.unlinkIdentity("apple")
+
+        assertEquals(HttpMethod.Delete, captured[0].method)
+        assertEquals("api/v2/auth/link/apple", captured[0].url.encodedPath.trimStart('/'))
+        assertEquals(1, result.identities.size)
+        assertEquals("google", result.identities[0].provider)
+    }
+
+    @Test
+    fun `getIdentities parses linked provider list`() = runTest {
+        val (api, captured) = buildApi { _ ->
+            respond(
+                content = """{"identities":[
+                    {"provider":"google","email":"g@x.com","primary":true},
+                    {"provider":"apple","email":"a@x.com","primary":false}
+                ]}""",
+                status = HttpStatusCode.OK,
+                headers = jsonHeaders()
+            )
+        }
+
+        val result = api.getIdentities()
+
+        assertEquals(HttpMethod.Get, captured[0].method)
+        assertEquals("api/v2/auth/identities", captured[0].url.encodedPath.trimStart('/'))
+        assertEquals(2, result.identities.size)
+        assertTrue(result.identities[0].primary)
+    }
+
     // ───────────────────── tokenized downloads ─────────────────────
 
     @Test

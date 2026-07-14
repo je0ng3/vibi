@@ -5,9 +5,16 @@ import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.local.extractJwtSubject
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.dto.AuthResponseDto
+import com.vibi.shared.data.remote.dto.LinkResponseDto
+import com.vibi.shared.data.remote.dto.LinkedIdentityDto
 import com.vibi.shared.domain.model.AuthUser
+import com.vibi.shared.domain.model.IdentityProvider
+import com.vibi.shared.domain.model.LinkedIdentity
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
+import io.ktor.client.plugins.ClientRequestException
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -112,6 +119,106 @@ class AuthRepository(
             signOut()
         }
     }
+
+    // ── 계정 통합(링크) ─────────────────────────────────────────────────────────
+    // 로그인 상태에서 두 번째 provider 를 현재 계정에 연결한다. 로그인(exchange*)과 달리 JWT/세션은
+    // 그대로 둔다 — 계정 UUID 는 유지되고(병합 시 현재 계정이 상대를 흡수), 추가 identity 만 붙는다.
+    // 네이티브 sign-in 은 로그인과 같은 [awaitNativeSignIn] backstop 으로 감싸 무한 로딩을 막는다.
+
+    /** 링크 성공의 세부 결과 — BFF wire status 를 타입으로 흡수해 문자열 리터럴이 상위 레이어로 새지 않게 한다. */
+    enum class LinkStatus { LINKED, ALREADY_LINKED, MERGED }
+
+    /** [linkGoogle]/[linkApple] 결과. HTTP/네이티브 실패를 UI 가 분기할 수 있게 타입으로 표현. */
+    sealed interface LinkResult {
+        /** 연결/멱등/병합 성공. */
+        data class Success(
+            val status: LinkStatus,
+            val identities: List<LinkedIdentity>,
+            /** merged 시 이월된 크레딧(그 외 null). */
+            val mergedCredits: Int?,
+            /** merged 시 병합 후 계정 잔액(그 외 null) — 호출자가 로컬 크레딧 캐시를 갱신하는 데 쓴다. */
+            val newBalance: Int?,
+        ) : LinkResult
+
+        /** 같은 provider 가 이미 (현재 또는 병합 대상) 계정에 연결됨 — 409. */
+        data object ProviderConflict : LinkResult
+
+        /** 네이티브 sign-in 콜백이 backstop 시한을 넘김(무한 로딩 방지). */
+        data object TimedOut : LinkResult
+
+        /** 사용자가 sign-in 을 취소했거나 그 외(네트워크·검증 실패 등) 오류. */
+        data class Failed(val cause: Throwable) : LinkResult
+    }
+
+    /** [unlinkIdentity] 결과. */
+    sealed interface UnlinkResult {
+        data class Success(val identities: List<LinkedIdentity>) : UnlinkResult
+
+        /** 마지막 남은 로그인 수단이라 해제 불가 — 409. */
+        data object CannotUnlinkLast : UnlinkResult
+
+        /** 해당 provider 가 연결돼 있지 않음 — 404. */
+        data object NotLinked : UnlinkResult
+
+        data class Failed(val cause: Throwable) : UnlinkResult
+    }
+
+    suspend fun linkGoogle(): LinkResult = runLink {
+        val idToken = awaitNativeSignIn { googleSignInClient.signIn() }
+        bffApi.linkGoogle(idToken)
+    }
+
+    suspend fun linkApple(): LinkResult = runLink {
+        val payload = awaitNativeSignIn { appleSignInClient.signIn() }
+        bffApi.linkApple(payload.idToken, payload.fullName)
+    }
+
+    private suspend fun runLink(block: suspend () -> LinkResponseDto): LinkResult =
+        try {
+            val resp = block()
+            LinkResult.Success(
+                status = when (resp.status) {
+                    "merged" -> LinkStatus.MERGED
+                    "already_linked" -> LinkStatus.ALREADY_LINKED
+                    else -> LinkStatus.LINKED
+                },
+                identities = resp.identities.toDomain(),
+                mergedCredits = resp.mergedCredits,
+                newBalance = resp.creditBalance,
+            )
+        } catch (e: SignInTimeoutException) {
+            LinkResult.TimedOut
+        } catch (e: ClientRequestException) {
+            if (e.response.status == HttpStatusCode.Conflict) LinkResult.ProviderConflict
+            else LinkResult.Failed(e)
+        } catch (e: CancellationException) {
+            throw e // 구조적 취소는 삼키지 않는다(코루틴 취소 전파).
+        } catch (e: Exception) {
+            LinkResult.Failed(e)
+        }
+
+    suspend fun unlinkIdentity(provider: IdentityProvider): UnlinkResult =
+        try {
+            UnlinkResult.Success(bffApi.unlinkIdentity(provider.wire).identities.toDomain())
+        } catch (e: ClientRequestException) {
+            when (e.response.status) {
+                HttpStatusCode.Conflict -> UnlinkResult.CannotUnlinkLast
+                HttpStatusCode.NotFound -> UnlinkResult.NotLinked
+                else -> UnlinkResult.Failed(e)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            UnlinkResult.Failed(e)
+        }
+
+    /** 현재 계정에 연결된 provider 목록. UI 진입 시 조회. */
+    suspend fun listIdentities(): Result<List<LinkedIdentity>> = runCatching {
+        bffApi.getIdentities().identities.toDomain()
+    }
+
+    // 알 수 없는 provider 문자열(전방 호환)은 걸러낸다.
+    private fun List<LinkedIdentityDto>.toDomain(): List<LinkedIdentity> = mapNotNull { it.toDomain() }
 
     private fun finalizeSession(resp: AuthResponseDto) {
         tokenStore.saveToken(resp.accessToken, resp.expiresAt)

@@ -11,6 +11,8 @@ import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.data.repository.CreditPurchaseService
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.domain.model.IapPlatform
+import com.vibi.shared.domain.model.IdentityProvider
+import com.vibi.shared.domain.model.LinkedIdentity
 import com.vibi.shared.platform.RewardedAdController
 import com.vibi.shared.platform.RewardedAdOutcome
 import kotlinx.coroutines.delay
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
@@ -98,6 +101,107 @@ class UserMenuViewModel(
 
     private val _navigateToLogin = MutableSharedFlow<Unit>()
     val navigateToLogin: SharedFlow<Unit> = _navigateToLogin.asSharedFlow()
+
+    /**
+     * '계정 연결' 서브시트 상태.
+     *
+     * - [identities] — 연결된 로그인 수단. null = 아직 미로딩, emptyList 는 없음(이론상 없음).
+     * - [loadFailed] — 목록 최초 조회 실패(오프라인·BFF 오류). UI 가 무한 스피너 대신 오류+재시도를 표시.
+     * - [busyProvider] — 링크/언링크 진행 중인 provider(해당 버튼 스피너 + 중복 탭 방지). 없으면 null.
+     * - [message]    — 직전 액션의 일회성 안내(성공/에러). 표시 후 [clearLinkMessage] 또는 다음 액션에서 리셋.
+     */
+    data class LinkUiState(
+        val identities: List<LinkedIdentity>? = null,
+        val loadFailed: Boolean = false,
+        val busyProvider: IdentityProvider? = null,
+        val message: LinkMessage? = null,
+    )
+
+    /** 링크/언링크 결과 안내 — 문구는 UI 가 매핑(i18n·톤 일관). [Merged] 만 이월 크레딧 수를 담는다. */
+    sealed interface LinkMessage {
+        data class Merged(val credits: Int) : LinkMessage
+        data object Linked : LinkMessage
+        data object AlreadyLinked : LinkMessage
+        data object Unlinked : LinkMessage
+        data object ProviderConflict : LinkMessage
+        data object CannotUnlinkLast : LinkMessage
+        data object NotLinked : LinkMessage
+        data object TimedOut : LinkMessage
+        data object Error : LinkMessage
+    }
+
+    private val _link = MutableStateFlow(LinkUiState())
+    val link: StateFlow<LinkUiState> = _link.asStateFlow()
+
+    /**
+     * '계정 연결' 시트 진입 시 호출 — 목록이 아직 없을 때만 BFF 조회한다. 링크/언링크는 서버가
+     * 돌려준 목록을 [_link] 에 그대로 반영하므로, 시트를 다시 열 때 이미 최신 목록을 갖고 있어
+     * 재조회는 낭비다(실패로 목록이 여전히 null 이면 다음 오픈에서 재시도된다).
+     */
+    fun loadIdentities() {
+        if (_link.value.identities != null) return
+        viewModelScope.launch {
+            _link.update { it.copy(loadFailed = false) }
+            authRepository.listIdentities()
+                .onSuccess { list -> _link.update { it.copy(identities = list) } }
+                // 실패 시 identities 는 null 로 남는다 — UI 가 [loadFailed] 로 오류+재시도를 띄운다(무한 스피너 방지).
+                .onFailure { _link.update { it.copy(loadFailed = true) } }
+        }
+    }
+
+    fun linkGoogle() = runLink(IdentityProvider.GOOGLE) { authRepository.linkGoogle() }
+
+    fun linkApple() = runLink(IdentityProvider.APPLE) { authRepository.linkApple() }
+
+    private fun runLink(
+        provider: IdentityProvider,
+        block: suspend () -> AuthRepository.LinkResult,
+    ) {
+        if (_link.value.busyProvider != null) return
+        // busy 마킹을 launch 밖(메인 스레드 동기)에서 먼저 — check-then-act 를 원자화해 빠른 더블탭이
+        // 둘 다 가드를 통과(→ 중복 네이티브 sign-in / POST)하는 레이스를 막는다.
+        _link.update { it.copy(busyProvider = provider, message = null) }
+        viewModelScope.launch {
+            val result = block()
+            // merged 는 계정 잔액이 바뀌므로 로컬 크레딧 캐시를 갱신 — 프로필의 크레딧 배지에 즉시 반영.
+            if (result is AuthRepository.LinkResult.Success && result.newBalance != null) {
+                creditStore.setBalance(userSession.current(), result.newBalance)
+            }
+            val message = when (result) {
+                is AuthRepository.LinkResult.Success -> when (result.status) {
+                    AuthRepository.LinkStatus.MERGED -> LinkMessage.Merged(result.mergedCredits ?: 0)
+                    AuthRepository.LinkStatus.ALREADY_LINKED -> LinkMessage.AlreadyLinked
+                    AuthRepository.LinkStatus.LINKED -> LinkMessage.Linked
+                }
+                AuthRepository.LinkResult.ProviderConflict -> LinkMessage.ProviderConflict
+                AuthRepository.LinkResult.TimedOut -> LinkMessage.TimedOut
+                is AuthRepository.LinkResult.Failed -> LinkMessage.Error
+            }
+            finishLinkAction((result as? AuthRepository.LinkResult.Success)?.identities, message)
+        }
+    }
+
+    fun unlink(provider: IdentityProvider) {
+        if (_link.value.busyProvider != null) return
+        _link.update { it.copy(busyProvider = provider, message = null) } // 레이스 방지 — [runLink] 주석 참조.
+        viewModelScope.launch {
+            val result = authRepository.unlinkIdentity(provider)
+            val message = when (result) {
+                is AuthRepository.UnlinkResult.Success -> LinkMessage.Unlinked
+                AuthRepository.UnlinkResult.CannotUnlinkLast -> LinkMessage.CannotUnlinkLast
+                AuthRepository.UnlinkResult.NotLinked -> LinkMessage.NotLinked
+                is AuthRepository.UnlinkResult.Failed -> LinkMessage.Error
+            }
+            finishLinkAction((result as? AuthRepository.UnlinkResult.Success)?.identities, message)
+        }
+    }
+
+    /** 링크/언링크 종료 공통 처리 — busy 해제 + (성공 시) 새 목록 반영 + 안내 메시지. */
+    private fun finishLinkAction(identities: List<LinkedIdentity>?, message: LinkMessage) {
+        _link.update { it.copy(busyProvider = null, identities = identities ?: it.identities, message = message) }
+    }
+
+    fun clearLinkMessage() = _link.update { it.copy(message = null) }
 
     fun refreshBalance() {
         viewModelScope.launch {

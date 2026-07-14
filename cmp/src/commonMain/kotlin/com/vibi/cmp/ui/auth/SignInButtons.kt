@@ -113,9 +113,10 @@ fun GoogleSignInButton(
     enabled: Boolean,
     loading: Boolean,
     modifier: Modifier = Modifier,
+    label: String = "Sign in with Google",
 ) {
     SignInButton(
-        label = "Sign in with Google",
+        label = label,
         onClick = onClick,
         enabled = enabled,
         loading = loading,
@@ -139,9 +140,10 @@ fun AppleSignInButton(
     enabled: Boolean,
     loading: Boolean,
     modifier: Modifier = Modifier,
+    label: String = "Sign in with Apple",
 ) {
     SignInButton(
-        label = "Sign in with Apple",
+        label = label,
         onClick = onClick,
         enabled = enabled,
         loading = loading,

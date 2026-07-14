@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.ui.components.VibiChipRow
 import com.vibi.cmp.ui.components.VibiDialog
 import com.vibi.cmp.ui.components.VibiPrimaryButton
 import com.vibi.shared.domain.model.AuthUser
@@ -66,6 +67,7 @@ fun UserMenuSheet(
     val state by viewModel.uiState.collectAsState()
     val tokens = LocalVibiColors.current
     var purchaseOpen by remember { mutableStateOf(false) }
+    var linkedOpen by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
@@ -109,6 +111,8 @@ fun UserMenuSheet(
                 }
             }
 
+            LinkedAccountsRow(onClick = { linkedOpen = true })
+
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -140,6 +144,12 @@ fun UserMenuSheet(
         }
     }
 
+    if (linkedOpen) {
+        LinkedAccountsSheet(
+            viewModel = viewModel,
+            onDismiss = { linkedOpen = false },
+        )
+    }
     if (purchaseOpen) {
         CreditPurchaseSheet(
             products = viewModel.products,
@@ -238,18 +248,40 @@ private fun ProfileHeader(user: AuthUser?, credits: Int, showCredits: Boolean) {
     }
 }
 
+/**
+ * '계정 연결' 진입 row — 탭 시 [LinkedAccountsSheet] 서브시트를 연다. 크레딧 구매/광고 row 와
+ * 같은 chip 스타일이라 메뉴 항목들이 시각적으로 일관된다.
+ */
+@Composable
+private fun LinkedAccountsRow(onClick: () -> Unit) {
+    val tokens = LocalVibiColors.current
+    VibiChipRow(onClick = onClick) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Linked accounts",
+                style = TextStyle(
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Connect Google or Apple sign-in",
+                style = TextStyle(fontSize = 12.sp, color = tokens.mutedText),
+            )
+        }
+        Text(
+            text = "›",
+            style = TextStyle(fontSize = 22.sp, color = tokens.mutedText),
+        )
+    }
+}
+
 @Composable
 private fun BuyCreditsRow(onClick: () -> Unit) {
     val tokens = LocalVibiColors.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(tokens.chipBg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-    ) {
+    VibiChipRow(onClick = onClick) {
         Box(
             modifier = Modifier
                 .size(28.dp)
@@ -315,15 +347,7 @@ private fun WatchAdForCreditRow(
         ad.remaining <= 0 -> "You've reached today's limit"
         else -> "${ad.remaining} of ${ad.dailyCap} left today"
     }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(tokens.chipBg)
-            .clickable(enabled = enabled, onClick = onWatch)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-    ) {
+    VibiChipRow(onClick = onWatch, enabled = enabled) {
         Box(
             modifier = Modifier
                 .size(28.dp)
