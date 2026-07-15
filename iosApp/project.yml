@@ -43,7 +43,9 @@ targets:
     info:
       path: iosApp/Info.plist
       properties:
-        CFBundleShortVersionString: "1.0.1"
+        CFBundleShortVersionString: "1.0.2"
+        # CFBundleVersion(빌드 번호)은 CI 에서 ci_scripts/ci_pre_xcodebuild.sh 가 $CI_BUILD_NUMBER
+        # 로 덮어쓴다. 여기 값은 로컬 빌드 전용 placeholder.
         CFBundleVersion: "1"
         # CFBundleName 기본값은 $(PRODUCT_NAME)=타깃명 "iosApp" → TestFlight 빌드 목록·
         # Xcode Organizer·ASC 빌드 메타데이터에 "iosApp" 으로 노출. PRODUCT_NAME 을 바꾸면
