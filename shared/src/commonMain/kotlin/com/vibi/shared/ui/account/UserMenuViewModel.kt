@@ -15,7 +15,11 @@ import com.vibi.shared.domain.model.IdentityProvider
 import com.vibi.shared.domain.model.LinkedIdentity
 import com.vibi.shared.platform.RewardedAdController
 import com.vibi.shared.platform.RewardedAdOutcome
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -23,6 +27,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
@@ -134,13 +141,54 @@ class UserMenuViewModel(
     val link: StateFlow<LinkUiState> = _link.asStateFlow()
 
     /**
+     * 세션(로그인 계정)에 종속된 in-flight 작업 — 목록 조회·링크·광고 폴링·잔액 갱신 등. 계정이 바뀌면
+     * [resetSessionScopedState] 가 이 job 을 통째로 취소하고 완료를 기다린 뒤 상태를 리셋한다. 이렇게
+     * 별도 job 으로 묶어야, 이전 계정의 늦게 도착한 응답(또는 finally)이 리셋 이후에 새 세션 상태를
+     * 덮어써 이전 계정 데이터를 다시 노출하는 레이스를 막을 수 있다. [viewModelScope] 자식이라 VM
+     * 소멸 시 함께 취소된다. signOut/deleteAccount 와 아래 collector 는 계정 전환에도 살아남아야
+     * 하므로 이 scope 가 아니라 [viewModelScope] 에서 돈다.
+     */
+    private var sessionJob = SupervisorJob(viewModelScope.coroutineContext.job)
+    private val sessionScope get() = CoroutineScope(viewModelScope.coroutineContext + sessionJob)
+
+    init {
+        // 이 VM 은 앱 전역 ViewModelStore 에 살아남는다 — 단순 stack 네비게이션(VibiNavHost)이라 화면별
+        // store 가 없어, 로그아웃/세션만료(401) 후 다른 계정으로 로그인해도 같은 인스턴스가 재사용된다.
+        // 그러면 이전 계정의 연결 목록·광고 캐시가 남고, [loadIdentities] 는 identities != null 이면
+        // 조기 반환하므로 새 계정 화면에 이전 계정의 연결 목록이 그대로 보인다. 로그인 계정(JWT sub)이
+        // 바뀌는 순간을 단일 지점에서 감지해 세션 종속 인메모리 상태를 폐기한다 — signOut(cachedUser→null)
+        // ·회원탈퇴·401(계정 전환으로 sub 변경) 세 경로를 모두 덮는다.
+        viewModelScope.launch {
+            tokenStore.cachedUser
+                .map { it?.sub }
+                .distinctUntilChanged()
+                .drop(1) // 최초 방출(현재 로그인)은 이미 기본 상태라 리셋 불필요
+                .collect { resetSessionScopedState() }
+        }
+    }
+
+    /**
+     * 계정 전환 시 세션 종속 상태를 폐기한다. **순서가 핵심**: 이전 계정의 in-flight 작업을 취소하고
+     * 그 finally/continuation 이 끝날 때까지(`cancelAndJoin`) 기다린 뒤에 상태를 리셋한다. 그래야
+     * 늦게 완료된 이전 계정의 [watchAdForCredit] finally 나 [loadIdentities]/[finishLinkAction] 의
+     * `_link` 쓰기가 리셋을 덮어써 이전 계정 데이터를 다시 노출하는 레이스가 없다. join 후 새 job 을
+     * 만들어 이후 세션 작업이 정상 동작하게 한다.
+     */
+    private suspend fun resetSessionScopedState() {
+        sessionJob.cancelAndJoin()
+        sessionJob = SupervisorJob(viewModelScope.coroutineContext.job)
+        _link.value = LinkUiState()
+        _adReward.value = AdRewardState()
+    }
+
+    /**
      * '계정 연결' 시트 진입 시 호출 — 목록이 아직 없을 때만 BFF 조회한다. 링크/언링크는 서버가
      * 돌려준 목록을 [_link] 에 그대로 반영하므로, 시트를 다시 열 때 이미 최신 목록을 갖고 있어
      * 재조회는 낭비다(실패로 목록이 여전히 null 이면 다음 오픈에서 재시도된다).
      */
     fun loadIdentities() {
         if (_link.value.identities != null) return
-        viewModelScope.launch {
+        sessionScope.launch {
             _link.update { it.copy(loadFailed = false) }
             authRepository.listIdentities()
                 .onSuccess { list -> _link.update { it.copy(identities = list) } }
@@ -161,7 +209,7 @@ class UserMenuViewModel(
         // busy 마킹을 launch 밖(메인 스레드 동기)에서 먼저 — check-then-act 를 원자화해 빠른 더블탭이
         // 둘 다 가드를 통과(→ 중복 네이티브 sign-in / POST)하는 레이스를 막는다.
         _link.update { it.copy(busyProvider = provider, message = null) }
-        viewModelScope.launch {
+        sessionScope.launch {
             val result = block()
             // merged 는 계정 잔액이 바뀌므로 로컬 크레딧 캐시를 갱신 — 프로필의 크레딧 배지에 즉시 반영.
             if (result is AuthRepository.LinkResult.Success && result.newBalance != null) {
@@ -184,7 +232,7 @@ class UserMenuViewModel(
     fun unlink(provider: IdentityProvider) {
         if (_link.value.busyProvider != null) return
         _link.update { it.copy(busyProvider = provider, message = null) } // 레이스 방지 — [runLink] 주석 참조.
-        viewModelScope.launch {
+        sessionScope.launch {
             val result = authRepository.unlinkIdentity(provider)
             val message = when (result) {
                 is AuthRepository.UnlinkResult.Success -> LinkMessage.Unlinked
@@ -204,7 +252,7 @@ class UserMenuViewModel(
     fun clearLinkMessage() = _link.update { it.copy(message = null) }
 
     fun refreshBalance() {
-        viewModelScope.launch {
+        sessionScope.launch {
             runCatching { bffApi.getCreditBalance() }
                 .onSuccess { resp -> creditStore.setBalance(userSession.current(), resp.balance) }
         }
@@ -212,7 +260,7 @@ class UserMenuViewModel(
 
     /** 메뉴 진입 시 호출 — 오늘 광고 보상 남은 횟수/상한을 BFF 에서 가져와 버튼 상태에 반영. */
     fun refreshAdRewardStatus() {
-        viewModelScope.launch {
+        sessionScope.launch {
             _adReward.update { it.copy(result = AdRewardResult.None) } // 재진입 시 이전 안내 리셋
             fetchAdRewardStatus()
         }
@@ -234,7 +282,7 @@ class UserMenuViewModel(
      */
     fun watchAdForCredit() {
         if (_adReward.value.watching) return
-        viewModelScope.launch {
+        sessionScope.launch {
             _adReward.update { it.copy(watching = true, result = AdRewardResult.None) }
             var result = AdRewardResult.None
             try {
