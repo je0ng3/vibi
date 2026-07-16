@@ -442,8 +442,8 @@ class InputViewModel constructor(
                     is SeparationStatus.Ready ->
                         commitWholeVideoDirective(projectId, jobId, segment, status)
                     is SeparationStatus.Failed -> {
-                        setProgress(projectId, SepProgress(0, status.progressReason, failed = true))
-                        markProjectFailed(projectId, jobId, segment.sourceUri)
+                        setProgress(projectId, SepProgress(0, status.message, failed = true))
+                        markProjectFailed(projectId, jobId, segment.sourceUri, status.message)
                     }
                 }
             }
@@ -527,11 +527,21 @@ class InputViewModel constructor(
         )
     }
 
-    private suspend fun markProjectFailed(projectId: String, jobId: String, sourceUri: String?) {
+    private suspend fun markProjectFailed(
+        projectId: String,
+        jobId: String,
+        sourceUri: String?,
+        message: String? = null,
+    ) {
         val project = editProjectRepository.getProject(projectId)
         project?.let { p ->
             editProjectRepository.updateProject(
-                p.removeProcessingSeparation(jobId).copy(separationStatus = AutoJobStatus.FAILED),
+                // separationError 에 friendly 문구를 영속 — 앱 재시작 후에도 준비카드가 in-memory
+                // 진행상태 없이 실패 사유를 복원(combine 의 progressReason 폴백 소스).
+                p.removeProcessingSeparation(jobId).copy(
+                    separationStatus = AutoJobStatus.FAILED,
+                    separationError = message,
+                ),
                 touchActivity = false,
             )
         }

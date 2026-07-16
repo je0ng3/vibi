@@ -637,7 +637,12 @@ private fun PreparingCard(
                 Spacer(Modifier.height(8.dp))
                 if (item.failed) {
                     Text(
-                        text = if (item.insufficientCredits) "Not enough credits" else "Separation failed",
+                        // BFF 가 내려준 friendly 실패 안내(progressReason)를 그대로 표시 — 크레딧 부족은
+                        // 전용 문구, 그 외는 서버 문구(없으면 generic 폴백).
+                        text = when {
+                            item.insufficientCredits -> "Not enough credits"
+                            else -> item.progressReason ?: "Separation failed"
+                        },
                         style = TextStyle(
                             fontSize = 12.sp,
                             color = Color(0xFFFF453A),

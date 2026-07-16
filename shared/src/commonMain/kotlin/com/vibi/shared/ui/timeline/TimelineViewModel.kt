@@ -2992,7 +2992,7 @@ class TimelineViewModel constructor(
                         }
                         is SeparationStatus.Failed -> setRemovalProgress(
                             clipId,
-                            BgmRemovalProgress.Failed(status.progressReason ?: ERROR_SEPARATION_GENERIC),
+                            BgmRemovalProgress.Failed(status.message ?: ERROR_SEPARATION_GENERIC),
                         )
                     }
                 }
@@ -3189,7 +3189,7 @@ class TimelineViewModel constructor(
                     is SeparationStatus.Failed -> updateSeparation {
                         it.copy(
                             step = AudioSeparationStep.FAILED,
-                            errorMessage = status.progressReason ?: ERROR_SEPARATION_GENERIC,
+                            errorMessage = status.message ?: ERROR_SEPARATION_GENERIC,
                         )
                     }
                 }
@@ -3676,7 +3676,7 @@ class TimelineViewModel constructor(
                         )
                     }
                     is SeparationStatus.Failed ->
-                        handleSeparationFailure(clientToken, status.progressReason ?: ERROR_SEPARATION_GENERIC)
+                        handleSeparationFailure(clientToken, status.message ?: ERROR_SEPARATION_GENERIC)
                 }
             }
         } catch (e: CancellationException) {

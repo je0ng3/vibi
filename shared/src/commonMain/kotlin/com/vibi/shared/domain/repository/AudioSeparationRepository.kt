@@ -26,7 +26,16 @@ sealed class SeparationStatus {
 
     data class Failed(
         override val jobId: String,
-        val progressReason: String?
+        /**
+         * 사용자에게 표시할 실패 안내 문구 — BFF 가 내려준 friendly `error` 를 그대로 담는다.
+         * BFF 가 모든 실패에 대해 sanitized 문구를 보장(사용자 조치 가능=구체 안내, 인프라=generic)
+         * 하므로 클라가 코드→문구를 재매핑하지 않는다(문구 단일 소스=BFF). null 이면 호출부가
+         * generic 문구로 폴백.
+         */
+        val message: String?,
+        /** 사용자 조치 가능 실패의 stable code (no_audio_detected 등). 인프라 오류면 null.
+         *  현재 표시는 [message] 로 충분하나, 향후 클라 분기(예: 재시도 버튼)용으로 보존. */
+        val errorCode: String? = null,
     ) : SeparationStatus()
 }
 

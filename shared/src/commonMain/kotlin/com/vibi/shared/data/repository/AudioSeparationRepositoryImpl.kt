@@ -139,7 +139,13 @@ class AudioSeparationRepositoryImpl(
                 // 사용자가 홈/타임라인을 떠나지 않아도 환불된 배지가 바로 보이게 한다 — getCost(차감 전)·
                 // 성공·402 동기화와 짝을 이루는 실패 경로 동기화. best-effort 라 실패해도 폴링 결과는 그대로.
                 syncBalanceFromServer()
-                SeparationStatus.Failed(response.jobId, response.progressReason)
+                // raw progressReason("Failed")이 아니라 BFF 가 sanitize 해 내려준 friendly error 를 표시.
+                // (문구 단일 소스=BFF — 클라 코드→문구 재매핑 없음.)
+                SeparationStatus.Failed(
+                    jobId = response.jobId,
+                    message = response.error,
+                    errorCode = response.errorCode,
+                )
             }
 
             response.status == STATUS_READY && response.stems.isNotEmpty() ->
